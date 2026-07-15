@@ -10,9 +10,15 @@
  * works across any BaseStore implementation, including the in-memory store.
  */
 import type { BaseStore, Item } from "@langchain/langgraph";
+import type {
+  BaseStore,
+  Item,
+  OperationResults,
+  SearchItem,
+} from "@langchain/langgraph-checkpoint";
 import { v4 as uuidv4 } from "uuid";
 
-import { logger } from "../config/logger.js";
+import { log } from "../config/logger.js";
 import {
   type Crystal,
   type ConsolidationReport,
