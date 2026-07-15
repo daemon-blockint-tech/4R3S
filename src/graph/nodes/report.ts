@@ -21,7 +21,8 @@ export function makeReportNode(deps: GraphDeps) {
         ? findings
             .map(
               (f, i) =>
-                `${i + 1}. [${f.severity}] ${f.vulnClass} [${f.category}] @ ${f.location} (${f.source})\n` +
+                `${i + 1}. [${f.severity}] ${f.vulnClass} [${f.category}] @ ${f.location} (${f.source})` +
+                `${f.speculative ? " [SPECULATIVE]" : ""} [confidence: ${f.confidence}]\n` +
                 `   evidence: ${f.evidence}\n   remediation: ${f.remediation}`,
             )
             .join("\n")

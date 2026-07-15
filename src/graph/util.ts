@@ -7,11 +7,12 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { logger } from "../config/logger.js";
 import { messageText } from "../llm/message-text.js";
 import { isVulnId } from "../knowledge/solana-vulns.js";
-import { type Finding, type Severity, SEVERITY_RANK } from "./state.js";
+import { type Finding, type Severity, type Confidence, SEVERITY_RANK } from "./state.js";
 
 export { messageText };
 
 const VALID_SEVERITY = new Set(Object.keys(SEVERITY_RANK));
+const VALID_CONFIDENCE = new Set(["high", "medium", "low"] as Confidence[]);
 
 /**
  * Coerce loosely-typed LLM output into `Finding[]`, forcing `source` and
@@ -34,6 +35,7 @@ export function coerceFindings(
     .map((f) => {
       const sev = String(f.severity ?? "info").toLowerCase();
       const rawCategory = String(f.category ?? "");
+      const conf = String(f.confidence ?? "").toLowerCase();
       return {
         vulnClass: String(f.vulnClass ?? f.vuln_class ?? "unknown"),
         location: String(f.location ?? ""),
@@ -42,6 +44,8 @@ export function coerceFindings(
         remediation: String(f.remediation ?? ""),
         source,
         category: isVulnId(rawCategory) ? rawCategory : "other",
+        speculative: Boolean(f.speculative ?? false),
+        confidence: (VALID_CONFIDENCE.has(conf as Confidence) ? conf : "medium") as Confidence,
       };
     });
 }
@@ -55,6 +59,20 @@ export function extractChecked(raw: unknown): string[] {
   const checked = (raw as Record<string, unknown>).checked;
   if (!Array.isArray(checked)) return [];
   return checked.filter((id): id is string => typeof id === "string" && isVulnId(id));
+}
+
+/**
+ * Tag findings as speculative with low confidence and downgrade severity to
+ * `info`. Used when the audit is black-box (no source code) or the target is
+ * a known canonical program where heuristic pattern-matching produces noise.
+ */
+export function downgradeSpeculative(findings: Finding[]): Finding[] {
+  return findings.map((f) => ({
+    ...f,
+    speculative: true,
+    confidence: "low" as Confidence,
+    severity: "info" as Severity,
+  }));
 }
 
 /** Invoke the chat model with a system + human message and return text. */

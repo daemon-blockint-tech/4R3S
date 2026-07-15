@@ -36,6 +36,8 @@ function makeFakeChat(): BaseChatModel {
                 evidence: "unchecked add",
                 remediation: "use checked_add",
                 category: "integer-overflow-underflow",
+                speculative: false,
+                confidence: "high",
               },
             ],
             checked: ["integer-overflow-underflow", "missing-signer-check"],

@@ -9,6 +9,7 @@ export {
   type AresStateUpdate,
   type Finding,
   type Severity,
+  type Confidence,
   type IntakeSummary,
   type MemoryWrite,
 } from "./state.js";

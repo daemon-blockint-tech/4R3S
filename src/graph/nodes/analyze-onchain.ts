@@ -6,9 +6,10 @@
 import { analyzeSystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
 import { loadProgram } from "../../tools/solana.js";
+import { isKnownProgram, getKnownProgram } from "../../knowledge/known-programs.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate, Finding } from "../state.js";
-import { chatJson, coerceFindings, extractChecked } from "../util.js";
+import { chatJson, coerceFindings, extractChecked, downgradeSpeculative } from "../util.js";
 
 export function makeAnalyzeOnchainNode(deps: GraphDeps) {
   return async function analyzeOnchain(
@@ -36,9 +37,10 @@ export function makeAnalyzeOnchainNode(deps: GraphDeps) {
       "",
       state.intake ? `Intake: ${state.intake.summary}` : "",
       "",
-      "Based ONLY on this evidence, return a JSON array of findings. Each finding:",
-      "{ vulnClass, location, severity (info|low|medium|high|critical), evidence, remediation }.",
-      "If the evidence shows no security-relevant signal, return [].",
+      "Based ONLY on this evidence, return a JSON object: { findings: [...], checked: [...] }.",
+      "Each finding: { category, vulnClass, location, severity, evidence, remediation }.",
+      "List every checklist class you evaluated in checked, even if no issue was found.",
+      "If the evidence shows no security-relevant signal, return { findings: [], checked: [...] }.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -49,11 +51,20 @@ export function makeAnalyzeOnchainNode(deps: GraphDeps) {
       human,
       [],
     );
-    const findings: Finding[] = coerceFindings(raw, "onchain");
+    let findings: Finding[] = coerceFindings(raw, "onchain");
     const coverage = extractChecked(raw);
 
+    // Downgrade on-chain findings for known canonical programs.
+    if (state.programAddress && isKnownProgram(state.programAddress)) {
+      findings = downgradeSpeculative(findings);
+      logger.info(
+        { component: "node.analyze-onchain", reason: `known program (${getKnownProgram(state.programAddress)?.name})`, downgraded: findings.length },
+        "Findings downgraded to speculative",
+      );
+    }
+
     logger.info(
-      { component: "node.analyze-onchain", findings: findings.length, coverage: coverage.length },
+      { component: "node.analyze-onchain", findings: findings.length, coverage: coverage.length, speculative: findings.filter((f) => f.speculative).length },
       "On-chain analysis complete",
     );
     return { findings, coverage, iterations: 1 };

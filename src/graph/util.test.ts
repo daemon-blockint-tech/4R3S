@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { coerceFindings, extractChecked, messageText } from "./util.js";
+import { coerceFindings, extractChecked, downgradeSpeculative, messageText } from "./util.js";
 
 describe("coerceFindings", () => {
   it("normalizes valid findings and forces the source", () => {
@@ -12,6 +12,8 @@ describe("coerceFindings", () => {
         evidence: "e",
         remediation: "r",
         category: "integer-overflow-underflow",
+        speculative: true,
+        confidence: "low",
       },
     ];
     const out = coerceFindings(raw, "onchain");
@@ -20,6 +22,8 @@ describe("coerceFindings", () => {
     expect(out[0]!.severity).toBe("high");
     expect(out[0]!.vulnClass).toBe("arithmetic-overflow");
     expect(out[0]!.category).toBe("integer-overflow-underflow");
+    expect(out[0]!.speculative).toBe(true);
+    expect(out[0]!.confidence).toBe("low");
   });
 
   it("defaults invalid severity to info and fills missing fields", () => {
@@ -28,6 +32,8 @@ describe("coerceFindings", () => {
     expect(out[0]!.location).toBe("");
     expect(out[0]!.remediation).toBe("");
     expect(out[0]!.category).toBe("other");
+    expect(out[0]!.speculative).toBe(false);
+    expect(out[0]!.confidence).toBe("medium");
   });
 
   it("accepts object-with-findings form and coerces category", () => {
@@ -40,6 +46,8 @@ describe("coerceFindings", () => {
           evidence: "no is_signer check",
           remediation: "add Signer constraint",
           category: "missing-signer-check",
+          speculative: false,
+          confidence: "high",
         },
       ],
       checked: ["missing-signer-check", "bogus-id", "integer-overflow-underflow"],
@@ -48,6 +56,7 @@ describe("coerceFindings", () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.category).toBe("missing-signer-check");
     expect(out[0]!.vulnClass).toBe("missing signer");
+    expect(out[0]!.confidence).toBe("high");
   });
 
   it("defaults invalid category to other", () => {
@@ -67,6 +76,17 @@ describe("coerceFindings", () => {
     const out = coerceFindings(raw, "static");
     expect(out).toHaveLength(1);
     expect(out[0]!.category).toBe("other");
+  });
+
+  it("downgradeSpeculative tags findings as speculative with low confidence and info severity", () => {
+    const findings = coerceFindings(
+      [{ vulnClass: "x", severity: "high", category: "missing-signer-check" }],
+      "heuristic",
+    );
+    const downgraded = downgradeSpeculative(findings);
+    expect(downgraded[0]!.speculative).toBe(true);
+    expect(downgraded[0]!.confidence).toBe("low");
+    expect(downgraded[0]!.severity).toBe("info");
   });
 
   it("returns [] for non-array / malformed input", () => {

@@ -50,6 +50,8 @@ function toFinding(f: SemgrepFinding): Finding {
     remediation: "Review the flagged code against the Semgrep rule guidance.",
     source: "static",
     category: mapCategory(f.ruleId),
+    speculative: false,
+    confidence: "high",
   };
 }
 

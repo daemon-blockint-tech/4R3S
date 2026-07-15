@@ -6,9 +6,10 @@
  */
 import { analyzeSystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
+import { isKnownProgram, getKnownProgram } from "../../knowledge/known-programs.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate, Finding } from "../state.js";
-import { chatJson, coerceFindings, extractChecked } from "../util.js";
+import { chatJson, coerceFindings, extractChecked, downgradeSpeculative } from "../util.js";
 
 export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
   return async function analyzeHeuristic(
@@ -46,11 +47,28 @@ export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
       human,
       [],
     );
-    const findings: Finding[] = coerceFindings(raw, "heuristic");
+    let findings: Finding[] = coerceFindings(raw, "heuristic");
     const coverage = extractChecked(raw);
 
+    // Downgrade heuristic findings to speculative when:
+    //   1. No source code available (black-box audit), OR
+    //   2. Target is a known canonical program (noise from pattern-matching).
+    const target = state.programAddress ?? state.intake?.target ?? "";
+    const known = target ? isKnownProgram(target) : false;
+    const noSource = !state.sourcePath;
+    if (known || noSource) {
+      const reason = known
+        ? `known program (${getKnownProgram(target)?.name})`
+        : "no source code (black-box)";
+      findings = downgradeSpeculative(findings);
+      logger.info(
+        { component: "node.analyze-heuristic", reason, downgraded: findings.length },
+        "Findings downgraded to speculative",
+      );
+    }
+
     logger.info(
-      { component: "node.analyze-heuristic", findings: findings.length, coverage: coverage.length },
+      { component: "node.analyze-heuristic", findings: findings.length, coverage: coverage.length, speculative: findings.filter((f) => f.speculative).length },
       "Heuristic analysis complete",
     );
     return { findings, coverage, iterations: 1 };

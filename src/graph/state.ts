@@ -11,6 +11,7 @@ import { Annotation } from "@langchain/langgraph";
 import type { ScoredCrystal, KnowledgeLevel } from "../memory/types.js";
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
+export type Confidence = "high" | "medium" | "low";
 
 /** Severity ordering for ranking (higher = more severe). */
 export const SEVERITY_RANK: Record<Severity, number> = {
@@ -36,6 +37,10 @@ export interface Finding {
   source: "onchain" | "static" | "heuristic" | "cua";
   /** Catalog vulnerability id (from VULN_CATALOG), or "other". */
   category: string;
+  /** True when the finding is pattern-based without code-level evidence. */
+  speculative: boolean;
+  /** Confidence level: high (tool/code evidence), medium (partial), low (speculative). */
+  confidence: Confidence;
 }
 
 /** Structured output of the INTAKE phase. */
