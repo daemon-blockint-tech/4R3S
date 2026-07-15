@@ -56,12 +56,12 @@ export class CrystallineStore {
 
   async start(): Promise<void> {
     await this.store.start?.();
-    logger.debug({ component: "crystalline" }, "Crystalline store started");
+    log.debug("Crystalline store started", { component: "crystalline" });
   }
 
   async stop(): Promise<void> {
     await this.store.stop?.();
-    logger.debug({ component: "crystalline" }, "Crystalline store stopped");
+    log.debug("Crystalline store stopped", { component: "crystalline" });
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -89,10 +89,12 @@ export class CrystallineStore {
       tags: init.tags ?? [],
     };
     await this.persist(crystal);
-    logger.debug(
-      { component: "crystalline", level, id: crystal.id, tags: crystal.tags },
-      "Crystallized new memory",
-    );
+    log.debug("Crystallized new memory", {
+      component: "crystalline",
+      level,
+      id: crystal.id,
+      tags: crystal.tags,
+    });
     return crystal;
   }
 
@@ -131,7 +133,7 @@ export class CrystallineStore {
 
   /** Delete a crystal. */
   async forget(crystalId: string, level: KnowledgeLevel): Promise<void> {
-    await this.store.delete(levelNamespace(level), [crystalId]);
+    await this.store.delete(levelNamespace(level), crystalId);
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -143,8 +145,7 @@ export class CrystallineStore {
     crystalId: string,
     level: KnowledgeLevel,
   ): Promise<Crystal | undefined> {
-    const items = await this.store.get(levelNamespace(level), [crystalId]);
-    const raw = items?.[0];
+    const raw = await this.store.get(levelNamespace(level), crystalId);
     if (!raw) return undefined;
     return this.deserialize(raw);
   }
@@ -164,8 +165,8 @@ export class CrystallineStore {
     // Gather candidates across levels, optionally filtered by tags.
     const candidates: Crystal[] = [];
     for (const level of levels) {
-      const resp = await this.searchLevel(level, query.tags, 200);
-      for (const item of resp.items ?? []) {
+      const items = await this.searchLevel(level, query.tags, 200);
+      for (const item of items) {
         const c = this.deserialize(item);
         if (c) candidates.push(c);
       }
@@ -233,9 +234,9 @@ export class CrystallineStore {
     };
 
     for (const level of LEVEL_ORDER) {
-      const resp = await this.searchLevel(level, undefined, 500);
+      const items = await this.searchLevel(level, undefined, 500);
       const crystals: Crystal[] = [];
-      for (const item of resp.items ?? []) {
+      for (const item of items) {
         const c = this.deserialize(item);
         if (c) crystals.push(c);
       }
@@ -294,15 +295,12 @@ export class CrystallineStore {
       }
     }
 
-    logger.info(
-      {
-        component: "crystalline",
-        promoted: report.promoted.length,
-        pruned: report.pruned.length,
-        merged: report.merged.length,
-      },
-      "Consolidation pass complete",
-    );
+    log.info("Consolidation pass complete", {
+      component: "crystalline",
+      promoted: report.promoted.length,
+      pruned: report.pruned.length,
+      merged: report.merged.length,
+    });
     return report;
   }
 
@@ -318,20 +316,15 @@ export class CrystallineStore {
 
   private async persist(c: Crystal): Promise<void> {
     const payload: StoredCrystal = { v: 1, crystal: c };
-    const batch: BaseStoreItemBatch = {
-      namespace: levelNamespace(c.level),
-      items: [
-        {
-          key: c.id,
-          value: payload as unknown as Record<string, unknown>,
-          index: c.embedding ? { 0: c.embedding } : undefined,
-        },
-      ],
-    };
-    await this.store.batch([batch]);
+    await this.store.put(
+      levelNamespace(c.level),
+      c.id,
+      payload as unknown as Record<string, unknown>,
+      c.embedding ? [String(0)] : undefined,
+    );
   }
 
-  private deserialize(item: BaseStoreItem): Crystal | undefined {
+  private deserialize(item: Item): Crystal | undefined {
     const raw = item.value as unknown as StoredCrystal;
     if (!raw || raw.v !== 1) return undefined;
     return raw.crystal;
@@ -341,7 +334,7 @@ export class CrystallineStore {
     level: KnowledgeLevel,
     tags: string[] | undefined,
     limit: number,
-  ): Promise<BaseStoreSearchResponse> {
+  ): Promise<SearchItem[]> {
     const filter = tags && tags.length > 0 ? { tags: { $in: tags } } : undefined;
     return this.store.search(levelNamespace(level), {
       filter,
