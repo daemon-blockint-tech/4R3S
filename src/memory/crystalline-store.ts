@@ -4,7 +4,12 @@
  * Crystals are persisted as store items keyed by id under per-level namespaces.
  * The store handles serialization; this class adds the cognitive envelope:
  * activation decay, spreading activation, consolidation, and level promotion.
+ *
+ * Embeddings are kept inside the stored value and similarity is computed here
+ * (rather than delegating to store-level vector indexing) so the same logic
+ * works across any BaseStore implementation, including the in-memory store.
  */
+import type { BaseStore, Item } from "@langchain/langgraph";
 import type {
   BaseStore,
   Item,
@@ -55,12 +60,12 @@ export class CrystallineStore {
   // ──────────────────────────────────────────────────────────────────────
 
   async start(): Promise<void> {
-    await this.store.start?.();
+    await (this.store as { start?: () => Promise<void> }).start?.();
     logger.debug({ component: "crystalline" }, "Crystalline store started");
   }
 
   async stop(): Promise<void> {
-    await this.store.stop?.();
+    await (this.store as { stop?: () => Promise<void> }).stop?.();
     logger.debug({ component: "crystalline" }, "Crystalline store stopped");
   }
 
@@ -131,7 +136,7 @@ export class CrystallineStore {
 
   /** Delete a crystal. */
   async forget(crystalId: string, level: KnowledgeLevel): Promise<void> {
-    await this.store.delete(levelNamespace(level), [crystalId]);
+    await this.store.delete(levelNamespace(level), crystalId);
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -143,10 +148,9 @@ export class CrystallineStore {
     crystalId: string,
     level: KnowledgeLevel,
   ): Promise<Crystal | undefined> {
-    const items = await this.store.get(levelNamespace(level), [crystalId]);
-    const raw = items?.[0];
-    if (!raw) return undefined;
-    return this.deserialize(raw);
+    const item = await this.store.get(levelNamespace(level), crystalId);
+    if (!item) return undefined;
+    return this.deserialize(item);
   }
 
   /**
@@ -164,8 +168,8 @@ export class CrystallineStore {
     // Gather candidates across levels, optionally filtered by tags.
     const candidates: Crystal[] = [];
     for (const level of levels) {
-      const resp = await this.searchLevel(level, query.tags, 200);
-      for (const item of resp.items ?? []) {
+      const items = await this.searchLevel(level, query.tags, 200);
+      for (const item of items) {
         const c = this.deserialize(item);
         if (c) candidates.push(c);
       }
@@ -174,9 +178,10 @@ export class CrystallineStore {
     // Score each candidate.
     const scored = candidates.map((c) => {
       const act = this.decayedActivation(c);
-      const sim = query.queryEmbedding && c.embedding
-        ? cosineSimilarity(query.queryEmbedding, c.embedding)
-        : tagSimilarity(query.query, c.tags);
+      const sim =
+        query.queryEmbedding && c.embedding
+          ? cosineSimilarity(query.queryEmbedding, c.embedding)
+          : tagSimilarity(query.query, c.tags);
       const base = act * 0.4 + sim * 0.6;
       return { crystal: c, score: base, act };
     });
@@ -233,9 +238,9 @@ export class CrystallineStore {
     };
 
     for (const level of LEVEL_ORDER) {
-      const resp = await this.searchLevel(level, undefined, 500);
+      const items = await this.searchLevel(level, undefined, 500);
       const crystals: Crystal[] = [];
-      for (const item of resp.items ?? []) {
+      for (const item of items) {
         const c = this.deserialize(item);
         if (c) crystals.push(c);
       }
@@ -318,34 +323,37 @@ export class CrystallineStore {
 
   private async persist(c: Crystal): Promise<void> {
     const payload: StoredCrystal = { v: 1, crystal: c };
-    const batch: BaseStoreItemBatch = {
-      namespace: levelNamespace(c.level),
-      items: [
-        {
-          key: c.id,
-          value: payload as unknown as Record<string, unknown>,
-          index: c.embedding ? { 0: c.embedding } : undefined,
-        },
-      ],
-    };
-    await this.store.batch([batch]);
+    // Store the whole payload under the crystal id; no store-level index —
+    // similarity is computed in `recall` from the embedding kept in `value`.
+    await this.store.put(
+      levelNamespace(c.level),
+      c.id,
+      payload as unknown as Record<string, unknown>,
+    );
   }
 
-  private deserialize(item: BaseStoreItem): Crystal | undefined {
+  private deserialize(item: Item): Crystal | undefined {
     const raw = item.value as unknown as StoredCrystal;
     if (!raw || raw.v !== 1) return undefined;
     return raw.crystal;
   }
 
+  /**
+   * List crystals in a level, optionally filtered by tag overlap. Tag matching
+   * is done in-memory (rather than via store filter operators) so it works
+   * uniformly across store backends and against array-valued `tags`.
+   */
   private async searchLevel(
     level: KnowledgeLevel,
     tags: string[] | undefined,
     limit: number,
-  ): Promise<BaseStoreSearchResponse> {
-    const filter = tags && tags.length > 0 ? { tags: { $in: tags } } : undefined;
-    return this.store.search(levelNamespace(level), {
-      filter,
-      limit,
+  ): Promise<Item[]> {
+    const items = await this.store.search(levelNamespace(level), { limit });
+    if (!tags || tags.length === 0) return items;
+    const wanted = new Set(tags);
+    return items.filter((item) => {
+      const c = this.deserialize(item);
+      return c ? c.tags.some((t) => wanted.has(t)) : false;
     });
   }
 
@@ -383,7 +391,7 @@ export class CrystallineStore {
 // Vector helpers
 // ──────────────────────────────────────────────────────────────────────
 
-function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   let dot = 0;
   let na = 0;
