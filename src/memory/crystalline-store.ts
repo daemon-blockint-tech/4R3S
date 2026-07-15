@@ -9,8 +9,7 @@
  * (rather than delegating to store-level vector indexing) so the same logic
  * works across any BaseStore implementation, including the in-memory store.
  */
-import type { BaseStore, Item, OperationResults } from "@langchain/langgraph";
-import type { SearchItem } from "@langchain/langgraph-checkpoint";
+import type { BaseStore, Item } from "@langchain/langgraph";
 import { v4 as uuidv4 } from "uuid";
 
 import { log } from "../config/logger.js";
