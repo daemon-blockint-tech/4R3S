@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 
-import { coerceFindings, extractChecked, downgradeSpeculative, messageText } from "./util.js";
+import {
+  coerceFindings,
+  extractChecked,
+  downgradeSpeculative,
+  coerceVerdicts,
+  applyVerdicts,
+  messageText,
+} from "./util.js";
 
 describe("coerceFindings", () => {
   it("normalizes valid findings and forces the source", () => {
@@ -110,6 +117,71 @@ describe("extractChecked", () => {
     expect(extractChecked({ findings: [] })).toEqual([]);
     expect(extractChecked(null)).toEqual([]);
     expect(extractChecked("nope")).toEqual([]);
+  });
+});
+
+describe("coerceVerdicts", () => {
+  it("parses the object-with-verdicts form and validates fields", () => {
+    const raw = {
+      verdicts: [
+        { index: 0, status: "confirmed", confidence: "high", reason: "ok" },
+        { index: 1, status: "false-positive", confidence: "low", reason: "no evidence" },
+      ],
+    };
+    const out = coerceVerdicts(raw, 2);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ index: 0, status: "confirmed", confidence: "high" });
+    expect(out[1]!.status).toBe("false-positive");
+  });
+
+  it("drops out-of-range, duplicate, and invalid-status entries", () => {
+    const raw = {
+      verdicts: [
+        { index: 0, status: "confirmed", confidence: "high" },
+        { index: 0, status: "suspected", confidence: "low" }, // duplicate index
+        { index: 5, status: "confirmed", confidence: "high" }, // out of range
+        { index: 1, status: "bogus", confidence: "high" }, // invalid status
+      ],
+    };
+    const out = coerceVerdicts(raw, 3);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.index).toBe(0);
+  });
+
+  it("defaults invalid confidence to low and returns [] for malformed input", () => {
+    expect(coerceVerdicts([{ index: 0, status: "suspected", confidence: "nope" }], 1)[0]!.confidence).toBe("low");
+    expect(coerceVerdicts(null, 3)).toEqual([]);
+    expect(coerceVerdicts("nope", 3)).toEqual([]);
+  });
+});
+
+describe("applyVerdicts", () => {
+  const base = coerceFindings(
+    [
+      { vulnClass: "a", severity: "high", category: "missing-signer-check", confidence: "high" },
+      { vulnClass: "b", severity: "medium", category: "arbitrary-cpi", confidence: "medium" },
+    ],
+    "heuristic",
+  );
+
+  it("drops false-positives and sets status/confidence on survivors", () => {
+    const { kept, dropped } = applyVerdicts(base, [
+      { index: 0, status: "confirmed", confidence: "high", reason: "" },
+      { index: 1, status: "false-positive", confidence: "low", reason: "" },
+    ]);
+    expect(dropped).toBe(1);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.vulnClass).toBe("a");
+    expect(kept[0]!.status).toBe("confirmed");
+  });
+
+  it("keeps findings with no verdict, marking them suspected", () => {
+    const { kept, dropped } = applyVerdicts(base, []);
+    expect(dropped).toBe(0);
+    expect(kept).toHaveLength(2);
+    expect(kept.every((f) => f.status === "suspected")).toBe(true);
+    // Confidence is preserved when no verdict overrides it.
+    expect(kept[0]!.confidence).toBe("high");
   });
 });
 

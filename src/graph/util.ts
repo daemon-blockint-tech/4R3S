@@ -7,12 +7,23 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { logger } from "../config/logger.js";
 import { messageText } from "../llm/message-text.js";
 import { isVulnId } from "../knowledge/solana-vulns.js";
-import { type Finding, type Severity, type Confidence, SEVERITY_RANK } from "./state.js";
+import {
+  type Finding,
+  type Severity,
+  type Confidence,
+  type FindingStatus,
+  SEVERITY_RANK,
+} from "./state.js";
 
 export { messageText };
 
 const VALID_SEVERITY = new Set(Object.keys(SEVERITY_RANK));
 const VALID_CONFIDENCE = new Set(["high", "medium", "low"] as Confidence[]);
+const VALID_STATUS = new Set([
+  "confirmed",
+  "suspected",
+  "false-positive",
+] as FindingStatus[]);
 
 /**
  * Coerce loosely-typed LLM output into `Finding[]`, forcing `source` and
@@ -73,6 +84,77 @@ export function downgradeSpeculative(findings: Finding[]): Finding[] {
     confidence: "low" as Confidence,
     severity: "info" as Severity,
   }));
+}
+
+/** A single VERIFY verdict, keyed to a finding by its index. */
+export interface Verdict {
+  index: number;
+  status: FindingStatus;
+  confidence: Confidence;
+  reason: string;
+}
+
+/**
+ * Parse the VERIFY phase LLM response into verdicts keyed by finding index.
+ * Accepts either a bare array or an object with a `.verdicts` array. Entries
+ * with an out-of-range index, or an invalid status/confidence, are dropped.
+ */
+export function coerceVerdicts(raw: unknown, count: number): Verdict[] {
+  const arr = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object" && Array.isArray((raw as Record<string, unknown>).verdicts)
+      ? ((raw as Record<string, unknown>).verdicts as unknown[])
+      : null;
+  if (!arr) return [];
+  const seen = new Set<number>();
+  const out: Verdict[] = [];
+  for (const v of arr) {
+    if (!v || typeof v !== "object") continue;
+    const o = v as Record<string, unknown>;
+    const index = Number(o.index);
+    if (!Number.isInteger(index) || index < 0 || index >= count || seen.has(index)) {
+      continue;
+    }
+    const status = String(o.status ?? "").toLowerCase();
+    const conf = String(o.confidence ?? "").toLowerCase();
+    if (!VALID_STATUS.has(status as FindingStatus)) continue;
+    seen.add(index);
+    out.push({
+      index,
+      status: status as FindingStatus,
+      confidence: (VALID_CONFIDENCE.has(conf as Confidence) ? conf : "low") as Confidence,
+      reason: String(o.reason ?? ""),
+    });
+  }
+  return out;
+}
+
+/**
+ * Apply VERIFY verdicts to the merged findings: set each finding's `status` and
+ * `confidence`, and drop those judged `false-positive`. A finding with no
+ * verdict is kept and marked `suspected` (never silently dropped). Returns the
+ * surviving findings and the count dropped.
+ */
+export function applyVerdicts(
+  findings: Finding[],
+  verdicts: Verdict[],
+): { kept: Finding[]; dropped: number } {
+  const byIndex = new Map(verdicts.map((v) => [v.index, v]));
+  const kept: Finding[] = [];
+  let dropped = 0;
+  findings.forEach((f, i) => {
+    const v = byIndex.get(i);
+    if (v?.status === "false-positive") {
+      dropped += 1;
+      return;
+    }
+    kept.push({
+      ...f,
+      status: v?.status ?? "suspected",
+      confidence: v?.confidence ?? f.confidence,
+    });
+  });
+  return { kept, dropped };
 }
 
 /** Invoke the chat model with a system + human message and return text. */

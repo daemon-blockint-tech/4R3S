@@ -2,9 +2,9 @@
  * ARES audit graph state.
  *
  * Channels flow through the phases INTAKE → RECALL → [parallel ANALYZE] →
- * MERGE → REMEMBER → REPORT. `findings` uses a concat reducer so the parallel
- * analyzer nodes can append concurrently in one superstep without clobbering
- * each other; most other channels are last-value.
+ * MERGE → VERIFY → REMEMBER → REPORT. `findings` uses a concat reducer so the
+ * parallel analyzer nodes can append concurrently in one superstep without
+ * clobbering each other; most other channels are last-value.
  */
 import { Annotation } from "@langchain/langgraph";
 
@@ -12,6 +12,8 @@ import type { ScoredCrystal, KnowledgeLevel } from "../memory/types.js";
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 export type Confidence = "high" | "medium" | "low";
+/** Verdict from the VERIFY phase. Undefined until a finding has been reviewed. */
+export type FindingStatus = "confirmed" | "suspected" | "false-positive";
 
 /** Severity ordering for ranking (higher = more severe). */
 export const SEVERITY_RANK: Record<Severity, number> = {
@@ -41,6 +43,8 @@ export interface Finding {
   speculative: boolean;
   /** Confidence level: high (tool/code evidence), medium (partial), low (speculative). */
   confidence: Confidence;
+  /** VERIFY verdict. Undefined on freshly-produced (unverified) findings. */
+  status?: FindingStatus;
 }
 
 /** Structured output of the INTAKE phase. */
@@ -80,6 +84,14 @@ export const AresStateAnnotation = Annotation.Root({
   }),
   /** Deduped + severity-ranked findings produced by the MERGE node. */
   mergedFindings: Annotation<Finding[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  /**
+   * Findings that survived the VERIFY critic pass, with confidence/status
+   * refined and clear false-positives dropped. REMEMBER and REPORT consume this.
+   */
+  verifiedFindings: Annotation<Finding[]>({
     reducer: (_prev, next) => next,
     default: () => [],
   }),

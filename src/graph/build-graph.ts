@@ -2,9 +2,10 @@
  * Audit graph assembly.
  *
  * INTAKE → RECALL → { analyzeOnchain, analyzeStatic, analyzeHeuristic, analyzeCua }
- * → MERGE → REMEMBER → REPORT. The analyzer nodes form a parallel superstep:
- * RECALL fans out to all of them, and MERGE (fan-in) runs only after all
- * complete. `analyzeCua` is opt-in and returns no findings unless CUA is
+ * → MERGE → VERIFY → REMEMBER → REPORT. The analyzer nodes form a parallel
+ * superstep: RECALL fans out to all of them, and MERGE (fan-in) runs only after
+ * all complete. VERIFY is a critic pass that refines confidence/status and drops
+ * false-positives. `analyzeCua` is opt-in and returns no findings unless CUA is
  * enabled and configured (see `src/tools/cua.ts`).
  */
 import { StateGraph, START, END } from "@langchain/langgraph";
@@ -19,6 +20,7 @@ import { makeAnalyzeStaticNode } from "./nodes/analyze-static.js";
 import { makeAnalyzeHeuristicNode } from "./nodes/analyze-heuristic.js";
 import { makeAnalyzeCuaNode } from "./nodes/analyze-cua.js";
 import { makeMergeNode } from "./nodes/merge.js";
+import { makeVerifyNode } from "./nodes/verify.js";
 import { makeRememberNode } from "./nodes/remember.js";
 import { makeReportNode } from "./nodes/report.js";
 
@@ -44,6 +46,7 @@ export function buildAuditGraph({
     .addNode("analyzeHeuristic", makeAnalyzeHeuristicNode(deps))
     .addNode("analyzeCua", makeAnalyzeCuaNode(deps))
     .addNode("mergePhase", makeMergeNode())
+    .addNode("verifyPhase", makeVerifyNode(deps))
     .addNode("rememberPhase", makeRememberNode(deps))
     .addNode("reportPhase", makeReportNode(deps))
     .addEdge(START, "intakePhase")
@@ -58,7 +61,9 @@ export function buildAuditGraph({
     .addEdge("analyzeStatic", "mergePhase")
     .addEdge("analyzeHeuristic", "mergePhase")
     .addEdge("analyzeCua", "mergePhase")
-    .addEdge("mergePhase", "rememberPhase")
+    // Critic pass, then persist + report from the verified set.
+    .addEdge("mergePhase", "verifyPhase")
+    .addEdge("verifyPhase", "rememberPhase")
     .addEdge("rememberPhase", "reportPhase")
     .addEdge("reportPhase", END);
 

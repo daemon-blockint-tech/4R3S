@@ -44,6 +44,20 @@ function makeFakeChat(): BaseChatModel {
           }),
         };
       }
+      if (sys.includes("VERIFY")) {
+        return {
+          content: JSON.stringify({
+            verdicts: [
+              {
+                index: 0,
+                status: "confirmed",
+                confidence: "high",
+                reason: "unchecked add is concretely evidenced",
+              },
+            ],
+          }),
+        };
+      }
       if (sys.includes("REMEMBER")) {
         return {
           content: JSON.stringify([
@@ -87,11 +101,16 @@ describe("audit graph (end to end)", () => {
     expect(result.coverage.length).toBeGreaterThanOrEqual(1);
     expect(result.coverage).toContain("integer-overflow-underflow");
     expect(result.coverage).toContain("missing-signer-check");
+    // VERIFY critic pass ran: the finding survived, and its status/confidence
+    // are set from the verdict.
+    expect(result.verifiedFindings.length).toBeGreaterThanOrEqual(1);
+    expect(result.verifiedFindings[0]!.status).toBe("confirmed");
+    expect(result.verifiedFindings[0]!.confidence).toBe("high");
     // CUA is opt-in and unconfigured in the test env: the 4th analyzer runs
     // as part of the fan-out but contributes nothing.
     expect(result.findings.some((f) => f.source === "cua")).toBe(false);
-    // intake + heuristic + remember + report each count one LLM turn.
-    expect(result.iterations).toBeGreaterThanOrEqual(4);
+    // intake + heuristic + verify + remember + report each count one LLM turn.
+    expect(result.iterations).toBeGreaterThanOrEqual(5);
   });
 
   it("persists a crystal in the REMEMBER phase", async () => {

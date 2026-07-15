@@ -10,6 +10,7 @@ export {
   type Finding,
   type Severity,
   type Confidence,
+  type FindingStatus,
   type IntakeSummary,
   type MemoryWrite,
 } from "./state.js";
