@@ -8,7 +8,7 @@ import { logger } from "../../config/logger.js";
 import { loadProgram } from "../../tools/solana.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate, Finding } from "../state.js";
-import { chatJson, coerceFindings } from "../util.js";
+import { chatJson, coerceFindings, extractChecked } from "../util.js";
 
 export function makeAnalyzeOnchainNode(deps: GraphDeps) {
   return async function analyzeOnchain(
@@ -50,11 +50,12 @@ export function makeAnalyzeOnchainNode(deps: GraphDeps) {
       [],
     );
     const findings: Finding[] = coerceFindings(raw, "onchain");
+    const coverage = extractChecked(raw);
 
     logger.info(
-      { component: "node.analyze-onchain", findings: findings.length },
+      { component: "node.analyze-onchain", findings: findings.length, coverage: coverage.length },
       "On-chain analysis complete",
     );
-    return { findings, iterations: 1 };
+    return { findings, coverage, iterations: 1 };
   };
 }

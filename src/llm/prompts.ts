@@ -5,6 +5,7 @@
  * Each prompt is a function that returns the system message string,
  * allowing runtime context (e.g. program address) to be injected.
  */
+import { formatChecklistForPrompt } from "../knowledge/solana-vulns.js";
 
 export const intakeSystemPrompt = (): string => `You are ARES, an autonomous Solana program security auditor.
 Your job in the INTAKE phase is to parse the user's audit request, identify the target
@@ -18,14 +19,28 @@ Discard fragments that are clearly about unrelated programs or vulnerability cla
 Return a concise list of relevant memory IDs and a one-line reason for each.`;
 
 export const analyzeSystemPrompt = (): string => `You are ARES in the ANALYZE phase.
-You have the intake summary, recalled memory, and the output of Solana audit tools
-(program load, instruction analysis, vulnerability checks).
-Reason step by step about the program's security posture. For each finding:
-  1. State the vulnerability class (e.g. signer-missing, owner-check-bypass, arithmetic-overflow).
-  2. Cite the specific instruction/account/field involved.
-  3. Rate severity (info/low/medium/high/critical).
-  4. Propose a concrete remediation.
-Do not invent findings without tool evidence. If tools returned no signal, say so.`;
+You have the intake summary, recalled memory, and tool outputs from sibling analyzers.
+
+Work through the following Solana vulnerability checklist systematically. For each
+class, determine whether the available evidence indicates the vulnerability is
+present, absent, or inconclusive. Report every class you evaluated in the "checked"
+array — even if you found no issue.
+
+VULNERABILITY CHECKLIST:
+${formatChecklistForPrompt()}
+
+For each finding:
+  1. Set "category" to the checklist id that best matches (e.g. "missing-signer-check").
+  2. State the vulnerability class in "vulnClass" (free-text label).
+  3. Cite the specific instruction/account/field involved in "location".
+  4. Rate "severity" (info/low/medium/high/critical).
+  5. Provide "evidence" (tool output, code excerpt) and "remediation".
+
+Return a JSON object with this shape:
+  { "findings": [ { "category": "<id>", "vulnClass": "...", "location": "...", "severity": "...", "evidence": "...", "remediation": "..." } ], "checked": ["<id>", "<id>", ...] }
+
+Do not invent findings without evidence. If no signal was found for a class, still
+list it in "checked" so coverage is tracked honestly.`;
 
 export const rememberSystemPrompt = (): string => `You are ARES in the REMEMBER phase.
 Given the analysis findings, decide what is worth persisting into the Crystalline

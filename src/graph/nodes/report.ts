@@ -3,6 +3,7 @@
  */
 import { reportSystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
+import { VULN_CATALOG } from "../../knowledge/solana-vulns.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate } from "../state.js";
 import { chatText } from "../util.js";
@@ -20,11 +21,16 @@ export function makeReportNode(deps: GraphDeps) {
         ? findings
             .map(
               (f, i) =>
-                `${i + 1}. [${f.severity}] ${f.vulnClass} @ ${f.location} (${f.source})\n` +
+                `${i + 1}. [${f.severity}] ${f.vulnClass} [${f.category}] @ ${f.location} (${f.source})\n` +
                 `   evidence: ${f.evidence}\n   remediation: ${f.remediation}`,
             )
             .join("\n")
         : "(no findings)",
+      "",
+      `Coverage: checked ${state.coverage.length} of ${VULN_CATALOG.length} vulnerability classes.`,
+      state.coverage.length
+        ? `Checked classes: ${state.coverage.join(", ")}`
+        : "(no coverage reported)",
       "",
       "Write the final audit report in the required markdown structure.",
     ]
