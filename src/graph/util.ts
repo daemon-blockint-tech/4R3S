@@ -5,7 +5,10 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 import { logger } from "../config/logger.js";
+import { messageText } from "../llm/message-text.js";
 import { type Finding, type Severity, SEVERITY_RANK } from "./state.js";
+
+export { messageText };
 
 const VALID_SEVERITY = new Set(Object.keys(SEVERITY_RANK));
 
@@ -31,23 +34,6 @@ export function coerceFindings(
         source,
       };
     });
-}
-
-/** Flatten an LLM message's content into a plain string. */
-export function messageText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) =>
-        typeof part === "string"
-          ? part
-          : part && typeof part === "object" && "text" in part
-            ? String((part as { text: unknown }).text)
-            : "",
-      )
-      .join("");
-  }
-  return String(content ?? "");
 }
 
 /** Invoke the chat model with a system + human message and return text. */

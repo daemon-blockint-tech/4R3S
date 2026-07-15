@@ -27,7 +27,7 @@ export function createChatOpenRouter(
   opts: ChatOpenRouterOptions = {}
 ): ChatOpenAI {
   return new ChatOpenAI({
-    openAIApiKey: env.OPENROUTER_API_KEY,
+    apiKey: env.OPENROUTER_API_KEY,
     modelName: opts.model ?? env.OPENROUTER_MODEL,
     temperature: opts.temperature ?? 0,
     maxTokens: opts.maxTokens,

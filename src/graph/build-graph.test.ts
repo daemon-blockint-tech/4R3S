@@ -77,6 +77,9 @@ describe("audit graph (end to end)", () => {
     expect(result.mergedFindings.length).toBeGreaterThanOrEqual(1);
     expect(result.mergedFindings[0]!.severity).toBe("high");
     expect(result.mergedFindings[0]!.source).toBe("heuristic");
+    // CUA is opt-in and unconfigured in the test env: the 4th analyzer runs
+    // as part of the fan-out but contributes nothing.
+    expect(result.findings.some((f) => f.source === "cua")).toBe(false);
     // intake + heuristic + remember + report each count one LLM turn.
     expect(result.iterations).toBeGreaterThanOrEqual(4);
   });

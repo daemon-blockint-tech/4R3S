@@ -1,9 +1,11 @@
 /**
  * Audit graph assembly.
  *
- * INTAKE → RECALL → { analyzeOnchain, analyzeStatic, analyzeHeuristic } → MERGE
- * → REMEMBER → REPORT. The three analyzer nodes form a parallel superstep: RECALL
- * fans out to all three, and MERGE (fan-in) runs only after all three complete.
+ * INTAKE → RECALL → { analyzeOnchain, analyzeStatic, analyzeHeuristic, analyzeCua }
+ * → MERGE → REMEMBER → REPORT. The analyzer nodes form a parallel superstep:
+ * RECALL fans out to all of them, and MERGE (fan-in) runs only after all
+ * complete. `analyzeCua` is opt-in and returns no findings unless CUA is
+ * enabled and configured (see `src/tools/cua.ts`).
  */
 import { StateGraph, START, END } from "@langchain/langgraph";
 import type { BaseCheckpointSaver, BaseStore } from "@langchain/langgraph";
@@ -15,6 +17,7 @@ import { makeRecallNode } from "./nodes/recall.js";
 import { makeAnalyzeOnchainNode } from "./nodes/analyze-onchain.js";
 import { makeAnalyzeStaticNode } from "./nodes/analyze-static.js";
 import { makeAnalyzeHeuristicNode } from "./nodes/analyze-heuristic.js";
+import { makeAnalyzeCuaNode } from "./nodes/analyze-cua.js";
 import { makeMergeNode } from "./nodes/merge.js";
 import { makeRememberNode } from "./nodes/remember.js";
 import { makeReportNode } from "./nodes/report.js";
@@ -39,6 +42,7 @@ export function buildAuditGraph({
     .addNode("analyzeOnchain", makeAnalyzeOnchainNode(deps))
     .addNode("analyzeStatic", makeAnalyzeStaticNode())
     .addNode("analyzeHeuristic", makeAnalyzeHeuristicNode(deps))
+    .addNode("analyzeCua", makeAnalyzeCuaNode(deps))
     .addNode("mergePhase", makeMergeNode())
     .addNode("rememberPhase", makeRememberNode(deps))
     .addNode("reportPhase", makeReportNode(deps))
@@ -48,10 +52,12 @@ export function buildAuditGraph({
     .addEdge("recallPhase", "analyzeOnchain")
     .addEdge("recallPhase", "analyzeStatic")
     .addEdge("recallPhase", "analyzeHeuristic")
-    // Fan-in: merge waits for all three analyzers.
+    .addEdge("recallPhase", "analyzeCua")
+    // Fan-in: merge waits for all analyzers.
     .addEdge("analyzeOnchain", "mergePhase")
     .addEdge("analyzeStatic", "mergePhase")
     .addEdge("analyzeHeuristic", "mergePhase")
+    .addEdge("analyzeCua", "mergePhase")
     .addEdge("mergePhase", "rememberPhase")
     .addEdge("rememberPhase", "reportPhase")
     .addEdge("reportPhase", END);

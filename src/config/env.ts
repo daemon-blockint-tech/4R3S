@@ -62,6 +62,20 @@ const schema = z.object({
     .url()
     .default("https://github.com/sannykim/solsec.git"),
 
+  // Computer Use Agent (CUA) — browser-driving investigation analyzer.
+  // OPTIONAL and opt-in (CUA_ENABLED / --cua). Note: the CUA model is OpenAI's
+  // computer-use-preview, invoked directly — NOT via OpenRouter — so it needs
+  // its own OPENAI_API_KEY, separate from OPENROUTER_API_KEY.
+  OPENAI_API_KEY: z.string().optional(),
+  SCRAPYBARA_API_KEY: z.string().optional(),
+  CUA_ENABLED: z
+    .string()
+    .transform((v) => v === "true")
+    .default("false"),
+  CUA_ENVIRONMENT: z.enum(["web", "ubuntu", "windows"]).default("web"),
+  CUA_TIMEOUT_HOURS: z.coerce.number().positive().default(1),
+  CUA_RECURSION_LIMIT: z.coerce.number().int().positive().default(100),
+
   // ARES runtime
   ARES_MAX_ITERATIONS: z.coerce.number().int().positive().default(12),
   ARES_THREAD_ID: z.string().default("ares-default"),

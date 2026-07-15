@@ -2,7 +2,7 @@
  * ARES audit graph state.
  *
  * Channels flow through the phases INTAKE → RECALL → [parallel ANALYZE] →
- * MERGE → REMEMBER → REPORT. `findings` uses a concat reducer so the three
+ * MERGE → REMEMBER → REPORT. `findings` uses a concat reducer so the parallel
  * analyzer nodes can append concurrently in one superstep without clobbering
  * each other; most other channels are last-value.
  */
@@ -33,7 +33,7 @@ export interface Finding {
   /** Proposed remediation. */
   remediation: string;
   /** Which analyzer produced it. */
-  source: "onchain" | "static" | "heuristic";
+  source: "onchain" | "static" | "heuristic" | "cua";
 }
 
 /** Structured output of the INTAKE phase. */
