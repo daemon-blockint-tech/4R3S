@@ -32,7 +32,7 @@ function toLevel(level: number | string | undefined): KnowledgeLevel {
 
 export function makeRememberNode(deps: GraphDeps) {
   return async function remember(state: AresState): Promise<AresStateUpdate> {
-    const findings = state.mergedFindings;
+    const findings = state.verifiedFindings;
     if (findings.length === 0) {
       return { memoryWrites: [], iterations: 0 };
     }
