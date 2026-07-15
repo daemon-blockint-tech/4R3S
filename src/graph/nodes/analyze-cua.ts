@@ -13,7 +13,7 @@ import { logger } from "../../config/logger.js";
 import { hasCua, runCuaInvestigation } from "../../tools/cua.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate, Finding } from "../state.js";
-import { chatJson, coerceFindings } from "../util.js";
+import { chatJson, coerceFindings, extractChecked } from "../util.js";
 
 export function makeAnalyzeCuaNode(deps: GraphDeps) {
   return async function analyzeCua(state: AresState): Promise<AresStateUpdate> {
@@ -46,9 +46,10 @@ export function makeAnalyzeCuaNode(deps: GraphDeps) {
       "",
       state.intake ? `Intake: ${state.intake.summary}` : "",
       "",
-      "Based ONLY on this transcript, return a JSON array of findings. Each finding:",
-      "{ vulnClass, location, severity (info|low|medium|high|critical), evidence, remediation }.",
-      "If the transcript shows no security-relevant signal, return [].",
+      "Based ONLY on this transcript, return a JSON object: { findings: [...], checked: [...] }.",
+      "Each finding: { category, vulnClass, location, severity, evidence, remediation }.",
+      "List every checklist class you evaluated in checked, even if no issue was found.",
+      "If the transcript shows no security-relevant signal, return { findings: [], checked: [...] }.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -60,11 +61,12 @@ export function makeAnalyzeCuaNode(deps: GraphDeps) {
       [],
     );
     const findings: Finding[] = coerceFindings(raw, "cua");
+    const coverage = extractChecked(raw);
 
     logger.info(
-      { component: "node.analyze-cua", findings: findings.length },
+      { component: "node.analyze-cua", findings: findings.length, coverage: coverage.length },
       "CUA analysis complete",
     );
-    return { findings, iterations: 1 };
+    return { findings, coverage, iterations: 1 };
   };
 }

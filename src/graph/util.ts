@@ -6,6 +6,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 import { logger } from "../config/logger.js";
 import { messageText } from "../llm/message-text.js";
+import { isVulnId } from "../knowledge/solana-vulns.js";
 import { type Finding, type Severity, SEVERITY_RANK } from "./state.js";
 
 export { messageText };
@@ -14,17 +15,25 @@ const VALID_SEVERITY = new Set(Object.keys(SEVERITY_RANK));
 
 /**
  * Coerce loosely-typed LLM output into `Finding[]`, forcing `source` and
- * validating severity. Non-array / malformed input yields `[]`.
+ * validating severity. Accepts either a bare array or an object with a
+ * `.findings` array (the analyzers now return `{ findings, checked }`).
+ * Non-array / malformed input yields `[]`.
  */
 export function coerceFindings(
   raw: unknown,
   source: Finding["source"],
 ): Finding[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
+  const arr = Array.isArray(raw)
+    ? raw
+    : (raw && typeof raw === "object" && Array.isArray((raw as Record<string, unknown>).findings))
+      ? (raw as Record<string, unknown>).findings as unknown[]
+      : null;
+  if (!arr) return [];
+  return arr
     .filter((f): f is Record<string, unknown> => Boolean(f) && typeof f === "object")
     .map((f) => {
       const sev = String(f.severity ?? "info").toLowerCase();
+      const rawCategory = String(f.category ?? "");
       return {
         vulnClass: String(f.vulnClass ?? f.vuln_class ?? "unknown"),
         location: String(f.location ?? ""),
@@ -32,8 +41,20 @@ export function coerceFindings(
         evidence: String(f.evidence ?? ""),
         remediation: String(f.remediation ?? ""),
         source,
+        category: isVulnId(rawCategory) ? rawCategory : "other",
       };
     });
+}
+
+/**
+ * Extract the `checked` array from an LLM response object, keeping only valid
+ * catalog ids. Returns `[]` if the response has no `.checked` field.
+ */
+export function extractChecked(raw: unknown): string[] {
+  if (!raw || typeof raw !== "object") return [];
+  const checked = (raw as Record<string, unknown>).checked;
+  if (!Array.isArray(checked)) return [];
+  return checked.filter((id): id is string => typeof id === "string" && isVulnId(id));
 }
 
 /** Invoke the chat model with a system + human message and return text. */

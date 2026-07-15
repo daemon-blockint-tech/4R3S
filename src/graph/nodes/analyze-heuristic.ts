@@ -8,7 +8,7 @@ import { analyzeSystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate, Finding } from "../state.js";
-import { chatJson, coerceFindings } from "../util.js";
+import { chatJson, coerceFindings, extractChecked } from "../util.js";
 
 export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
   return async function analyzeHeuristic(
@@ -31,9 +31,11 @@ export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
       memory || "(none)",
       "",
       "Reason about likely vulnerability classes for this target. Return a JSON",
-      "array of hypotheses as findings: { vulnClass, location, severity, evidence,",
-      "remediation }. Mark speculative items as info/low severity and say so in",
-      "evidence. Return [] if you have no basis to hypothesize.",
+      "object: { findings: [...], checked: [...] }. Each finding: { category,",
+      "vulnClass, location, severity, evidence, remediation }. List every checklist",
+      "class you evaluated in checked. Mark speculative items as info/low severity",
+      "and say so in evidence. Return { findings: [], checked: [...] } if you have",
+      "no basis to hypothesize.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -45,11 +47,12 @@ export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
       [],
     );
     const findings: Finding[] = coerceFindings(raw, "heuristic");
+    const coverage = extractChecked(raw);
 
     logger.info(
-      { component: "node.analyze-heuristic", findings: findings.length },
+      { component: "node.analyze-heuristic", findings: findings.length, coverage: coverage.length },
       "Heuristic analysis complete",
     );
-    return { findings, iterations: 1 };
+    return { findings, coverage, iterations: 1 };
   };
 }

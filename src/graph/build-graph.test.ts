@@ -27,15 +27,19 @@ function makeFakeChat(): BaseChatModel {
       }
       if (sys.includes("ANALYZE")) {
         return {
-          content: JSON.stringify([
-            {
-              vulnClass: "arithmetic-overflow",
-              location: "ix:1",
-              severity: "high",
-              evidence: "unchecked add",
-              remediation: "use checked_add",
-            },
-          ]),
+          content: JSON.stringify({
+            findings: [
+              {
+                vulnClass: "arithmetic-overflow",
+                location: "ix:1",
+                severity: "high",
+                evidence: "unchecked add",
+                remediation: "use checked_add",
+                category: "integer-overflow-underflow",
+              },
+            ],
+            checked: ["integer-overflow-underflow", "missing-signer-check"],
+          }),
         };
       }
       if (sys.includes("REMEMBER")) {
@@ -77,6 +81,10 @@ describe("audit graph (end to end)", () => {
     expect(result.mergedFindings.length).toBeGreaterThanOrEqual(1);
     expect(result.mergedFindings[0]!.severity).toBe("high");
     expect(result.mergedFindings[0]!.source).toBe("heuristic");
+    expect(result.mergedFindings[0]!.category).toBe("integer-overflow-underflow");
+    expect(result.coverage.length).toBeGreaterThanOrEqual(1);
+    expect(result.coverage).toContain("integer-overflow-underflow");
+    expect(result.coverage).toContain("missing-signer-check");
     // CUA is opt-in and unconfigured in the test env: the 4th analyzer runs
     // as part of the fan-out but contributes nothing.
     expect(result.findings.some((f) => f.source === "cua")).toBe(false);

@@ -7,6 +7,7 @@
 import { logger } from "../../config/logger.js";
 import { runSemgrep, type SemgrepFinding } from "../../tools/semgrep.js";
 import type { AresState, AresStateUpdate, Finding, Severity } from "../state.js";
+import { VULN_IDS } from "../../knowledge/solana-vulns.js";
 
 /** Map Semgrep severities onto the audit severity scale. */
 function mapSeverity(semgrep: string): Severity {
@@ -20,6 +21,26 @@ function mapSeverity(semgrep: string): Severity {
   }
 }
 
+/** Best-effort map a Semgrep ruleId to a catalog vulnerability id. */
+function mapCategory(ruleId: string): string {
+  const lower = ruleId.toLowerCase();
+  for (const id of VULN_IDS) {
+    if (lower.includes(id) || id.includes(lower)) {
+      return id;
+    }
+  }
+  // Heuristic substring matches for common rule naming patterns.
+  if (lower.includes("overflow") || lower.includes("underflow")) return "integer-overflow-underflow";
+  if (lower.includes("signer")) return "missing-signer-check";
+  if (lower.includes("owner")) return "missing-owner-check";
+  if (lower.includes("cpi")) return "arbitrary-cpi";
+  if (lower.includes("reinit")) return "account-reinitialization";
+  if (lower.includes("pda") || lower.includes("seed")) return "pda-seed-collision";
+  if (lower.includes("close")) return "account-close-revival";
+  if (lower.includes("sysvar")) return "sysvar-spoofing";
+  return "other";
+}
+
 function toFinding(f: SemgrepFinding): Finding {
   return {
     vulnClass: f.ruleId,
@@ -28,6 +49,7 @@ function toFinding(f: SemgrepFinding): Finding {
     evidence: f.message,
     remediation: "Review the flagged code against the Semgrep rule guidance.",
     source: "static",
+    category: mapCategory(f.ruleId),
   };
 }
 
@@ -45,10 +67,11 @@ export function makeAnalyzeStaticNode() {
     }
 
     const findings = result.findings.map(toFinding);
+    const coverage = [...new Set(findings.map((f) => f.category))].filter((id) => id !== "other");
     logger.info(
-      { component: "node.analyze-static", findings: findings.length },
+      { component: "node.analyze-static", findings: findings.length, coverage: coverage.length },
       "Static analysis complete",
     );
-    return { findings };
+    return { findings, coverage };
   };
 }

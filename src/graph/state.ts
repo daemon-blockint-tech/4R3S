@@ -34,6 +34,8 @@ export interface Finding {
   remediation: string;
   /** Which analyzer produced it. */
   source: "onchain" | "static" | "heuristic" | "cua";
+  /** Catalog vulnerability id (from VULN_CATALOG), or "other". */
+  category: string;
 }
 
 /** Structured output of the INTAKE phase. */
@@ -90,6 +92,11 @@ export const AresStateAnnotation = Annotation.Root({
   iterations: Annotation<number>({
     reducer: (prev, next) => prev + next,
     default: () => 0,
+  }),
+  /** Vulnerability classes evaluated across analyzers (catalog ids). */
+  coverage: Annotation<string[]>({
+    reducer: (prev, next) => [...new Set([...prev, ...next])],
+    default: () => [],
   }),
 });
 
