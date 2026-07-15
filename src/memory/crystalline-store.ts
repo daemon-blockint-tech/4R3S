@@ -4,13 +4,13 @@
  * Crystals are persisted as store items keyed by id under per-level namespaces.
  * The store handles serialization; this class adds the cognitive envelope:
  * activation decay, spreading activation, consolidation, and level promotion.
+ *
+ * Embeddings are kept inside the stored value and similarity is computed here
+ * (rather than delegating to store-level vector indexing) so the same logic
+ * works across any BaseStore implementation, including the in-memory store.
  */
-import type {
-  BaseStore,
-  Item,
-  OperationResults,
-  SearchItem,
-} from "@langchain/langgraph-checkpoint";
+import type { BaseStore, Item, OperationResults } from "@langchain/langgraph";
+import type { SearchItem } from "@langchain/langgraph-checkpoint";
 import { v4 as uuidv4 } from "uuid";
 
 import { log } from "../config/logger.js";
@@ -175,9 +175,10 @@ export class CrystallineStore {
     // Score each candidate.
     const scored = candidates.map((c) => {
       const act = this.decayedActivation(c);
-      const sim = query.queryEmbedding && c.embedding
-        ? cosineSimilarity(query.queryEmbedding, c.embedding)
-        : tagSimilarity(query.query, c.tags);
+      const sim =
+        query.queryEmbedding && c.embedding
+          ? cosineSimilarity(query.queryEmbedding, c.embedding)
+          : tagSimilarity(query.query, c.tags);
       const base = act * 0.4 + sim * 0.6;
       return { crystal: c, score: base, act };
     });
@@ -316,11 +317,12 @@ export class CrystallineStore {
 
   private async persist(c: Crystal): Promise<void> {
     const payload: StoredCrystal = { v: 1, crystal: c };
+    // Store the whole payload under the crystal id; no store-level index —
+    // similarity is computed in `recall` from the embedding kept in `value`.
     await this.store.put(
       levelNamespace(c.level),
       c.id,
       payload as unknown as Record<string, unknown>,
-      c.embedding ? [String(0)] : undefined,
     );
   }
 
@@ -330,15 +332,22 @@ export class CrystallineStore {
     return raw.crystal;
   }
 
+  /**
+   * List crystals in a level, optionally filtered by tag overlap. Tag matching
+   * is done in-memory (rather than via store filter operators) so it works
+   * uniformly across store backends and against array-valued `tags`.
+   */
   private async searchLevel(
     level: KnowledgeLevel,
     tags: string[] | undefined,
     limit: number,
-  ): Promise<SearchItem[]> {
-    const filter = tags && tags.length > 0 ? { tags: { $in: tags } } : undefined;
-    return this.store.search(levelNamespace(level), {
-      filter,
-      limit,
+  ): Promise<Item[]> {
+    const items = await this.store.search(levelNamespace(level), { limit });
+    if (!tags || tags.length === 0) return items;
+    const wanted = new Set(tags);
+    return items.filter((item) => {
+      const c = this.deserialize(item);
+      return c ? c.tags.some((t) => wanted.has(t)) : false;
     });
   }
 
@@ -376,7 +385,7 @@ export class CrystallineStore {
 // Vector helpers
 // ──────────────────────────────────────────────────────────────────────
 
-function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   let dot = 0;
   let na = 0;

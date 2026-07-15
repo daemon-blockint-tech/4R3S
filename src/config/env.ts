@@ -25,6 +25,8 @@ const schema = z.object({
   SOLANA_COMMITMENT: z
     .enum(["processed", "confirmed", "finalized"])
     .default("confirmed"),
+  // Optional Helius RPC — when set, overrides SOLANA_RPC_URL for on-chain reads.
+  HELIUS_RPC_URL: z.string().url().optional(),
 
   // Postgres
   POSTGRES_HOST: z.string().default("localhost"),
@@ -36,6 +38,29 @@ const schema = z.object({
     .string()
     .transform((v) => v === "true")
     .default("false"),
+
+  // Supabase (hybrid keyword + vector retrieval). Optional — falls back to
+  // Crystalline-only recall when unset.
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+
+  // Neo4j (knowledge-graph expansion + relationship reranking). Optional.
+  NEO4J_URI: z.string().optional(),
+  NEO4J_USER: z.string().optional(),
+  NEO4J_PASSWORD: z.string().optional(),
+
+  // Embeddings (OpenAI-compatible endpoint). Optional — semantic search and
+  // ingestion require it; recall degrades to tag/lexical scoring without it.
+  EMBEDDINGS_BASE_URL: z.string().url().optional(),
+  EMBEDDINGS_API_KEY: z.string().optional(),
+  EMBEDDINGS_MODEL: z.string().default("text-embedding-3-small"),
+  EMBEDDINGS_DIM: z.coerce.number().int().positive().default(1536),
+
+  // Seed knowledge base.
+  SOLSEC_REPO_URL: z
+    .string()
+    .url()
+    .default("https://github.com/sannykim/solsec.git"),
 
   // ARES runtime
   ARES_MAX_ITERATIONS: z.coerce.number().int().positive().default(12),

@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ares-postgres
+    environment:
+      POSTGRES_DB: ares
+      POSTGRES_USER: ares
+      POSTGRES_PASSWORD: ares_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ares_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ares -d ares"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: ares-neo4j
+    environment:
+      # Matches NEO4J_USER / NEO4J_PASSWORD in .env (user is always "neo4j").
+      NEO4J_AUTH: neo4j/ares_dev_password
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474" # HTTP browser
+      - "7687:7687" # Bolt
+    volumes:
+      - ares_neo4j:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ares_pg:
+  ares_neo4j:

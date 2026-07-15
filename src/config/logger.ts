@@ -4,8 +4,12 @@
  * Emits JSON lines at or above the configured ARES_LOG_LEVEL.
  * Keeps the dependency surface small — no pino/winston needed for
  * a CLI-style audit agent.
+ *
+ * Two call styles are accepted so callers can pick whichever reads best:
+ *   logger.info("message", { some: "meta" })   // message-first
+ *   logger.info({ some: "meta" }, "message")    // pino-style, meta-first
  */
-import { env } from "../config/env.js";
+import { env } from "./env.js";
 
 type Level = "debug" | "info" | "warn" | "error";
 
@@ -18,21 +22,54 @@ const ORDER: Record<Level, number> = {
 
 const THRESHOLD = ORDER[env.ARES_LOG_LEVEL];
 
-function emit(level: Level, msg: string, meta?: Record<string, unknown>): void {
+/** Normalize the two accepted call signatures into `(msg, meta)`. */
+function normalize(
+  a: string | Record<string, unknown>,
+  b?: string | Record<string, unknown>,
+): { msg: string; meta?: Record<string, unknown> } {
+  if (typeof a === "string") {
+    return { msg: a, meta: b as Record<string, unknown> | undefined };
+  }
+  // meta-first (pino-style): (meta, msg)
+  return { msg: typeof b === "string" ? b : "", meta: a };
+}
+
+function emit(
+  level: Level,
+  a: string | Record<string, unknown>,
+  b?: string | Record<string, unknown>,
+): void {
   if (ORDER[level] < THRESHOLD) return;
+  const { msg, meta } = normalize(a, b);
   const line = JSON.stringify({
     t: new Date().toISOString(),
     level,
     msg,
     ...meta,
   });
-  const stream = level === "error" || level === "warn" ? process.stderr : process.stdout;
+  const stream =
+    level === "error" || level === "warn" ? process.stderr : process.stdout;
   stream.write(line + "\n");
 }
 
-export const log = {
-  debug: (msg: string, meta?: Record<string, unknown>) => emit("debug", msg, meta),
-  info: (msg: string, meta?: Record<string, unknown>) => emit("info", msg, meta),
-  warn: (msg: string, meta?: Record<string, unknown>) => emit("warn", msg, meta),
-  error: (msg: string, meta?: Record<string, unknown>) => emit("error", msg, meta),
+type LogFn = (
+  a: string | Record<string, unknown>,
+  b?: string | Record<string, unknown>,
+) => void;
+
+export interface Logger {
+  debug: LogFn;
+  info: LogFn;
+  warn: LogFn;
+  error: LogFn;
+}
+
+export const log: Logger = {
+  debug: (a, b) => emit("debug", a, b),
+  info: (a, b) => emit("info", a, b),
+  warn: (a, b) => emit("warn", a, b),
+  error: (a, b) => emit("error", a, b),
 };
+
+/** Alias — some modules import `logger`, others `log`. Same instance. */
+export const logger = log;
