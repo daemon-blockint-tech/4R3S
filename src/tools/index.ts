@@ -4,6 +4,8 @@
  * Current tools:
  *   - solana:  on-chain program introspection (Helius / RPC).
  *   - semgrep: static analysis over source code.
+ *   - cua:     opt-in browser-driving investigation (Scrapybara Computer Use
+ *              Agent). Uses OpenAI's computer-use model directly, not OpenRouter.
  *
  * Extension point: additional tools can be exposed to the agent via the Model
  * Context Protocol (MCP). An MCP client would live alongside these modules and
@@ -16,3 +18,9 @@ export {
   type SemgrepResult,
   type SemgrepFinding,
 } from "./semgrep.js";
+export {
+  hasCua,
+  setCuaOverride,
+  runCuaInvestigation,
+  type CuaResult,
+} from "./cua.js";

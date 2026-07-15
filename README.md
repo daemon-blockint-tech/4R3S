@@ -11,19 +11,22 @@ growing body of security knowledge.
 ## Architecture
 
 ```
-        intake ──► recall ──┬──► analyzeOnchain  ──┐
-        (LLM)      (hybrid)  ├──► analyzeStatic   ──┼──► merge ──► remember ──► report
-                            └──► analyzeHeuristic ─┘   (rank)     (persist)    (LLM)
+        intake ──► recall ──┬──► analyzeOnchain   ──┐
+        (LLM)      (hybrid)  ├──► analyzeStatic    ──┤
+                            ├──► analyzeHeuristic  ──┼──► merge ──► remember ──► report
+                            └──► analyzeCua (opt-in)─┘   (rank)     (persist)    (LLM)
 ```
 
 | Phase        | What it does                                                                 |
 | ------------ | ---------------------------------------------------------------------------- |
 | **INTAKE**   | LLM parses the request into a structured target/depth/concerns summary.      |
 | **RECALL**   | Hybrid retriever pulls relevant prior knowledge (see below).                 |
-| **ANALYZE**  | Three analyzers run **in parallel** and append findings:                     |
+| **ANALYZE**  | Four analyzers run **in parallel** and append findings:                      |
 |              | · `onchain` — loads the program via Solana/Helius RPC and reasons over it.   |
 |              | · `static` — runs Semgrep over a source path (optional binary).              |
 |              | · `heuristic` — LLM reasoning over intake + recalled memory.                 |
+|              | · `cua` — **opt-in**: drives a real browser (Scrapybara Computer Use Agent)  |
+|              |   to investigate explorers/repos/docs. See below.                            |
 | **MERGE**    | Fan-in join: dedupes and severity-ranks the combined findings.               |
 | **REMEMBER** | LLM decides what to persist; writes crystals + runs consolidation.           |
 | **REPORT**   | LLM synthesizes the final markdown audit report.                             |
@@ -41,6 +44,27 @@ several sources ranks higher:
 
 Every source **degrades gracefully**: with Supabase/Neo4j/embeddings unset,
 recall falls back to Crystalline-only and the agent still runs fully offline.
+
+### CUA investigation analyzer (opt-in)
+
+`analyzeCua` drives a real, Scrapybara-hosted browser to gather external
+evidence about the audit target (block explorers, source repos, docs, prior
+audit mentions), then turns the investigation transcript into findings.
+
+- **Opt-in and off by default.** Enable with `CUA_ENABLED=true` or pass `--cua`
+  for a single run. It only activates when **both** `OPENAI_API_KEY` and
+  `SCRAPYBARA_API_KEY` are set — otherwise the node returns no findings
+  immediately, exactly like `analyzeStatic`/`analyzeOnchain` do without their
+  inputs, so the graph and test suite stay hermetic by default.
+- **Uses OpenAI directly, not OpenRouter.** `@langchain/langgraph-cua` invokes
+  OpenAI's `computer-use-preview` model itself (via `ChatOpenAI`, which reads
+  `OPENAI_API_KEY` from the environment) — there's no way to route the
+  browser-driving loop through OpenRouter. The rest of ARES is unaffected and
+  stays on OpenRouter.
+- **Read-only by design.** The system prompt
+  (`cuaInvestigationSystemPrompt` in `src/llm/prompts.ts`) explicitly forbids
+  authentication, form submission, and any other state-changing action — the
+  agent may only navigate and read.
 
 ## Persistence
 
@@ -82,6 +106,10 @@ npm run audit -- --source ./path/to/program
 
 # Quick local run without Postgres:
 npm run audit -- --program <ADDRESS> --ephemeral
+
+# Opt into the CUA browser-investigation analyzer for this run
+# (requires OPENAI_API_KEY + SCRAPYBARA_API_KEY):
+npm run audit -- --program <ADDRESS> --cua
 ```
 
 ## Development

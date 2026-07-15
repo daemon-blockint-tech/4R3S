@@ -5,10 +5,12 @@
  *   npm run audit -- --program <address>
  *   npm run audit -- --source <path>
  *   npm run audit -- --program <address> --source <path> [--ephemeral]
+ *   npm run audit -- --program <address> --cua
  *
  * Runs the audit graph end-to-end for one target and prints the report.
  * `--ephemeral` uses an in-memory checkpointer (no Postgres needed) for quick
- * local runs.
+ * local runs. `--cua` opts this run into the browser-driving CUA analyzer
+ * (requires OPENAI_API_KEY + SCRAPYBARA_API_KEY; see .env.example).
  */
 import { parseArgs } from "node:util";
 
@@ -23,12 +25,14 @@ import {
 } from "./persistence/checkpointer.js";
 import { closeNeo4j } from "./persistence/neo4j.js";
 import { createHybridRetriever } from "./retrieval/index.js";
+import { setCuaOverride } from "./tools/cua.js";
 import { buildAuditGraph } from "./graph/build-graph.js";
 
 interface Cli {
   program?: string;
   source?: string;
   ephemeral: boolean;
+  cua: boolean;
   request: string;
 }
 
@@ -38,6 +42,7 @@ function parseCli(): Cli {
       program: { type: "string" },
       source: { type: "string" },
       ephemeral: { type: "boolean", default: false },
+      cua: { type: "boolean", default: false },
       request: { type: "string" },
     },
     allowPositionals: true,
@@ -63,12 +68,14 @@ function parseCli(): Cli {
     program: values.program,
     source: values.source,
     ephemeral: Boolean(values.ephemeral),
+    cua: Boolean(values.cua),
     request,
   };
 }
 
 async function main(): Promise<void> {
   const cli = parseCli();
+  setCuaOverride(cli.cua);
 
   const store = createStore();
   const crystalline = new CrystallineStore(store);
