@@ -1,5 +1,7 @@
 # ARES-AGENT
 
+[![CI](https://github.com/daemon-blockint-tech/4r3s/actions/workflows/ci.yml/badge.svg)](https://github.com/daemon-blockint-tech/4r3s/actions/workflows/ci.yml)
+
 **Autonomous Solana program security auditor** built on LangGraph (JS), OpenRouter,
 a five-level "Crystalline" cognitive memory layer, and a hybrid (Supabase +
 Neo4j) knowledge base.
@@ -124,6 +126,13 @@ npm run build       # emit to dist/
 The test suite runs the full graph end-to-end with a fake LLM and an in-memory
 store, exercising the parallel fan-out, the concat-reducer findings channel, and
 Crystalline persistence — with Supabase/Neo4j unset to prove graceful fallback.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs the four commands above (typecheck, lint, build,
+test) on every push and pull request to `main`, across Node 20 and 22. Because
+the suite is hermetic, CI needs no secrets or services. Dependency updates are
+grouped into weekly Dependabot PRs (`.github/dependabot.yml`).
 
 ## Configuration
 
