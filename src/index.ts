@@ -27,6 +27,7 @@ import { closeNeo4j } from "./persistence/neo4j.js";
 import { createHybridRetriever } from "./retrieval/index.js";
 import { setCuaOverride } from "./tools/cua.js";
 import { buildAuditGraph } from "./graph/build-graph.js";
+import { createBilling, meterChat, settleUsage } from "./billing/index.js";
 
 interface Cli {
   program?: string;
@@ -86,8 +87,15 @@ async function main(): Promise<void> {
     ? createMemoryCheckpointer()
     : createPostgresCheckpointer();
 
+  // Billing is opt-in (BILLING_ENABLED). When on, meter each LLM call so the
+  // run can be priced and charged in credits after it completes.
+  const billing = createBilling();
+  const chat = billing.config.enabled
+    ? meterChat(defaultChat, billing.meter)
+    : defaultChat;
+
   const graph = buildAuditGraph({
-    deps: { chat: defaultChat, crystalline, retriever },
+    deps: { chat, crystalline, retriever },
     checkpointer,
     store,
   });
@@ -115,6 +123,20 @@ async function main(): Promise<void> {
       { component: "ares", findings: result.mergedFindings.length },
       "Audit complete",
     );
+
+    // Price and charge the run in credits (prepaid first, on-demand overflow
+    // settled via MPP). Guaranteed to bill above provider cost.
+    if (billing.config.enabled) {
+      const bill = await settleUsage({
+        usage: billing.meter.snapshot(),
+        model: env.OPENROUTER_MODEL,
+        ledger: billing.ledger,
+        mpp: billing.mpp,
+        config: billing.config,
+        resource: env.ARES_THREAD_ID,
+      });
+      process.stdout.write(`\n[billing] ${bill.summary}\n`);
+    }
   } finally {
     await crystalline.stop();
     if ("end" in checkpointer && typeof checkpointer.end === "function") {

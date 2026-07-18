@@ -160,6 +160,28 @@ See [`SECURITY.md`](SECURITY.md) for the vulnerability-reporting process,
 ARES's read-only runtime posture, and the status of tracked dependency
 advisories.
 
+## Billing (credits)
+
+`src/billing/` turns ARES into a paid service. It's **opt-in** — with
+`BILLING_ENABLED` unset, nothing here runs. When enabled, every audit is
+metered on its LLM token usage, priced against a per-model rate table
+(`pricing.ts`, tracking Anthropic/OpenRouter rates incl. prompt-cache and
+web-search costs), marked up, and charged in **credits** (default 100 credits =
+$1) against a two-tier account:
+
+- **System credits** — a prepaid balance (a subscription's allotment or a
+  top-up), drawn down first.
+- **On-demand credits** — pay-as-you-go overflow once the prepaid balance is
+  exhausted, settled via the [Machine Payments Protocol](https://mpp.dev)
+  (HTTP-402 pay-per-request / metered sessions; hermetic local settlement
+  unless `MPP_ENDPOINT` is set).
+
+**Profit is guaranteed by construction** (`profit.ts`): the effective markup is
+floored at `1 + BILLING_MIN_MARGIN_PCT`, credits are rounded up, and every audit
+is billed at least `BILLING_MIN_CHARGE_CREDITS` — so a run can never settle
+below provider cost, even if the markup is misconfigured. Each settlement
+reports cost, revenue, profit, and margin.
+
 ## Configuration
 
 All variables are documented in `.env.example`. Only `OPENROUTER_API_KEY` is
