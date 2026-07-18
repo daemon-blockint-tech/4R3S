@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # npm dependencies — grouped into a single weekly PR to keep noise low. This
+  # complements GitHub's security updates, which continue to open their own PRs.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm:
+        patterns:
+          - "*"
+
+  # Keep the GitHub Actions used in .github/workflows pinned to current versions.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
