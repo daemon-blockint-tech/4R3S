@@ -30,8 +30,9 @@ growing body of security knowledge.
 |              | · `cua` — **opt-in**: drives a real browser (Scrapybara Computer Use Agent)  |
 |              |   to investigate explorers/repos/docs. See below.                            |
 | **MERGE**    | Fan-in join: dedupes and severity-ranks the combined findings.               |
+| **VERIFY**   | Skeptical critic pass: refines confidence/status, drops false-positives.     |
 | **REMEMBER** | LLM decides what to persist; writes crystals + runs consolidation.           |
-| **REPORT**   | LLM synthesizes the final markdown audit report.                             |
+| **REPORT**   | Synthesizes a professional audit report (severity matrix, stable finding IDs, coverage). |
 
 ### Hybrid retrieval (RECALL)
 
@@ -133,6 +134,31 @@ Crystalline persistence — with Supabase/Neo4j unset to prove graceful fallback
 test) on every push and pull request to `main`, across Node 20 and 22. Because
 the suite is hermetic, CI needs no secrets or services. Dependency updates are
 grouped into weekly Dependabot PRs (`.github/dependabot.yml`).
+
+## Vulnerability knowledge & reporting
+
+The analyzers work through a structured Solana vulnerability catalog
+(`src/knowledge/solana-vulns.ts`) — access-control, CPI, PDA, arithmetic,
+lifecycle, oracle, DeFi (slippage/front-running), availability (DoS),
+governance (upgrade authority), Token-2022 extensions, and business-logic
+classes — grounded in the [Sealevel Attacks](https://github.com/coral-xyz/sealevel-attacks),
+[Neodyme's common pitfalls](https://neodyme.io/en/blog/solana_common_pitfalls/),
+and the [solsec](https://github.com/sannykim/solsec) corpus. Every finding is
+tagged with a catalog id and the set of evaluated classes is tracked as
+`coverage`.
+
+Findings are rated on an impact × likelihood severity matrix
+(`src/knowledge/severity.ts`), and the REPORT phase emits a professional
+assessment — executive summary with a deterministic severity table, scope &
+methodology, stable finding IDs (`ARES-001`…), per-finding
+description/impact/recommendation, and a coverage section — in the style of
+firms like OtterSec, Neodyme, and Zellic.
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md) for the vulnerability-reporting process,
+ARES's read-only runtime posture, and the status of tracked dependency
+advisories.
 
 ## Configuration
 

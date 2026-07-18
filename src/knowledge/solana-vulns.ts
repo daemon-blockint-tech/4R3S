@@ -363,6 +363,142 @@ export const VULN_CATALOG: VulnEntry[] = [
       "https://blog.trailofbits.com/2023/04/11/solana-common-pitfalls/",
     ],
   },
+  {
+    id: "type-cosplay",
+    title: "Type Cosplay / Account Confusion",
+    category: "access-control",
+    defaultSeverity: "high",
+    cwe: "CWE-843",
+    description:
+      "Two account types share the same byte layout, so an account of one type can be passed where another is expected. Without a discriminator the program deserializes attacker-chosen data as the wrong type ('type cosplay').",
+    detectionHints:
+      "Look for `try_from_slice` / manual Borsh deserialization on raw `AccountInfo` with no type/discriminator field, or distinct structs with identical field layouts. Anchor's 8-byte discriminator normally prevents this.",
+    remediation:
+      "Add a unique discriminator/enum tag as the first field of every account struct and check it on deserialization, or use Anchor `Account<'info, T>` which enforces the discriminator.",
+    references: [
+      "https://github.com/coral-xyz/sealevel-attacks/tree/master/programs/3-type-cosplay",
+      "https://neodyme.io/en/blog/solana_common_pitfalls/",
+    ],
+  },
+  {
+    id: "unsafe-type-cast",
+    title: "Unchecked Numeric Cast / Truncation",
+    category: "arithmetic",
+    defaultSeverity: "medium",
+    cwe: "CWE-681",
+    description:
+      "A value is narrowed with an `as` cast (e.g. `u128 as u64`, `i64 as u64`) that silently truncates or reinterprets bits, corrupting balances, indices, or sign.",
+    detectionHints:
+      "Search for `as u64`, `as u32`, `as usize`, `as i64` casts on values that can exceed the target range, especially around token amounts, prices, or lengths.",
+    remediation:
+      "Use `TryFrom`/`try_into()` and handle the error instead of `as`, or validate the value is within the target type's range before casting.",
+    references: [
+      "https://neodyme.io/en/blog/solana_common_pitfalls/",
+      "https://doc.rust-lang.org/std/convert/trait.TryFrom.html",
+    ],
+  },
+  {
+    id: "missing-slippage-protection",
+    title: "Missing Slippage / Front-Running Protection",
+    category: "defi",
+    defaultSeverity: "high",
+    cwe: "CWE-841",
+    description:
+      "A swap, deposit, or liquidation accepts no minimum-output / maximum-input bound, so a searcher can sandwich or front-run the transaction and extract value from the user.",
+    detectionHints:
+      "Look for swap/trade/withdraw instructions that compute an output amount from pool state but take no `min_amount_out` / `max_amount_in` / deadline argument, or ignore it.",
+    remediation:
+      "Require and enforce a user-supplied `min_amount_out` (or `max_amount_in`) and, where relevant, a deadline; revert if the realized amount is worse than the bound.",
+    references: [
+      "https://github.com/az0mb13/awesome-solana-security",
+      "https://blog.trailofbits.com/2023/04/11/solana-common-pitfalls/",
+    ],
+  },
+  {
+    id: "denial-of-service",
+    title: "Denial of Service / Compute Exhaustion",
+    category: "availability",
+    defaultSeverity: "medium",
+    cwe: "CWE-400",
+    description:
+      "An instruction contains an unbounded loop, unbounded account growth, or a path an attacker can make hit the compute-unit limit, permanently bricking a shared account or a critical operation.",
+    detectionHints:
+      "Look for loops over user-controlled collections (`remaining_accounts`, vectors) with no length cap, `realloc` growth without bound, or per-user data appended to a shared account that anyone can grow.",
+    remediation:
+      "Bound iteration and collection sizes, paginate large operations, isolate per-user state into separate PDAs, and budget compute for worst-case input.",
+    references: [
+      "https://github.com/az0mb13/awesome-solana-security",
+      "https://docs.solana.com/developing/programming-model/runtime#compute-budget",
+    ],
+  },
+  {
+    id: "business-logic-error",
+    title: "Business Logic / Accounting Error",
+    category: "logic",
+    defaultSeverity: "high",
+    cwe: "CWE-840",
+    description:
+      "The program's state transitions or accounting math are internally inconsistent — mis-tracked balances, incorrect fee/reward/share accounting, flawed liquidation or invariant checks — even though individual account validations pass. Empirically the single largest source of real audit findings.",
+    detectionHints:
+      "Reason about protocol invariants: do deposits/withdrawals conserve value? Are shares minted/burned symmetrically? Can a state machine reach an invalid state, or a step be skipped or replayed? Compare code against the documented economic model.",
+    remediation:
+      "Encode and assert protocol invariants explicitly (e.g. total_shares vs total_assets), add state-machine guards, and cover accounting paths with property-based/fuzz tests.",
+    references: [
+      "https://github.com/sannykim/solsec",
+      "https://osec.io/",
+    ],
+  },
+  {
+    id: "upgrade-authority-risk",
+    title: "Unrestricted Program Upgrade Authority",
+    category: "governance",
+    defaultSeverity: "medium",
+    cwe: "CWE-269",
+    description:
+      "The program is upgradeable with its upgrade authority held by a single key (not a multisig/timelock or renounced), so a compromised or malicious authority can replace the program logic and drain user funds.",
+    detectionHints:
+      "Check whether the deployed program is upgradeable and who holds the upgrade authority (single EOA vs multisig/governance). Also check admin/config instructions gated only by a single `authority`.",
+    remediation:
+      "Move the upgrade authority to a multisig or on-chain governance with a timelock, document the upgrade process, or renounce upgradeability once stable. Publish a security.txt.",
+    references: [
+      "https://github.com/az0mb13/awesome-solana-security",
+      "https://neodyme.io/en/blog/solana_common_pitfalls/",
+    ],
+  },
+  {
+    id: "token-2022-extension-risk",
+    title: "Unhandled Token-2022 Extension",
+    category: "spl",
+    defaultSeverity: "medium",
+    cwe: "CWE-20",
+    description:
+      "The program treats an SPL Token-2022 mint like a classic SPL token and ignores extensions — transfer hooks, transfer fees, confidential transfers, permanent delegate — that change transfer semantics and can break accounting or bypass assumptions.",
+    detectionHints:
+      "Look for hard-coded `token::ID` (Tokenkeg...) assumptions, transfer amount accounting that assumes received == sent (breaks under transfer-fee), or missing handling of the transfer-hook / permanent-delegate extensions when the mint program is Token-2022.",
+    remediation:
+      "Detect the token program from the mint owner, read the mint's extensions, reconcile actual received amounts after transfer-fee, and explicitly allow/deny mints with hooks, fees, or permanent delegates per the protocol's threat model.",
+    references: [
+      "https://spl.solana.com/token-2022/extensions",
+      "https://github.com/az0mb13/awesome-solana-security",
+    ],
+  },
+  {
+    id: "remaining-accounts-validation",
+    title: "Unvalidated remaining_accounts",
+    category: "access-control",
+    defaultSeverity: "medium",
+    cwe: "CWE-20",
+    description:
+      "The instruction iterates `ctx.remaining_accounts` (or trailing raw accounts) without validating each account's owner, key, or type, letting a caller inject arbitrary accounts that bypass the constraints applied to declared accounts.",
+    detectionHints:
+      "Look for loops over `ctx.remaining_accounts` / `accounts_iter` that deserialize or mutate without per-account owner/key/discriminator checks, or that assume ordering.",
+    remediation:
+      "Validate every account read from `remaining_accounts` the same way declared accounts are validated (owner, key/PDA derivation, discriminator), and don't rely on caller-supplied ordering.",
+    references: [
+      "https://github.com/coral-xyz/sealevel-attacks",
+      "https://blog.trailofbits.com/2023/04/11/solana-common-pitfalls/",
+    ],
+  },
 ];
 
 /** Set of all valid catalog ids for fast lookup. */

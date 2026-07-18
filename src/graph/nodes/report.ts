@@ -4,6 +4,11 @@
 import { reportSystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
 import { VULN_CATALOG } from "../../knowledge/solana-vulns.js";
+import {
+  formatFindingId,
+  severityDistribution,
+  severitySummaryTable,
+} from "../../knowledge/severity.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate } from "../state.js";
 import { chatText } from "../util.js";
@@ -19,9 +24,17 @@ export function makeReportNode(deps: GraphDeps) {
       state.mergedFindings.length - state.verifiedFindings.length,
     );
 
+    // Assign stable, deterministic finding IDs (ARES-001…) and compute the
+    // severity distribution here rather than trusting the LLM to count.
+    const dist = severityDistribution(findings);
+    const summaryTable = severitySummaryTable(dist);
+
     const human = [
       state.intake ? `Target: ${state.intake.target}` : `Request: ${state.request}`,
       state.intake ? `Summary: ${state.intake.summary}` : "",
+      "",
+      "Severity summary table (reproduce verbatim in the Executive Summary):",
+      summaryTable,
       "",
       `Findings (${findings.length}), most severe first` +
         (droppedFalsePositives > 0
@@ -31,7 +44,7 @@ export function makeReportNode(deps: GraphDeps) {
         ? findings
             .map(
               (f, i) =>
-                `${i + 1}. [${f.severity}] ${f.vulnClass} [${f.category}] @ ${f.location} (${f.source})` +
+                `${formatFindingId(i)} [${f.severity}] ${f.vulnClass} [${f.category}] @ ${f.location} (${f.source})` +
                 `${f.speculative ? " [SPECULATIVE]" : ""} [confidence: ${f.confidence}]` +
                 `${f.status ? ` [status: ${f.status}]` : ""}\n` +
                 `   evidence: ${f.evidence}\n   remediation: ${f.remediation}`,
@@ -44,7 +57,7 @@ export function makeReportNode(deps: GraphDeps) {
         ? `Checked classes: ${state.coverage.join(", ")}`
         : "(no coverage reported)",
       "",
-      "Write the final audit report in the required markdown structure.",
+      "Write the final audit report in the required markdown structure, using the exact finding IDs above.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -52,7 +65,12 @@ export function makeReportNode(deps: GraphDeps) {
     const reportText = await chatText(deps.chat, reportSystemPrompt(), human);
 
     logger.info(
-      { component: "node.report", length: reportText.length },
+      {
+        component: "node.report",
+        length: reportText.length,
+        findings: findings.length,
+        severity: dist,
+      },
       "Report synthesized",
     );
     return { report: reportText, iterations: 1 };
