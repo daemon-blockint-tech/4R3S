@@ -30,6 +30,13 @@ export interface BillingConfig {
   onDemandLimitCredits?: number;
   /** MPP settlement endpoint; unset → hermetic local settlement. */
   mppEndpoint?: string;
+  /**
+   * When an `mppEndpoint` is set but the real HTTP-402 client isn't wired,
+   * allow falling back to hermetic local settlement. Defaults to false so a
+   * configured endpoint fails loudly rather than silently pretending to settle
+   * real money locally.
+   */
+  mppAllowLocalFallback: boolean;
   /** Payer identity presented to MPP. */
   mppPayerId: string;
 }
@@ -63,6 +70,7 @@ export function loadBillingConfig(
         ? num(onDemandLimit, 0)
         : undefined,
     mppEndpoint: env.MPP_ENDPOINT?.trim() || undefined,
+    mppAllowLocalFallback: bool(env.MPP_ALLOW_LOCAL_FALLBACK, false),
     mppPayerId: env.MPP_PAYER_ID?.trim() || "ares-agent",
   };
 }

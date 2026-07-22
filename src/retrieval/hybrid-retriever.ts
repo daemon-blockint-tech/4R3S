@@ -2,7 +2,9 @@
  * Hybrid retriever — the RECALL substrate.
  *
  * Pipeline (per the augment-Crystalline design):
- *   1. In parallel: Crystalline activation recall + Supabase candidate search.
+ *   1. In parallel: Crystalline activation recall, Supabase candidate search,
+ *      and a standalone Neo4j lexical match (so the graph contributes candidates
+ *      on its own, not only as an expansion of Supabase hits).
  *   2. Map Supabase candidates to chunk ids and expand them in Neo4j (1–2 hops)
  *      for relationship-aware enrichment.
  *   3. Merge all sources: normalize each source's scores, weight them, and sum
@@ -38,10 +40,13 @@ export class HybridRetriever implements Retriever {
   async retrieve(query: HybridQuery): Promise<ScoredCrystal[]> {
     const limit = query.limit ?? 8;
 
-    // Stage 1: Crystalline + Supabase candidates, in parallel.
-    const [crystalResults, supabaseResults] = await Promise.all([
+    // Stage 1: Crystalline recall, Supabase candidates, and a standalone Neo4j
+    // lexical match — all in parallel.
+    const [crystalResults, supabaseResults, graphMatches] = await Promise.all([
       this.crystalline.retrieve(query),
       this.supabase?.retrieve({ ...query, limit: (limit ?? 8) * 3 }) ??
+        Promise.resolve([]),
+      this.neo4j?.retrieve({ ...query, limit: (limit ?? 8) * 3 }) ??
         Promise.resolve([]),
     ]);
 
@@ -49,9 +54,13 @@ export class HybridRetriever implements Retriever {
     const seedChunkIds = supabaseResults
       .map((r) => r.crystal.metadata.chunk_id)
       .filter((id): id is string => typeof id === "string");
-    const graphResults = this.neo4j
+    const graphExpansion = this.neo4j
       ? await this.neo4j.expand(seedChunkIds, limit * 3)
       : [];
+
+    // The graph contributes both its standalone matches and the expansion of
+    // Supabase seeds; both share the Neo4j weight bucket.
+    const graphResults = [...graphMatches, ...graphExpansion];
 
     // Stage 3: weighted merge across sources.
     const merged = this.merge([
@@ -65,7 +74,8 @@ export class HybridRetriever implements Retriever {
         component: "hybrid-retriever",
         crystalline: crystalResults.length,
         supabase: supabaseResults.length,
-        neo4j: graphResults.length,
+        neo4jMatch: graphMatches.length,
+        neo4jExpand: graphExpansion.length,
         merged: merged.length,
       },
       "Hybrid recall complete",

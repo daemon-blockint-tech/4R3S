@@ -16,13 +16,19 @@ export * from "./mpp.js";
 export * from "./meter.js";
 export * from "./profit.js";
 export * from "./config.js";
+export * from "./account-store.js";
 export { extractUsage } from "./usage.js";
 
+import { log } from "../config/logger.js";
 import { CreditLedger, type CreditAccount } from "./credits.js";
 import { createMppClient, type MppClient } from "./mpp.js";
 import { UsageMeter } from "./meter.js";
 import { extractUsage } from "./usage.js";
 import { loadBillingConfig, type BillingConfig } from "./config.js";
+import {
+  createAccountStore,
+  type AccountStore,
+} from "./account-store.js";
 
 /**
  * Wrap a chat model so every `invoke` records its token usage into `meter`,
@@ -61,32 +67,79 @@ export interface Billing {
   ledger: CreditLedger;
   mpp: MppClient;
   meter: UsageMeter;
+  /** Durable account store, when persistence is configured. */
+  store?: AccountStore;
+}
+
+export interface CreateBillingOptions {
+  config?: BillingConfig;
+  accountId?: string;
+  /** Durable account store; defaults to `createAccountStore()` (env-driven). */
+  store?: AccountStore;
 }
 
 /**
- * Assemble a billing context from config, seeding the account with the plan's
- * prepaid allotment. Uses hermetic local MPP settlement unless `MPP_ENDPOINT`
- * is set.
+ * Assemble a billing context from config. When a durable `store` is available
+ * and holds this account, the saved balances (prepaid remaining + on-demand
+ * spent) are loaded so spend accumulates across runs; otherwise the account is
+ * seeded fresh from the plan's prepaid allotment. Uses hermetic local MPP
+ * settlement unless `MPP_ENDPOINT` is set.
  */
-export function createBilling(
-  config: BillingConfig = loadBillingConfig(),
-  accountId = "default",
-): Billing {
-  const account: CreditAccount = {
+export function createBilling(options: CreateBillingOptions = {}): Billing {
+  const config = options.config ?? loadBillingConfig();
+  const accountId = options.accountId ?? "default";
+  const store = options.store ?? createAccountStore();
+
+  const persisted = store?.load(accountId);
+  const account: CreditAccount = persisted ?? {
     id: accountId,
     systemCredits: Math.max(0, config.planCredits),
     onDemandEnabled: config.onDemandEnabled,
     onDemandSpent: 0,
     onDemandLimit: config.onDemandLimitCredits,
   };
+  // Keep persisted balances but let config toggle on-demand policy each run.
+  if (persisted) {
+    account.onDemandEnabled = config.onDemandEnabled;
+    account.onDemandLimit = config.onDemandLimitCredits;
+  }
+
   return {
     config,
     account,
-    ledger: new CreditLedger(account),
+    ledger: new CreditLedger(account, store),
     mpp: createMppClient({
       endpoint: config.mppEndpoint,
+      allowLocalFallback: config.mppAllowLocalFallback,
       payerId: config.mppPayerId,
     }),
     meter: new UsageMeter(),
+    store,
   };
+}
+
+/**
+ * Pre-flight sanity check: with billing enabled, warn loudly if the account
+ * cannot possibly pay for a run — no prepaid balance and on-demand disabled —
+ * so a misconfiguration surfaces before the audit runs rather than as an
+ * `InsufficientCreditsError` after value has already been produced. Returns
+ * false when the account is structurally unable to settle any non-zero charge.
+ */
+export function canAffordAudit(billing: Billing): boolean {
+  const { account, config } = billing;
+  if (!config.enabled) return true;
+  const affordable = account.systemCredits > 0 || account.onDemandEnabled;
+  if (!affordable) {
+    log.warn(
+      {
+        component: "billing",
+        accountId: account.id,
+        systemCredits: account.systemCredits,
+        onDemandEnabled: account.onDemandEnabled,
+      },
+      "Billing enabled but account has no prepaid balance and on-demand is disabled; " +
+        "any non-zero charge will fail. Set BILLING_PLAN_CREDITS or BILLING_ONDEMAND_ENABLED.",
+    );
+  }
+  return affordable;
 }

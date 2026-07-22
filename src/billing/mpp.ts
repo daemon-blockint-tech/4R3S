@@ -107,22 +107,37 @@ export class LocalMppClient implements MppClient {
 export interface MppConfig {
   /** Real HTTP-402 endpoint. When unset, settlement is local/hermetic. */
   endpoint?: string;
+  /**
+   * Permit hermetic local settlement even when `endpoint` is set (used while
+   * the real HTTP-402 client is unwired). Defaults to false: a configured
+   * endpoint that can't be honored fails loudly instead of silently pretending.
+   */
+  allowLocalFallback?: boolean;
   payerId: string;
 }
 
 /**
- * Select a settlement client. Returns the hermetic `LocalMppClient` unless a
- * real `endpoint` is configured. A production HTTP-402 client would be
- * constructed here (kept out of the default path so the agent stays offline).
+ * Select a settlement client. Returns the hermetic `LocalMppClient` when no
+ * real `endpoint` is configured. When an endpoint *is* configured but the
+ * production HTTP-402 client isn't wired, this throws — so on-demand charges
+ * are never reported as "settled" without a real settlement — unless
+ * `allowLocalFallback` explicitly opts into local settlement.
  */
 export function createMppClient(config: MppConfig): MppClient {
   if (config.endpoint) {
     // A real implementation performs the HTTP-402 Challenge→Credential→Receipt
-    // handshake against `config.endpoint`. Left unwired so default runs and the
-    // test suite make no network calls; falls back to local settlement.
+    // handshake against `config.endpoint`. It is intentionally not wired here so
+    // default runs and the test suite make no network calls.
+    if (!config.allowLocalFallback) {
+      throw new Error(
+        `MPP_ENDPOINT is set (${config.endpoint}) but the HTTP-402 client is not wired. ` +
+          "Refusing to settle on-demand charges locally. Set MPP_ALLOW_LOCAL_FALLBACK=true " +
+          "to explicitly accept hermetic local settlement.",
+      );
+    }
     log.warn(
       { component: "billing.mpp", endpoint: config.endpoint },
-      "MPP_ENDPOINT set but the HTTP-402 client is not wired; settling locally",
+      "MPP_ENDPOINT set but the HTTP-402 client is not wired; settling locally (MPP_ALLOW_LOCAL_FALLBACK=true)",
     );
   }
   return new LocalMppClient();

@@ -42,8 +42,8 @@ several sources ranks higher:
 1. **Crystalline** — in-process activation-based memory (working/episodic recall).
 2. **Supabase** — `hybrid_search` RPC over pgvector + full-text (RRF) for
    candidate retrieval.
-3. **Neo4j** — 1–2 hop graph expansion / relationship-aware reranking of those
-   candidates.
+3. **Neo4j** — a standalone lexical match over graph chunks *plus* 1–2 hop
+   graph expansion / relationship-aware reranking of the Supabase candidates.
 
 Every source **degrades gracefully**: with Supabase/Neo4j/embeddings unset,
 recall falls back to Crystalline-only and the agent still runs fully offline.
@@ -75,6 +75,12 @@ audit mentions), then turns the investigation transcript into findings.
 - **Crystalline store:** `InMemoryStore` (session-scoped) — LangGraph JS has no
   Postgres store yet, so durable cross-audit knowledge lives in the Supabase +
   Neo4j knowledge base instead.
+- **Knowledge writeback:** REMEMBER writes each persisted fragment to Crystalline
+  *and*, when Supabase/Neo4j are configured, durably to the hybrid KB
+  (`src/persistence/knowledge-writer.ts`) using the same `doc_id`/`chunk_id`
+  scheme as the seed ingester — so runtime-learned knowledge survives restarts
+  and is recalled in later audits. Without those backends it stays
+  Crystalline-only, exactly as before.
 
 ## Setup
 
@@ -181,6 +187,17 @@ floored at `1 + BILLING_MIN_MARGIN_PCT`, credits are rounded up, and every audit
 is billed at least `BILLING_MIN_CHARGE_CREDITS` — so a run can never settle
 below provider cost, even if the markup is misconfigured. Each settlement
 reports cost, revenue, profit, and margin.
+
+**Payment is enforced before delivery.** When billing is on, the report is
+released only *after* settlement succeeds; if the account can't cover the charge
+(`InsufficientCreditsError`), the report is withheld and the run exits non-zero.
+A pre-flight check also warns when an account structurally can't pay (no prepaid
+balance and on-demand disabled). Balances persist across runs when
+`BILLING_ACCOUNT_STORE_PATH` is set (`account-store.ts`), so on-demand spend
+actually accumulates instead of resetting each run. And a configured
+`MPP_ENDPOINT` whose real HTTP-402 client isn't wired **fails loudly** rather
+than silently settling locally — set `MPP_ALLOW_LOCAL_FALLBACK=true` to opt into
+hermetic settlement explicitly.
 
 ## Configuration
 

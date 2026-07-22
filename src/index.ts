@@ -24,10 +24,17 @@ import {
   createMemoryCheckpointer,
 } from "./persistence/checkpointer.js";
 import { closeNeo4j } from "./persistence/neo4j.js";
+import { createKnowledgeWriter } from "./persistence/knowledge-writer.js";
 import { createHybridRetriever } from "./retrieval/index.js";
 import { setCuaOverride } from "./tools/cua.js";
 import { buildAuditGraph } from "./graph/build-graph.js";
-import { createBilling, meterChat, settleUsage } from "./billing/index.js";
+import {
+  createBilling,
+  canAffordAudit,
+  meterChat,
+  settleUsage,
+  InsufficientCreditsError,
+} from "./billing/index.js";
 
 interface Cli {
   program?: string;
@@ -82,6 +89,7 @@ async function main(): Promise<void> {
   const crystalline = new CrystallineStore(store);
   await crystalline.start();
   const retriever = createHybridRetriever(crystalline);
+  const knowledge = createKnowledgeWriter();
 
   const checkpointer = cli.ephemeral
     ? createMemoryCheckpointer()
@@ -94,8 +102,13 @@ async function main(): Promise<void> {
     ? meterChat(defaultChat, billing.meter)
     : defaultChat;
 
+  // Pre-flight: surface an unpayable configuration before spending on the audit.
+  if (billing.config.enabled) {
+    canAffordAudit(billing);
+  }
+
   const graph = buildAuditGraph({
-    deps: { chat, crystalline, retriever },
+    deps: { chat, crystalline, retriever, knowledge },
     checkpointer,
     store,
   });
@@ -118,24 +131,47 @@ async function main(): Promise<void> {
       },
     );
 
-    process.stdout.write("\n" + (result.report || "(no report generated)") + "\n");
     logger.info(
       { component: "ares", findings: result.mergedFindings.length },
       "Audit complete",
     );
 
-    // Price and charge the run in credits (prepaid first, on-demand overflow
-    // settled via MPP). Guaranteed to bill above provider cost.
-    if (billing.config.enabled) {
-      const bill = await settleUsage({
-        usage: billing.meter.snapshot(),
-        model: env.OPENROUTER_MODEL,
-        ledger: billing.ledger,
-        mpp: billing.mpp,
-        config: billing.config,
-        resource: env.ARES_THREAD_ID,
-      });
-      process.stdout.write(`\n[billing] ${bill.summary}\n`);
+    const report = result.report || "(no report generated)";
+
+    if (!billing.config.enabled) {
+      process.stdout.write("\n" + report + "\n");
+    } else {
+      // Enforce payment BEFORE delivering the report: price and charge the run
+      // (prepaid first, on-demand overflow settled via MPP), persist the new
+      // balance, and only then release the report. If the account can't cover
+      // the charge, the report is withheld rather than given away for free.
+      try {
+        const bill = await settleUsage({
+          usage: billing.meter.snapshot(),
+          model: env.OPENROUTER_MODEL,
+          ledger: billing.ledger,
+          mpp: billing.mpp,
+          config: billing.config,
+          resource: env.ARES_THREAD_ID,
+        });
+        billing.store?.save(billing.account);
+        process.stdout.write("\n" + report + "\n");
+        process.stdout.write(`\n[billing] ${bill.summary}\n`);
+      } catch (err) {
+        if (err instanceof InsufficientCreditsError) {
+          logger.error(
+            { component: "ares", err: err.message },
+            "Settlement failed; report withheld",
+          );
+          process.stdout.write(`\n[billing] Payment required: ${err.message}\n`);
+          process.stdout.write(
+            "[billing] Report withheld until the account balance is settled.\n",
+          );
+          process.exitCode = 1;
+        } else {
+          throw err;
+        }
+      }
     }
   } finally {
     await crystalline.stop();
