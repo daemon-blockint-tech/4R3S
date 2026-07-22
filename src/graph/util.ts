@@ -6,6 +6,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 import { logger } from "../config/logger.js";
 import { messageText } from "../llm/message-text.js";
+import { withRetry } from "../llm/retry.js";
 import { isVulnId } from "../knowledge/solana-vulns.js";
 import {
   type Finding,
@@ -157,16 +158,22 @@ export function applyVerdicts(
   return { kept, dropped };
 }
 
-/** Invoke the chat model with a system + human message and return text. */
+/**
+ * Invoke the chat model with a system + human message and return text.
+ * Transient failures (429 / 5xx / dropped connections) are retried with
+ * exponential backoff so a single blip doesn't abort a multi-call audit;
+ * deterministic errors (4xx, auth) propagate immediately.
+ */
 export async function chatText(
   chat: BaseChatModel,
   system: string,
   human: string,
 ): Promise<string> {
-  const res = await chat.invoke([
-    new SystemMessage(system),
-    new HumanMessage(human),
-  ]);
+  const res = await withRetry(
+    () =>
+      chat.invoke([new SystemMessage(system), new HumanMessage(human)]),
+    { label: "chat.invoke" },
+  );
   return messageText(res.content);
 }
 

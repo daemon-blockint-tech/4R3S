@@ -66,11 +66,27 @@ export function makeRememberNode(deps: GraphDeps) {
       memoryWrites.push({ level, content, tags });
 
       const embedding = await embed(content);
+      const metadata = { target: state.intake?.target, source: "remember" };
       await deps.crystalline.crystallize(level, content, {
         embedding,
         tags,
-        metadata: { target: state.intake?.target, source: "remember" },
+        metadata,
       });
+
+      // Also persist durably to the hybrid KB (Supabase/Neo4j) when wired, so
+      // this knowledge survives the process and is recallable in future audits.
+      // Best-effort: the writer never throws, but guard anyway so a KB hiccup
+      // can't abort the audit.
+      if (deps.knowledge?.enabled) {
+        try {
+          await deps.knowledge.persist({ content, level, tags, embedding, metadata });
+        } catch (err) {
+          logger.warn(
+            { component: "node.remember", err: String(err) },
+            "Durable knowledge writeback failed (non-fatal)",
+          );
+        }
+      }
     }
 
     // Incremental consolidation (decay/prune/promote/merge).
@@ -84,7 +100,11 @@ export function makeRememberNode(deps: GraphDeps) {
     }
 
     logger.info(
-      { component: "node.remember", written: memoryWrites.length },
+      {
+        component: "node.remember",
+        written: memoryWrites.length,
+        durable: Boolean(deps.knowledge?.enabled),
+      },
       "Memory write complete",
     );
     return { memoryWrites, iterations: 1 };
