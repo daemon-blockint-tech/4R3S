@@ -16,6 +16,8 @@ export interface ChatOpenRouterOptions {
   temperature?: number;
   /** Max output tokens. */
   maxTokens?: number;
+  /** Per-request deadline in ms; defaults to OPENROUTER_TIMEOUT_MS. */
+  timeout?: number;
   /** Enable tool calling by default. */
   streaming?: boolean;
 }
@@ -31,6 +33,9 @@ export function createChatOpenRouter(
     modelName: opts.model ?? env.OPENROUTER_MODEL,
     temperature: opts.temperature ?? 0,
     maxTokens: opts.maxTokens,
+    // Without this the SDK waits indefinitely on a stalled connection, and the
+    // retry wrapper never sees an error to react to.
+    timeout: opts.timeout ?? env.OPENROUTER_TIMEOUT_MS,
     streaming: opts.streaming ?? false,
     configuration: {
       baseURL: env.OPENROUTER_BASE_URL,

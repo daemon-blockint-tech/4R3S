@@ -11,6 +11,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
+import { timedFetch } from "../config/timeout.js";
 
 /** BPF Upgradeable Loader — programs owned by this are upgradeable. */
 const BPF_UPGRADEABLE_LOADER = "BPFLoaderUpgradeab1e11111111111111111111111";
@@ -32,7 +33,11 @@ let connection: Connection | undefined;
 function getConnection(): Connection {
   if (!connection) {
     const url = env.HELIUS_RPC_URL ?? env.SOLANA_RPC_URL;
-    connection = new Connection(url, env.SOLANA_COMMITMENT);
+    connection = new Connection(url, {
+      commitment: env.SOLANA_COMMITMENT,
+      // web3.js has no timeout option; the deadline goes on its fetch.
+      fetch: timedFetch(env.SOLANA_TIMEOUT_MS),
+    });
     logger.debug(
       { component: "solana", helius: Boolean(env.HELIUS_RPC_URL) },
       "Solana connection created",

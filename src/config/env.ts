@@ -33,6 +33,9 @@ const schema = z.object({
     .default("https://openrouter.ai/api/v1"),
   OPENROUTER_MODEL: z.string().default("anthropic/claude-3.5-sonnet"),
   OPENROUTER_REFERRER: z.string().default("ares-agent"),
+  // Per-request deadline for LLM calls. Report synthesis is the slowest phase,
+  // so this is generous — it exists to bound a hung socket, not to cut work off.
+  OPENROUTER_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
 
   // Solana
   SOLANA_RPC_URL: z.string().url().default("https://api.mainnet-beta.solana.com"),
@@ -41,6 +44,8 @@ const schema = z.object({
     .default("confirmed"),
   // Optional Helius RPC — when set, overrides SOLANA_RPC_URL for on-chain reads.
   HELIUS_RPC_URL: z.string().url().optional(),
+  /** Per-request deadline for RPC reads. */
+  SOLANA_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 
   // Postgres
   POSTGRES_HOST: z.string().default("localhost"),
@@ -66,6 +71,8 @@ const schema = z.object({
   EMBEDDINGS_API_KEY: z.string().optional(),
   EMBEDDINGS_MODEL: z.string().default("text-embedding-3-small"),
   EMBEDDINGS_DIM: z.coerce.number().int().positive().default(1536),
+  /** Per-request deadline for embedding calls. */
+  EMBEDDINGS_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 
   // Seed knowledge base.
   SOLSEC_REPO_URL: z

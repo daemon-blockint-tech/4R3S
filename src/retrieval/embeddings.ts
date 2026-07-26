@@ -7,6 +7,7 @@
  */
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
+import { deadlineSignal } from "../config/timeout.js";
 
 /** True when an embeddings endpoint is configured. */
 export function hasEmbeddings(): boolean {
@@ -33,6 +34,8 @@ export async function embedBatch(
         Authorization: `Bearer ${env.EMBEDDINGS_API_KEY}`,
       },
       body: JSON.stringify({ model: env.EMBEDDINGS_MODEL, input: texts }),
+      // Bare fetch never times out; RECALL awaits this on the critical path.
+      signal: deadlineSignal(env.EMBEDDINGS_TIMEOUT_MS),
     });
     if (!res.ok) {
       logger.warn(
