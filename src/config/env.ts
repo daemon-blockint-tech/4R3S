@@ -78,7 +78,9 @@ const schema = z.object({
 
   // ARES runtime
   ARES_MAX_ITERATIONS: z.coerce.number().int().positive().default(12),
-  ARES_THREAD_ID: z.string().default("ares-default"),
+  // Optional. Unset (the default) derives a per-target thread id so audits of
+  // different targets never share checkpointed state; see `config/thread.ts`.
+  ARES_THREAD_ID: z.string().optional(),
   ARES_LOG_LEVEL: z
     .enum(["debug", "info", "warn", "error"])
     .default("info"),
