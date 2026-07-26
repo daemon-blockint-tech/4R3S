@@ -177,6 +177,17 @@ export async function chatText(
   return messageText(res.content);
 }
 
+/** A JSON chat result that says whether the model's output actually parsed. */
+export interface JsonResult<T> {
+  value: T;
+  /**
+   * False when the response could not be parsed and `value` is the fallback.
+   * Callers that report coverage need this: an unparseable response yields zero
+   * findings, which is indistinguishable from a clean result otherwise.
+   */
+  parsed: boolean;
+}
+
 /**
  * Invoke the chat model expecting JSON. Strips ```json fences and parses. On
  * parse failure returns `fallback` so a malformed response never crashes a node.
@@ -187,19 +198,29 @@ export async function chatJson<T>(
   human: string,
   fallback: T,
 ): Promise<T> {
+  return (await chatJsonResult(chat, system, human, fallback)).value;
+}
+
+/** As `chatJson`, but also reports whether the response parsed. */
+export async function chatJsonResult<T>(
+  chat: BaseChatModel,
+  system: string,
+  human: string,
+  fallback: T,
+): Promise<JsonResult<T>> {
   const text = await chatText(chat, system, human);
   const cleaned = text
     .replace(/^\s*```(?:json)?\s*/i, "")
     .replace(/\s*```\s*$/i, "")
     .trim();
   try {
-    return JSON.parse(cleaned) as T;
+    return { value: JSON.parse(cleaned) as T, parsed: true };
   } catch {
     // Attempt to salvage the first JSON object/array in the text.
     const match = cleaned.match(/[[{][\s\S]*[\]}]/);
     if (match) {
       try {
-        return JSON.parse(match[0]) as T;
+        return { value: JSON.parse(match[0]) as T, parsed: true };
       } catch {
         /* fall through */
       }
@@ -208,6 +229,6 @@ export async function chatJson<T>(
       { component: "graph", preview: cleaned.slice(0, 160) },
       "LLM did not return valid JSON; using fallback",
     );
-    return fallback;
+    return { value: fallback, parsed: false };
   }
 }

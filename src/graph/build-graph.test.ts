@@ -240,6 +240,41 @@ describe("audit graph (end to end)", () => {
     expect(result.iterations).toBeGreaterThanOrEqual(5);
   });
 
+  it("marks the report as incomplete when an analyzer could not run", async () => {
+    const store = new InMemoryStore();
+    const crystalline = new CrystallineStore(store);
+    const retriever = new HybridRetriever(new CrystallineRetriever(crystalline));
+    const graph = buildAuditGraph({
+      deps: { chat: makeFakeChat(), crystalline, retriever },
+      checkpointer: new MemorySaver(),
+      store,
+    });
+
+    // Same degraded run as above: the source path does not exist, so static
+    // analysis cannot run. Before analyzer status was propagated, this produced
+    // a report indistinguishable from a clean one.
+    const result = await graph.invoke(
+      { request: "audit source", sourcePath: "/does-not-exist-xyz" },
+      { configurable: { thread_id: "test-e2e-3" } },
+    );
+
+    const byAnalyzer = Object.fromEntries(
+      result.analyzers.map((a) => [a.analyzer, a.outcome]),
+    );
+    expect(byAnalyzer).toEqual({
+      onchain: "skipped", // no program address
+      static: "failed", // source path missing
+      heuristic: "ok",
+      cua: "skipped", // opt-in, unconfigured in tests
+    });
+
+    // The warning is prepended in code, so it is present regardless of what the
+    // model wrote — the fake report body contains no such wording.
+    expect(result.report.startsWith("> **Incomplete assessment")).toBe(true);
+    expect(result.report).toContain("static failed");
+    expect(result.report).toContain("not evidence that none exist");
+  });
+
   it("persists a crystal in the REMEMBER phase", async () => {
     const store = new InMemoryStore();
     const crystalline = new CrystallineStore(store);

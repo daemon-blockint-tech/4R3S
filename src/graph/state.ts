@@ -47,6 +47,30 @@ export interface Finding {
   status?: FindingStatus;
 }
 
+/** The analyzers that can contribute findings. */
+export type AnalyzerName = Finding["source"];
+
+/**
+ * How an analyzer's run ended. The distinction that matters for an audit is
+ * between "looked and found nothing" and "never got to look":
+ *
+ *  - `ok`       — ran against real input and completed. Silence here is evidence.
+ *  - `skipped`  — deliberately not applicable (no target of its kind, opt-in off).
+ *                 Expected, not a defect, but its ground was never covered.
+ *  - `degraded` — ran with a missing capability or unusable output, so it may
+ *                 have missed issues it would otherwise catch.
+ *  - `failed`   — attempted and errored. Silence here means nothing at all.
+ */
+export type AnalyzerOutcome = "ok" | "skipped" | "degraded" | "failed";
+
+/** One analyzer's outcome, surfaced in the report so silence can be read correctly. */
+export interface AnalyzerReport {
+  analyzer: AnalyzerName;
+  outcome: AnalyzerOutcome;
+  /** Why, in one line. Shown verbatim in the report's limitations table. */
+  detail?: string;
+}
+
 /** Structured output of the INTAKE phase. */
 export interface IntakeSummary {
   target: string;
@@ -79,6 +103,15 @@ export const AresStateAnnotation = Annotation.Root({
   }),
   /** Findings — appended by each analyzer in the parallel ANALYZE superstep. */
   findings: Annotation<Finding[]>({
+    reducer: (prev, next) => prev.concat(next),
+    default: () => [],
+  }),
+  /**
+   * One entry per analyzer, appended in the same parallel superstep as
+   * `findings`. Lets REPORT state which analyzers actually ran, so an empty
+   * findings list can be told apart from an analyzer that never executed.
+   */
+  analyzers: Annotation<AnalyzerReport[]>({
     reducer: (prev, next) => prev.concat(next),
     default: () => [],
   }),

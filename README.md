@@ -32,7 +32,26 @@ growing body of security knowledge.
 | **MERGE**    | Fan-in join: dedupes and severity-ranks the combined findings.               |
 | **VERIFY**   | Skeptical critic pass: refines confidence/status, drops false-positives.     |
 | **REMEMBER** | LLM decides what to persist; writes crystals + runs consolidation.           |
-| **REPORT**   | Synthesizes a professional audit report (severity matrix, stable finding IDs, coverage). |
+| **REPORT**   | Synthesizes a professional audit report (severity matrix, stable finding IDs, coverage, analyzer status). |
+
+### Analyzer status & incomplete assessments
+
+Every analyzer degrades gracefully — an RPC error, a missing Semgrep binary, or
+unparseable model output all end with zero findings. That makes a broken run look
+exactly like a clean one, so each analyzer reports an outcome on the `analyzers`
+state channel:
+
+| Outcome    | Meaning                                                          |
+| ---------- | ---------------------------------------------------------------- |
+| `ok`       | Ran against real input. Silence here is evidence.                |
+| `skipped`  | Not applicable (no target of its kind, opt-in off).              |
+| `degraded` | Ran with a missing capability or unusable output.                |
+| `failed`   | Attempted and errored. Silence here means nothing.               |
+
+REPORT renders these as a table in Scope & Methodology, and when any analyzer is
+`degraded` or `failed` it **prepends a warning banner** to the finished report.
+The banner is added in code after synthesis (`src/graph/analyzer-status.ts`), so
+it cannot be dropped by the model.
 
 ### Hybrid retrieval (RECALL)
 

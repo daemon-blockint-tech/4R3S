@@ -7,8 +7,8 @@
  * Why this exists: the checkpointer keys graph state by `thread_id`. Invoking
  * the graph again on a thread whose previous run reached END starts a new run
  * from START but keeps the stored channel values, so `findings` (concat),
- * `coverage` (union) and `iterations` (sum) carry the previous audit forward
- * and its findings get reported against the new target. An accumulating reducer
+ * `analyzers` (concat), `coverage` (union) and `iterations` (sum) carry the
+ * previous audit forward and its findings get reported against the new target. An accumulating reducer
  * cannot be cleared by returning an empty update — concat of `[]` is a no-op —
  * so the reset writes through LangGraph's `Overwrite` sentinel, which bypasses
  * the reducer.
@@ -41,6 +41,7 @@ export function makeResetAccumulatorsNode() {
 
     return {
       findings: new Overwrite([]),
+      analyzers: new Overwrite([]),
       coverage: new Overwrite([]),
       iterations: new Overwrite(0),
     };
