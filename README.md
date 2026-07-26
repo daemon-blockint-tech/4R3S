@@ -58,7 +58,11 @@ it cannot be dropped by the model.
 Recall unions three sources and merges their scores, so a fragment surfaced by
 several sources ranks higher:
 
-1. **Crystalline** — in-process activation-based memory (working/episodic recall).
+1. **Crystalline** — in-process activation-based memory (working/episodic
+   recall). Recalled fragments are activated (activation boosted, access count
+   incremented), which is what makes the episodic→semantic promotion in
+   `consolidate()` reachable. Fragments synthesized from Supabase/Neo4j are
+   skipped — they have no crystal in the store.
 2. **Supabase** — `hybrid_search` RPC over pgvector + full-text (RRF) for
    candidate retrieval.
 3. **Neo4j** — a standalone lexical match over graph chunks *plus* 1–2 hop
