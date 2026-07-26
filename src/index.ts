@@ -15,6 +15,7 @@
 import { parseArgs } from "node:util";
 
 import { env } from "./config/env.js";
+import { auditThreadId } from "./config/thread.js";
 import { logger } from "./config/logger.js";
 import { defaultChat } from "./llm/chat-openrouter.js";
 import { CrystallineStore } from "./memory/crystalline-store.js";
@@ -85,6 +86,14 @@ async function main(): Promise<void> {
   const cli = parseCli();
   setCuaOverride(cli.cua);
 
+  // Checkpoint thread for this audit. Derived per target unless pinned by
+  // ARES_THREAD_ID, so one target's state can never be resumed into another's.
+  const threadId = auditThreadId({
+    program: cli.program,
+    source: cli.source,
+    override: env.ARES_THREAD_ID,
+  });
+
   const store = createStore();
   const crystalline = new CrystallineStore(store);
   await crystalline.start();
@@ -114,7 +123,7 @@ async function main(): Promise<void> {
   });
 
   logger.info(
-    { component: "ares", program: cli.program, source: cli.source },
+    { component: "ares", program: cli.program, source: cli.source, threadId },
     "Starting audit",
   );
 
@@ -126,7 +135,7 @@ async function main(): Promise<void> {
         sourcePath: cli.source,
       },
       {
-        configurable: { thread_id: env.ARES_THREAD_ID },
+        configurable: { thread_id: threadId },
         recursionLimit: env.ARES_MAX_ITERATIONS * 4,
       },
     );
@@ -152,7 +161,7 @@ async function main(): Promise<void> {
           ledger: billing.ledger,
           mpp: billing.mpp,
           config: billing.config,
-          resource: env.ARES_THREAD_ID,
+          resource: threadId,
         });
         billing.store?.save(billing.account);
         process.stdout.write("\n" + report + "\n");

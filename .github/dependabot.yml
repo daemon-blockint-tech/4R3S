@@ -11,6 +11,16 @@ updates:
       npm:
         patterns:
           - "*"
+    ignore:
+      # typescript-eslint 8.x peer-caps TypeScript at <6.1.0, and its entry point
+      # hard-throws on TS 7 ("typescript-eslint does not support TS 7"). A major
+      # or minor TypeScript bump therefore breaks both `npm ci` (ERESOLVE) and
+      # `npm run lint`, as the TS 7 bump in #13 did. Patch updates stay allowed.
+      # Remove this once typescript-eslint ships TS 7 support.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
 
   # Keep the GitHub Actions used in .github/workflows pinned to current versions.
   - package-ecosystem: github-actions
