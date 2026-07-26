@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   analyzerStatusTable,
   assuranceBanner,
+  missingAnalyzers,
   orderAnalyzers,
   unreliableAnalyzers,
   withAssuranceBanner,
@@ -76,10 +77,48 @@ describe("assuranceBanner", () => {
     const banner = assuranceBanner([
       { analyzer: "onchain", outcome: "failed", detail: "rpc down" },
       { analyzer: "static", outcome: "degraded", detail: "semgrep not installed" },
+      { analyzer: "heuristic", outcome: "ok" },
+      { analyzer: "cua", outcome: "skipped" },
     ]);
-    expect(banner).toContain("2 of 2");
+    expect(banner).toContain("2 of 4");
     expect(banner).toContain("onchain failed");
     expect(banner).toContain("static degraded");
+  });
+
+  it("warns when an analyzer reported nothing at all", () => {
+    // A checkpoint written before the `analyzers` channel existed, or a node
+    // that forgets to report, must not render as full coverage.
+    const banner = assuranceBanner([
+      { analyzer: "onchain", outcome: "ok" },
+      { analyzer: "static", outcome: "ok" },
+      { analyzer: "heuristic", outcome: "ok" },
+    ]);
+    expect(banner).toContain("1 of 4");
+    expect(banner).toContain("cua reported no result");
+  });
+
+  it("warns loudly when no analyzer reported at all", () => {
+    const banner = assuranceBanner([]);
+    expect(banner).toBeDefined();
+    expect(banner).toContain("4 of 4");
+    expect(banner).toContain("onchain reported no result");
+  });
+});
+
+describe("missingAnalyzers", () => {
+  it("names the expected analyzers that produced no report", () => {
+    expect(missingAnalyzers(ok)).toEqual([]);
+    expect(missingAnalyzers([{ analyzer: "heuristic", outcome: "ok" }])).toEqual([
+      "onchain",
+      "static",
+      "cua",
+    ]);
+    expect(missingAnalyzers([])).toEqual([
+      "onchain",
+      "static",
+      "heuristic",
+      "cua",
+    ]);
   });
 });
 
@@ -106,7 +145,17 @@ describe("analyzerStatusTable", () => {
     expect(table).toContain("| heuristic | ran | — |");
   });
 
-  it("degrades to a placeholder row rather than an empty table", () => {
-    expect(analyzerStatusTable([])).toContain("no analyzers reported");
+  it("lists analyzers that never reported instead of omitting them", () => {
+    const table = analyzerStatusTable([{ analyzer: "heuristic", outcome: "ok" }]);
+    expect(table).toContain("| heuristic | ran | — |");
+    expect(table).toContain("| onchain | no result reported | coverage unknown |");
+    expect(table).toContain("| cua | no result reported | coverage unknown |");
+  });
+
+  it("renders a full unknown-coverage table when nothing reported", () => {
+    const table = analyzerStatusTable([]);
+    for (const name of ["onchain", "static", "heuristic", "cua"]) {
+      expect(table).toContain(`| ${name} | no result reported | coverage unknown |`);
+    }
   });
 });

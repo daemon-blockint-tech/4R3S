@@ -10,10 +10,19 @@
  * These helpers are deterministic and computed in code, not delegated to the
  * model: the banner is prepended to the finished report so it cannot be dropped,
  * and the table is handed to REPORT for its methodology section.
+ *
+ * An analyzer that reported nothing at all counts as unreliable too. Otherwise
+ * the absence of a report — a checkpoint written before this channel existed, or
+ * a future node that forgets to emit one — would render as a clean assessment,
+ * which is exactly the failure this module exists to prevent.
  */
 import type { AnalyzerName, AnalyzerOutcome, AnalyzerReport } from "./state.js";
 
-/** Analyzer order used in the report, independent of superstep completion order. */
+/**
+ * Every analyzer expected to report, in the order the report lists them
+ * (independent of superstep completion order). Any analyzer absent from a run's
+ * reports is treated as an unknown, not as a pass.
+ */
 const ANALYZER_ORDER: AnalyzerName[] = ["onchain", "static", "heuristic", "cua"];
 
 /** Outcomes that mean an absence of findings carries no assurance. */
@@ -34,13 +43,24 @@ export function orderAnalyzers(reports: readonly AnalyzerReport[]): AnalyzerRepo
   );
 }
 
-/** Analyzers whose silence must not be read as a clean result. */
+/** Analyzers that ran badly: silence from these carries no assurance. */
 export function unreliableAnalyzers(
   reports: readonly AnalyzerReport[],
 ): AnalyzerReport[] {
   return orderAnalyzers(reports).filter((r) =>
     UNTRUSTWORTHY_SILENCE.includes(r.outcome),
   );
+}
+
+/**
+ * Analyzers that produced no report at all. Their coverage is unknown, which is
+ * not the same as covered — so they are surfaced alongside the failures.
+ */
+export function missingAnalyzers(
+  reports: readonly AnalyzerReport[],
+): AnalyzerName[] {
+  const reported = new Set(reports.map((r) => r.analyzer));
+  return ANALYZER_ORDER.filter((name) => !reported.has(name));
 }
 
 /**
@@ -52,35 +72,45 @@ export function analyzerStatusTable(reports: readonly AnalyzerReport[]): string 
     (r) =>
       `| ${r.analyzer} | ${OUTCOME_LABEL[r.outcome]} | ${r.detail ?? "—"} |`,
   );
+  // List analyzers that never reported, rather than omitting them silently.
+  const missingRows = missingAnalyzers(reports).map(
+    (name) => `| ${name} | no result reported | coverage unknown |`,
+  );
   return [
     "| Analyzer | Status | Detail |",
     "| -------- | ------ | ------ |",
-    ...(rows.length ? rows : ["| — | no analyzers reported | — |"]),
+    ...rows,
+    ...missingRows,
   ].join("\n");
 }
 
 /**
  * Blockquote warning for a report whose coverage is incomplete, or `undefined`
- * when every analyzer either ran or was legitimately not applicable.
+ * when every expected analyzer either ran or was legitimately not applicable.
  *
- * `skipped` analyzers are named too: an audit that never had source code to
- * analyze is a narrower audit, and the reader should know that even though
- * nothing malfunctioned.
+ * `skipped` does not trigger it: an analyzer with nothing of its kind to inspect
+ * did not malfunction, and its absence is already stated in the status table.
+ * `degraded`, `failed` and "never reported" all do.
  */
 export function assuranceBanner(
   reports: readonly AnalyzerReport[],
 ): string | undefined {
   const unreliable = unreliableAnalyzers(reports);
-  if (unreliable.length === 0) return undefined;
+  const missing = missingAnalyzers(reports);
+  const affected = unreliable.length + missing.length;
+  if (affected === 0) return undefined;
 
-  const total = reports.length;
-  const detail = unreliable
-    .map((r) => `${r.analyzer} ${r.outcome}${r.detail ? ` (${r.detail})` : ""}`)
+  const detail = [
+    ...unreliable.map(
+      (r) => `${r.analyzer} ${r.outcome}${r.detail ? ` (${r.detail})` : ""}`,
+    ),
+    ...missing.map((name) => `${name} reported no result`),
+  ]
     .join("; ")
     .trim();
 
   return [
-    `> **Incomplete assessment — ${unreliable.length} of ${total} analyzers did not run reliably.**`,
+    `> **Incomplete assessment — ${affected} of ${ANALYZER_ORDER.length} analyzers did not run reliably.**`,
     `> ${detail}.`,
     "> Absence of findings in the affected areas is not evidence that none exist.",
   ].join("\n");
