@@ -211,6 +211,12 @@ is billed at least `BILLING_MIN_CHARGE_CREDITS` — so a run can never settle
 below provider cost, even if the markup is misconfigured. Each settlement
 reports cost, revenue, profit, and margin.
 
+Balances are stored with a lock file and written atomically, and a run refuses
+to overwrite a balance another audit changed underneath it
+(`ConcurrentAccountUpdateError`) rather than silently erasing the other charge.
+A store file that exists but cannot be parsed is a fatal error, not an excuse to
+start from a fresh allotment.
+
 **Payment is enforced before delivery.** When billing is on, the report is
 released only *after* settlement succeeds; if the account can't cover the charge
 (`InsufficientCreditsError`), the report is withheld and the run exits non-zero.
