@@ -19,10 +19,23 @@ export interface SemgrepFinding {
   message: string;
 }
 
+/**
+ * Why Semgrep produced nothing. Machine-readable so callers can distinguish an
+ * audit that legitimately had no source path from one where the scan could not
+ * run — matching on the human-readable `note` would be fragile.
+ */
+export type SemgrepSkipReason =
+  | "no-source"
+  | "path-missing"
+  | "not-installed"
+  | "unparseable"
+  | "spawn-error";
+
 export interface SemgrepResult {
   available: boolean;
   findings: SemgrepFinding[];
   note?: string;
+  reason?: SemgrepSkipReason;
 }
 
 interface SemgrepJson {
@@ -40,7 +53,12 @@ export async function runSemgrep(
   config = "auto",
 ): Promise<SemgrepResult> {
   if (!sourcePath) {
-    return { available: false, findings: [], note: "no source path provided" };
+    return {
+      available: false,
+      findings: [],
+      note: "no source path provided",
+      reason: "no-source",
+    };
   }
   try {
     await access(sourcePath);
@@ -49,6 +67,7 @@ export async function runSemgrep(
       available: false,
       findings: [],
       note: `source path not found: ${sourcePath}`,
+      reason: "path-missing",
     };
   }
 
@@ -62,15 +81,25 @@ export async function runSemgrep(
         { stdio: ["ignore", "pipe", "ignore"] },
       );
     } catch {
-      resolve({ available: false, findings: [], note: "semgrep not installed" });
+      resolve({
+        available: false,
+        findings: [],
+        note: "semgrep not installed",
+        reason: "not-installed",
+      });
       return;
     }
 
     child.on("error", (err: NodeJS.ErrnoException) => {
-      const note =
-        err.code === "ENOENT" ? "semgrep not installed" : String(err);
+      const notInstalled = err.code === "ENOENT";
+      const note = notInstalled ? "semgrep not installed" : String(err);
       logger.warn({ component: "semgrep", note }, "Semgrep unavailable");
-      resolve({ available: false, findings: [], note });
+      resolve({
+        available: false,
+        findings: [],
+        note,
+        reason: notInstalled ? "not-installed" : "spawn-error",
+      });
     });
 
     child.stdout.on("data", (d: Buffer) => chunks.push(d));
@@ -96,7 +125,12 @@ export async function runSemgrep(
           { component: "semgrep", err: String(err) },
           "Failed to parse Semgrep output",
         );
-        resolve({ available: true, findings: [], note: "unparseable output" });
+        resolve({
+          available: true,
+          findings: [],
+          note: "unparseable output",
+          reason: "unparseable",
+        });
       }
     });
   });

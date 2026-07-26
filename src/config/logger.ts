@@ -5,6 +5,10 @@
  * Keeps the dependency surface small — no pino/winston needed for
  * a CLI-style audit agent.
  *
+ * Every level goes to **stderr**. stdout is reserved for the one artifact the
+ * caller wants to capture — the audit report — so `npm run audit … > report.md`
+ * yields clean markdown instead of markdown with JSON log lines spliced in.
+ *
  * Two call styles are accepted so callers can pick whichever reads best:
  *   logger.info("message", { some: "meta" })   // message-first
  *   logger.info({ some: "meta" }, "message")    // pino-style, meta-first
@@ -47,9 +51,8 @@ function emit(
     msg,
     ...meta,
   });
-  const stream =
-    level === "error" || level === "warn" ? process.stderr : process.stdout;
-  stream.write(line + "\n");
+  // Never stdout: that stream carries the report.
+  process.stderr.write(line + "\n");
 }
 
 type LogFn = (

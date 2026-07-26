@@ -32,14 +32,37 @@ growing body of security knowledge.
 | **MERGE**    | Fan-in join: dedupes and severity-ranks the combined findings.               |
 | **VERIFY**   | Skeptical critic pass: refines confidence/status, drops false-positives.     |
 | **REMEMBER** | LLM decides what to persist; writes crystals + runs consolidation.           |
-| **REPORT**   | Synthesizes a professional audit report (severity matrix, stable finding IDs, coverage). |
+| **REPORT**   | Synthesizes a professional audit report (severity matrix, stable finding IDs, coverage, analyzer status). |
+
+### Analyzer status & incomplete assessments
+
+Every analyzer degrades gracefully — an RPC error, a missing Semgrep binary, or
+unparseable model output all end with zero findings. That makes a broken run look
+exactly like a clean one, so each analyzer reports an outcome on the `analyzers`
+state channel:
+
+| Outcome    | Meaning                                                          |
+| ---------- | ---------------------------------------------------------------- |
+| `ok`       | Ran against real input. Silence here is evidence.                |
+| `skipped`  | Not applicable (no target of its kind, opt-in off).              |
+| `degraded` | Ran with a missing capability or unusable output.                |
+| `failed`   | Attempted and errored. Silence here means nothing.               |
+
+REPORT renders these as a table in Scope & Methodology, and when any analyzer is
+`degraded` or `failed` it **prepends a warning banner** to the finished report.
+The banner is added in code after synthesis (`src/graph/analyzer-status.ts`), so
+it cannot be dropped by the model.
 
 ### Hybrid retrieval (RECALL)
 
 Recall unions three sources and merges their scores, so a fragment surfaced by
 several sources ranks higher:
 
-1. **Crystalline** — in-process activation-based memory (working/episodic recall).
+1. **Crystalline** — in-process activation-based memory (working/episodic
+   recall). Recalled fragments are activated (activation boosted, access count
+   incremented), which is what makes the episodic→semantic promotion in
+   `consolidate()` reachable. Fragments synthesized from Supabase/Neo4j are
+   skipped — they have no crystal in the store.
 2. **Supabase** — `hybrid_search` RPC over pgvector + full-text (RRF) for
    candidate retrieval.
 3. **Neo4j** — a standalone lexical match over graph chunks *plus* 1–2 hop
@@ -187,6 +210,12 @@ floored at `1 + BILLING_MIN_MARGIN_PCT`, credits are rounded up, and every audit
 is billed at least `BILLING_MIN_CHARGE_CREDITS` — so a run can never settle
 below provider cost, even if the markup is misconfigured. Each settlement
 reports cost, revenue, profit, and margin.
+
+Balances are stored with a lock file and written atomically, and a run refuses
+to overwrite a balance another audit changed underneath it
+(`ConcurrentAccountUpdateError`) rather than silently erasing the other charge.
+A store file that exists but cannot be parsed is a fatal error, not an excuse to
+start from a fresh allotment.
 
 **Payment is enforced before delivery.** When billing is on, the report is
 released only *after* settlement succeeds; if the account can't cover the charge

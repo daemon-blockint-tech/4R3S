@@ -5,9 +5,45 @@
  * source path is unavailable.
  */
 import { logger } from "../../config/logger.js";
-import { runSemgrep, type SemgrepFinding } from "../../tools/semgrep.js";
-import type { AresState, AresStateUpdate, Finding, Severity } from "../state.js";
+import {
+  runSemgrep,
+  type SemgrepFinding,
+  type SemgrepSkipReason,
+} from "../../tools/semgrep.js";
+import type {
+  AnalyzerOutcome,
+  AnalyzerReport,
+  AresState,
+  AresStateUpdate,
+  Finding,
+  Severity,
+} from "../state.js";
 import { VULN_IDS } from "../../knowledge/solana-vulns.js";
+
+/** Build this node's entry for the `analyzers` channel. */
+function status(outcome: AnalyzerOutcome, detail?: string): AnalyzerReport[] {
+  return [{ analyzer: "static", outcome, detail }];
+}
+
+/**
+ * Map a Semgrep skip reason onto an analyzer outcome.
+ *
+ * `no-source` is the only benign case — nothing was asked of the scanner. Every
+ * other reason means source analysis was expected but did not happen: a missing
+ * path is an outright failure, while a missing binary or unusable output leaves
+ * the scan degraded.
+ */
+function outcomeFor(reason: SemgrepSkipReason | undefined): AnalyzerOutcome {
+  switch (reason) {
+    case "no-source":
+      return "skipped";
+    case "path-missing":
+    case "spawn-error":
+      return "failed";
+    default:
+      return "degraded";
+  }
+}
 
 /** Map Semgrep severities onto the audit severity scale. */
 function mapSeverity(semgrep: string): Severity {
@@ -60,12 +96,21 @@ export function makeAnalyzeStaticNode() {
     state: AresState,
   ): Promise<AresStateUpdate> {
     const result = await runSemgrep(state.sourcePath);
-    if (!result.available) {
+    if (!result.available || result.reason) {
+      const outcome = outcomeFor(result.reason);
       logger.info(
-        { component: "node.analyze-static", note: result.note },
-        "Static analysis skipped",
+        {
+          component: "node.analyze-static",
+          note: result.note,
+          reason: result.reason,
+          outcome,
+        },
+        "Static analysis did not produce results",
       );
-      return { findings: [] };
+      return {
+        findings: [],
+        analyzers: status(outcome, result.note),
+      };
     }
 
     const findings = result.findings.map(toFinding);
@@ -74,6 +119,6 @@ export function makeAnalyzeStaticNode() {
       { component: "node.analyze-static", findings: findings.length, coverage: coverage.length },
       "Static analysis complete",
     );
-    return { findings, coverage };
+    return { findings, coverage, analyzers: status("ok") };
   };
 }

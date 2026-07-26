@@ -12,7 +12,9 @@ describe("synthCrystal", () => {
     expect(c.activation).toBe(1);
     expect(c.accessCount).toBe(0);
     expect(c.links).toEqual([]);
-    expect(c.metadata).toEqual({});
+    // Marked synthetic so RECALL knows there is no crystal in the store to
+    // activate for this fragment.
+    expect(c.metadata).toEqual({ synthetic: true });
     expect(c.tags).toEqual([]);
     expect(c.createdAt).toBeGreaterThan(0);
     expect(c.lastActivated).toBe(c.createdAt);
@@ -29,7 +31,8 @@ describe("synthCrystal", () => {
     });
     expect(c.level).toBe("procedural");
     expect(c.embedding).toEqual([0.1, 0.2, 0.3]);
-    expect(c.metadata).toEqual({ source: "neo4j" });
+    // Supplied metadata is kept, with the synthetic marker added alongside it.
+    expect(c.metadata).toEqual({ source: "neo4j", synthetic: true });
     expect(c.tags).toEqual(["cpi", "reentrancy"]);
   });
 });

@@ -27,7 +27,9 @@ export function synthCrystal(init: {
     createdAt: now,
     accessCount: 0,
     links: [],
-    metadata: init.metadata ?? {},
+    // `synthetic` marks a fragment that has no crystal in the Crystalline store,
+    // so RECALL knows not to try to activate it (there is nothing to update).
+    metadata: { ...init.metadata, synthetic: true },
     tags: init.tags ?? [],
   };
 }

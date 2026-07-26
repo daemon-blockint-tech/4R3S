@@ -101,7 +101,7 @@ Synthesize the verified findings into a final markdown report with EXACTLY these
   ## Executive Summary
       One paragraph: what was assessed, the headline outcome, and the most serious issues. Then reproduce the provided severity-summary table verbatim.
   ## Scope & Methodology
-      What was analyzed (program address and/or source), which analyzers ran, and that findings were passed through a verification (critic) pass. Note any limitations (e.g. black-box / no source).
+      What was analyzed (program address and/or source) and that findings were passed through a verification (critic) pass. Reproduce the provided analyzer-status table verbatim, and state plainly which analyzers failed or ran degraded — for those, say that an absence of findings is not evidence that none exist. Note any other limitations (e.g. black-box / no source).
   ## Severity Classification
       Briefly restate the impact × likelihood scale below.
   ## Findings Summary

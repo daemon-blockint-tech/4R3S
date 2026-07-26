@@ -6,19 +6,35 @@
  *
  * Opt-in: returns no findings immediately when CUA isn't enabled/configured
  * (see `hasCua` in `src/tools/cua.ts`), so the graph and test suite stay
- * hermetic by default.
+ * hermetic by default. Reports its outcome on the `analyzers` channel so being
+ * switched off reads as "not applicable" while a browser session that errored
+ * out reads as a failure.
  */
 import { analyzeSystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
 import { hasCua, runCuaInvestigation } from "../../tools/cua.js";
 import type { GraphDeps } from "../deps.js";
-import type { AresState, AresStateUpdate, Finding } from "../state.js";
-import { chatJson, coerceFindings, extractChecked } from "../util.js";
+import type {
+  AnalyzerOutcome,
+  AnalyzerReport,
+  AresState,
+  AresStateUpdate,
+  Finding,
+} from "../state.js";
+import { chatJsonResult, coerceFindings, extractChecked } from "../util.js";
+
+/** Build this node's entry for the `analyzers` channel. */
+function status(outcome: AnalyzerOutcome, detail?: string): AnalyzerReport[] {
+  return [{ analyzer: "cua", outcome, detail }];
+}
 
 export function makeAnalyzeCuaNode(deps: GraphDeps) {
   return async function analyzeCua(state: AresState): Promise<AresStateUpdate> {
     if (!hasCua()) {
-      return { findings: [] };
+      return {
+        findings: [],
+        analyzers: status("skipped", "CUA not enabled (opt-in)"),
+      };
     }
 
     const target = state.intake?.target ?? state.programAddress ?? state.request;
@@ -33,11 +49,14 @@ export function makeAnalyzeCuaNode(deps: GraphDeps) {
 
     const investigation = await runCuaInvestigation(objective);
     if (!investigation.available) {
-      logger.info(
+      logger.warn(
         { component: "node.analyze-cua", note: investigation.note },
-        "CUA analysis skipped",
+        "CUA investigation did not complete",
       );
-      return { findings: [] };
+      return {
+        findings: [],
+        analyzers: status("failed", investigation.note),
+      };
     }
 
     const human = [
@@ -54,7 +73,7 @@ export function makeAnalyzeCuaNode(deps: GraphDeps) {
       .filter(Boolean)
       .join("\n");
 
-    const raw = await chatJson<unknown>(
+    const { value: raw, parsed } = await chatJsonResult<unknown>(
       deps.chat,
       analyzeSystemPrompt(),
       human,
@@ -67,6 +86,16 @@ export function makeAnalyzeCuaNode(deps: GraphDeps) {
       { component: "node.analyze-cua", findings: findings.length, coverage: coverage.length },
       "CUA analysis complete",
     );
-    return { findings, coverage, iterations: 1 };
+    return {
+      findings,
+      coverage,
+      iterations: 1,
+      analyzers: parsed
+        ? status("ok")
+        : status(
+            "degraded",
+            "model response was not valid JSON; no findings extracted",
+          ),
+    };
   };
 }

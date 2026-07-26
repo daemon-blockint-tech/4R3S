@@ -1,5 +1,11 @@
 /**
  * REPORT node — synthesize the verified findings into a final markdown report.
+ *
+ * Two things are computed here rather than delegated to the model: the severity
+ * table / finding ids, and the analyzer-coverage warning. The warning is
+ * prepended to the finished text (`withAssuranceBanner`), so a run where an
+ * analyzer failed can never render as a clean assessment even if the model
+ * ignores the instruction.
  */
 import { reportSystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
@@ -11,6 +17,11 @@ import {
 } from "../../knowledge/severity.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate } from "../state.js";
+import {
+  analyzerStatusTable,
+  unreliableAnalyzers,
+  withAssuranceBanner,
+} from "../analyzer-status.js";
 import { chatText } from "../util.js";
 
 export function makeReportNode(deps: GraphDeps) {
@@ -29,12 +40,26 @@ export function makeReportNode(deps: GraphDeps) {
     const dist = severityDistribution(findings);
     const summaryTable = severitySummaryTable(dist);
 
+    // Analyzer coverage: which analyzers ran, and whose silence can't be trusted.
+    const statusTable = analyzerStatusTable(state.analyzers);
+    const unreliable = unreliableAnalyzers(state.analyzers);
+
     const human = [
       state.intake ? `Target: ${state.intake.target}` : `Request: ${state.request}`,
       state.intake ? `Summary: ${state.intake.summary}` : "",
       "",
       "Severity summary table (reproduce verbatim in the Executive Summary):",
       summaryTable,
+      "",
+      "Analyzer status (reproduce this table verbatim in Scope & Methodology):",
+      statusTable,
+      "",
+      unreliable.length
+        ? "IMPORTANT: the analyzers listed above as failed or degraded did not " +
+          "produce reliable results. Say so explicitly in Scope & Methodology " +
+          "and state that the absence of findings in those areas is not " +
+          "evidence that none exist. Do not describe the target as clean."
+        : "",
       "",
       `Findings (${findings.length}), most severe first` +
         (droppedFalsePositives > 0
@@ -62,7 +87,9 @@ export function makeReportNode(deps: GraphDeps) {
       .filter(Boolean)
       .join("\n");
 
-    const reportText = await chatText(deps.chat, reportSystemPrompt(), human);
+    const synthesized = await chatText(deps.chat, reportSystemPrompt(), human);
+    // Guarantee the warning rather than trusting the model to include it.
+    const reportText = withAssuranceBanner(synthesized, state.analyzers);
 
     logger.info(
       {
@@ -70,6 +97,8 @@ export function makeReportNode(deps: GraphDeps) {
         length: reportText.length,
         findings: findings.length,
         severity: dist,
+        analyzers: state.analyzers.map((a) => `${a.analyzer}:${a.outcome}`),
+        unreliableAnalyzers: unreliable.length,
       },
       "Report synthesized",
     );
