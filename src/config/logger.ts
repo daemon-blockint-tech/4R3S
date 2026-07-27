@@ -38,6 +38,40 @@ function normalize(
   return { msg: typeof b === "string" ? b : "", meta: a };
 }
 
+/** Metadata keys whose values are never printed. */
+const SENSITIVE_KEY = /key|token|password|secret|authorization|credential|dsn/i;
+
+/** `scheme://user:secret@host` — the shape of the Postgres DSN, among others. */
+const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi;
+
+export const REDACTED = "[redacted]";
+
+/** Strip credentials embedded in any URL inside a string. */
+function scrubUrls(value: string): string {
+  return value.replace(URL_CREDENTIALS, (_m, scheme, user) => `${scheme}${user}:${REDACTED}@`);
+}
+
+/**
+ * Redact a metadata value: anything under a sensitive key is dropped entirely,
+ * and URL credentials are stripped from every string, however deeply nested —
+ * a leaked DSN usually arrives inside a stringified driver error, not under a
+ * conveniently-named field.
+ */
+export function redact(value: unknown, keyIsSensitive = false): unknown {
+  if (keyIsSensitive) return value === undefined ? undefined : REDACTED;
+  if (typeof value === "string") return scrubUrls(value);
+  if (Array.isArray(value)) return value.map((v) => redact(v));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        redact(v, SENSITIVE_KEY.test(k)),
+      ]),
+    );
+  }
+  return value;
+}
+
 function emit(
   level: Level,
   a: string | Record<string, unknown>,
@@ -48,8 +82,8 @@ function emit(
   const line = JSON.stringify({
     t: new Date().toISOString(),
     level,
-    msg,
-    ...meta,
+    msg: scrubUrls(msg),
+    ...(redact(meta ?? {}) as Record<string, unknown>),
   });
   // Never stdout: that stream carries the report.
   process.stderr.write(line + "\n");
