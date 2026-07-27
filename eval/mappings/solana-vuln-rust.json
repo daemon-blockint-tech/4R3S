@@ -1,0 +1,21 @@
+{
+  "dataset": "FraChiacc99/solana-vuln-rust",
+  "revision": "3155866652548031f1bca1fb61cf1c58b5d078ef",
+  "split": "train",
+  "notes": [
+    "The dataset ships one `text` column holding a two-turn chat. The first answer has the form 'Yes, it contains a vulnerability. It is classified as <label> and is related to the code:`<expr>`. In SWC it is mapped with: <swc>.' or 'No, it does not contain any vulnerabilities.'",
+    "The <label> vocabulary is 6 values across 205 rows, so labels parse exactly. The vocabulary is coarser than VULN_CATALOG: 'Missing Key Check' (72 rows) covers signer, owner, and pubkey-equality checks and is mapped to missing-owner-check, so ARES answering missing-signer-check on one of those rows scores as a false positive plus a false negative.",
+    "Severity is absent from the dataset. The values below are the VULN_CATALOG defaultSeverity of the mapped class and exist only to make the --by severity breakdown work.",
+    "Rows are function-level snippets, not whole programs, and 'Integer Flow' rows include cases already guarded by checked_* arithmetic. Treat a score on this dataset as a signal about one label vocabulary, not as ARES's audit quality.",
+    "A row labeled clean contributes no ground truth rows; anything ARES reports on it counts as a false positive."
+  ],
+  "clean_answer_prefix": "No, it does not contain any vulnerabilities",
+  "labels": {
+    "Missing Key Check": { "category": "missing-owner-check", "severity": "high" },
+    "Integer Flow": { "category": "integer-overflow-underflow", "severity": "high" },
+    "Type Confusion": { "category": "type-cosplay", "severity": "high" },
+    "Cross Program Invocation": { "category": "arbitrary-cpi", "severity": "critical" },
+    "Precision": { "category": "precision-loss", "severity": "medium" },
+    "Bump Seed": { "category": "non-canonical-bump", "severity": "medium" }
+  }
+}

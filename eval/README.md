@@ -3,25 +3,71 @@
 `score_detections.py` compares ARES audit output against a labeled ground truth
 set and reports precision, recall, and F1.
 
-The repository currently ships **no ground truth dataset**. `src/knowledge/solana-vulns.ts`
-is the vulnerability taxonomy (20 classes, no labels), `db/` holds schema DDL only,
-and the `*.test.ts` files are unit tests. Any published F1 figure for ARES is
-unverified until someone supplies the two files below and this script prints one.
+## Honest status table
+
+ARES has never been scored. No prediction output is committed, so every cell that
+would hold a measurement is empty on purpose.
+
+| Claim | Measured value | Status | Evidence |
+|---|---|---|---|
+| F1 = 0.94 | not measured | **unverified** | no `eval/predictions/ares-latest.csv` exists |
+| Precision | not measured | **unverified** | same |
+| Recall | not measured | **unverified** | same |
+| Ground truth available | 152 labels over 173 targets, 6 classes | available | `FraChiacc99/solana-vuln-rust` @ `3155866` via `fetch_datasets.py` |
+| Scorer verified | 3/3 gate cases behave at `--target-f1 0.94` | passing | `gate_selftest.py` in the `verify-claims` CI job, on synthetic predictions |
+
+Do not publish 0.94, or any other figure, until the `Score ARES predictions` step
+of the `verify-claims` job prints one. That step runs only when
+`eval/predictions/ares-latest.csv` exists; without it, the job emits an UNSCORED
+warning and a `release` event fails outright.
+
+To fill the table: run ARES over `eval/data/corpus/*.rs`, serialize each run's
+`verifiedFindings` with its `target_id` into `eval/predictions/ares-latest.csv`,
+and push. CI then computes the numbers and the gate decides.
 
 ## Usage
 
 ```bash
-pip install pandas numpy            # see requirements.txt
+pip install -r eval/requirements.txt
+
+# 1. build ground_truth.csv + corpus/ + manifest.json under eval/data/
+python eval/fetch_datasets.py
+
+# 2. score predictions against it
 python eval/score_detections.py \
-  --truth path/to/ground-truth.csv \
-  --predictions path/to/ares-findings.csv \
+  --truth eval/data/ground_truth.csv \
+  --predictions eval/predictions/ares-latest.csv \
   --by category severity \
   --target-f1 0.94 \
-  --json-out /tmp/ares-eval.json
+  --json-out eval/data/score.json
+
+# 3. check the gate itself still accepts and rejects correctly
+python eval/gate_selftest.py --truth eval/data/ground_truth.csv --target-f1 0.94
 ```
 
 Exit code is 1 when `--target-f1` is given and the measured F1 falls below it,
 so the script can gate a release.
+
+## Ground truth source
+
+`fetch_datasets.py` downloads `FraChiacc99/solana-vuln-rust` (205 rows, single
+parquet, ungated) pinned to revision `3155866`, parses the verdict turn of each
+chat row, and maps its label onto a `VULN_CATALOG` id through
+`eval/mappings/solana-vuln-rust.json`. It writes `ground_truth.csv`, one `.rs` file
+per target under `corpus/`, and a `manifest.json` recording the revision and label
+counts.
+
+The mapping is a human judgement call, and the dataset's 6-label vocabulary is
+coarser than the 28-class catalog: `Missing Key Check` collapses signer, owner, and
+pubkey-equality checks into `missing-owner-check`. Read the `notes` array in the
+mapping file before quoting any score derived from it. `label_rows` raises on a
+label it does not recognize, so an upstream change surfaces as a CI failure instead
+of a silently shrunken dataset.
+
+The other datasets in the SEC-5 brief are not ingested; `python eval/fetch_datasets.py
+--list-unsupported` prints why. `almanax/insecure-solana-programs` is the one worth
+adding — it is Solana-specific and program-level, but `gated: manual` on the HF API,
+so it needs an approved account and an `HF_TOKEN`.
 
 ## Input schema
 
