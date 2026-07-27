@@ -1,11 +1,20 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   InMemoryAccountStore,
   FileAccountStore,
+  AccountStoreCorruptError,
+  ConcurrentAccountUpdateError,
   createAccountStore,
 } from "./account-store.js";
 import { CreditLedger, type CreditAccount, type LedgerEntry } from "./credits.js";
@@ -23,6 +32,7 @@ function account(over: Partial<CreditAccount> = {}): CreditAccount {
 function entry(over: Partial<LedgerEntry> = {}): LedgerEntry {
   return {
     id: "e1",
+    accountId: "acct-1",
     at: Date.now(),
     kind: "debit",
     credits: 5,
@@ -50,10 +60,12 @@ describe("InMemoryAccountStore", () => {
     expect(store.load("acct-1")!.systemCredits).toBe(10);
   });
 
-  it("collects ledger entries by account ref", () => {
+  it("collects ledger entries by account, not by audit reference", () => {
     const store = new InMemoryAccountStore();
-    store.append(entry({ id: "a", ref: "acct-1" }));
-    store.append(entry({ id: "b", ref: "acct-2" }));
+    // `ref` names the audit (a thread id in production), so filtering on it
+    // would return nothing for a real run. `accountId` is the account key.
+    store.append(entry({ id: "a", accountId: "acct-1", ref: "ares-9f2c" }));
+    store.append(entry({ id: "b", accountId: "acct-2", ref: "ares-9f2c" }));
     expect(store.ledger("acct-1").map((e) => e.id)).toEqual(["a"]);
   });
 });
@@ -93,18 +105,90 @@ describe("FileAccountStore", () => {
     store.save(acct);
 
     const reopened = new FileAccountStore(path);
+    // The debit is keyed by account even though its ref names the audit.
     expect(reopened.ledger("acct-1")).toHaveLength(1);
     expect(reopened.load("acct-1")!.systemCredits).toBe(70);
   });
 
-  it("starts fresh on a corrupt file rather than throwing", () => {
+  it("refuses to start from an empty balance when the file is corrupt", () => {
+    const path = tmpFile();
+    new FileAccountStore(path).save(account({ systemCredits: 100 }));
+    writeFileSync(path, "{ not json");
+
+    // Silently starting fresh would hand the payer a full prepaid allotment
+    // every time the balance file is damaged.
+    expect(() => new FileAccountStore(path)).toThrow(AccountStoreCorruptError);
+  });
+
+  it("rejects a save that would overwrite another run's balance", () => {
+    const path = tmpFile();
+    const a = new FileAccountStore(path);
+    a.save(account({ systemCredits: 100 }));
+
+    // Two concurrent audits: both load 100, both debit, both write back.
+    const first = new FileAccountStore(path);
+    const second = new FileAccountStore(path);
+    const loadedByFirst = first.load("acct-1")!;
+    const loadedBySecond = second.load("acct-1")!;
+
+    first.save({ ...loadedByFirst, systemCredits: 90 });
+    // Without the revision guard the second write silently erases the first.
+    expect(() =>
+      second.save({ ...loadedBySecond, systemCredits: 80 }),
+    ).toThrow(ConcurrentAccountUpdateError);
+    expect(new FileAccountStore(path).load("acct-1")!.systemCredits).toBe(90);
+  });
+
+  it("allows sequential saves from the same loaded store", () => {
+    const path = tmpFile();
+    const store = new FileAccountStore(path);
+    store.save(account({ systemCredits: 100 }));
+    const loaded = store.load("acct-1")!;
+    store.save({ ...loaded, systemCredits: 90 });
+    store.save({ ...loaded, systemCredits: 80 });
+    expect(new FileAccountStore(path).load("acct-1")!.systemCredits).toBe(80);
+  });
+
+  it("merges ledger appends made by another store instance", () => {
+    const path = tmpFile();
+    const a = new FileAccountStore(path);
+    const b = new FileAccountStore(path);
+    a.append(entry({ id: "from-a" }));
+    b.append(entry({ id: "from-b" }));
+
+    // b re-reads inside the lock, so a's entry is not clobbered.
+    const ids = new FileAccountStore(path).ledger("acct-1").map((e) => e.id);
+    expect(ids.sort()).toEqual(["from-a", "from-b"]);
+  });
+
+  it("leaves no temp or lock files behind", () => {
     const path = tmpFile();
     const store = new FileAccountStore(path);
     store.save(account());
-    // Corrupt it, then reopen.
-    writeFileSync(path, "{ not json");
-    const reopened = new FileAccountStore(path);
-    expect(reopened.load("acct-1")).toBeUndefined();
+    store.append(entry());
+    expect(existsSync(`${path}.lock`)).toBe(false);
+    expect(readdirSync(dirname(path)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("surfaces a write failure instead of reporting a phantom settlement", () => {
+    const path = tmpFile();
+    const store = new FileAccountStore(path);
+    store.save(account());
+
+    // Occupy the staging path with a directory so the atomic write cannot be
+    // staged. (Permission-based setups are useless here: tests may run as root.)
+    const staging = `${path}.${process.pid}.tmp`;
+    mkdirSync(staging, { recursive: true });
+    try {
+      expect(() => store.save(account({ systemCredits: 1 }))).toThrow(
+        /Could not persist the billing account store/,
+      );
+      // The previous balance is still intact on disk.
+      rmSync(staging, { recursive: true, force: true });
+      expect(new FileAccountStore(path).load("acct-1")!.systemCredits).toBe(100);
+    } finally {
+      rmSync(staging, { recursive: true, force: true });
+    }
   });
 });
 

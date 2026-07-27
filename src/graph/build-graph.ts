@@ -1,8 +1,12 @@
 /**
  * Audit graph assembly.
  *
- * INTAKE → RECALL → { analyzeOnchain, analyzeStatic, analyzeHeuristic, analyzeCua }
- * → MERGE → VERIFY → REMEMBER → REPORT. The analyzer nodes form a parallel
+ * RESET-ACCUMULATORS → INTAKE → RECALL → { analyzeOnchain, analyzeStatic,
+ * analyzeHeuristic, analyzeCua } → MERGE → VERIFY → REMEMBER → REPORT.
+ *
+ * The entry node clears the accumulator channels so a run never inherits a
+ * previous audit's state from the checkpointed thread (see
+ * `nodes/reset-accumulators.ts`). The analyzer nodes form a parallel
  * superstep: RECALL fans out to all of them, and MERGE (fan-in) runs only after
  * all complete. VERIFY is a critic pass that refines confidence/status and drops
  * false-positives. `analyzeCua` is opt-in and returns no findings unless CUA is
@@ -13,6 +17,7 @@ import type { BaseCheckpointSaver, BaseStore } from "@langchain/langgraph";
 
 import { AresStateAnnotation } from "./state.js";
 import type { GraphDeps } from "./deps.js";
+import { makeResetAccumulatorsNode } from "./nodes/reset-accumulators.js";
 import { makeIntakeNode } from "./nodes/intake.js";
 import { makeRecallNode } from "./nodes/recall.js";
 import { makeAnalyzeOnchainNode } from "./nodes/analyze-onchain.js";
@@ -39,6 +44,7 @@ export function buildAuditGraph({
   // Node ids are suffixed "Phase" to avoid colliding with state channel names
   // (LangGraph forbids a node id equal to a channel id, e.g. `intake`/`report`).
   const graph = new StateGraph(AresStateAnnotation)
+    .addNode("resetAccumulators", makeResetAccumulatorsNode())
     .addNode("intakePhase", makeIntakeNode(deps))
     .addNode("recallPhase", makeRecallNode(deps))
     .addNode("analyzeOnchain", makeAnalyzeOnchainNode(deps))
@@ -49,7 +55,9 @@ export function buildAuditGraph({
     .addNode("verifyPhase", makeVerifyNode(deps))
     .addNode("rememberPhase", makeRememberNode(deps))
     .addNode("reportPhase", makeReportNode(deps))
-    .addEdge(START, "intakePhase")
+    // Clear any state carried over from a previous audit on this thread first.
+    .addEdge(START, "resetAccumulators")
+    .addEdge("resetAccumulators", "intakePhase")
     .addEdge("intakePhase", "recallPhase")
     // Fan-out: parallel ANALYZE superstep.
     .addEdge("recallPhase", "analyzeOnchain")

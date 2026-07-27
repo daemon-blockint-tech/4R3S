@@ -43,6 +43,8 @@ export interface CreditAccount {
 /** One immutable ledger record. */
 export interface LedgerEntry {
   id: string;
+  /** Account the entry belongs to. Distinct from `ref`, which names the audit. */
+  accountId: string;
   at: number;
   kind: "grant" | "debit";
   /** Total credits moved by this entry (magnitude, always positive). */
@@ -167,8 +169,15 @@ export class CreditLedger {
     return [...this.entries];
   }
 
-  private record(partial: Omit<LedgerEntry, "id" | "at">): LedgerEntry {
-    const entry: LedgerEntry = { id: uuidv4(), at: Date.now(), ...partial };
+  private record(
+    partial: Omit<LedgerEntry, "id" | "at" | "accountId">,
+  ): LedgerEntry {
+    const entry: LedgerEntry = {
+      id: uuidv4(),
+      accountId: this.account.id,
+      at: Date.now(),
+      ...partial,
+    };
     this.entries.push(entry);
     this.sink?.append(entry);
     return entry;

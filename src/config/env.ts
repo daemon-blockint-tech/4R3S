@@ -10,6 +10,20 @@ import { z } from "zod";
 
 dotenv.config();
 
+/**
+ * A boolean flag read from the environment; only the exact string "true"
+ * enables it.
+ *
+ * `fallback` is the *output* (boolean) value, not the raw string: zod 4 returns
+ * a `.default()` directly when the variable is unset, short-circuiting the
+ * transform, so the default has to be the transformed type.
+ */
+const boolFlag = (fallback = false) =>
+  z
+    .string()
+    .transform((v) => v === "true")
+    .default(fallback);
+
 const schema = z.object({
   // OpenRouter / LLM
   OPENROUTER_API_KEY: z.string().min(1, "OPENROUTER_API_KEY is required"),
@@ -34,10 +48,7 @@ const schema = z.object({
   POSTGRES_DB: z.string().default("ares"),
   POSTGRES_USER: z.string().default("ares"),
   POSTGRES_PASSWORD: z.string().default("ares_dev_password"),
-  POSTGRES_SSL: z
-    .string()
-    .transform((v) => v === "true")
-    .default("false"),
+  POSTGRES_SSL: boolFlag(),
 
   // Supabase (hybrid keyword + vector retrieval). Optional — falls back to
   // Crystalline-only recall when unset.
@@ -68,17 +79,16 @@ const schema = z.object({
   // its own OPENAI_API_KEY, separate from OPENROUTER_API_KEY.
   OPENAI_API_KEY: z.string().optional(),
   SCRAPYBARA_API_KEY: z.string().optional(),
-  CUA_ENABLED: z
-    .string()
-    .transform((v) => v === "true")
-    .default("false"),
+  CUA_ENABLED: boolFlag(),
   CUA_ENVIRONMENT: z.enum(["web", "ubuntu", "windows"]).default("web"),
   CUA_TIMEOUT_HOURS: z.coerce.number().positive().default(1),
   CUA_RECURSION_LIMIT: z.coerce.number().int().positive().default(100),
 
   // ARES runtime
   ARES_MAX_ITERATIONS: z.coerce.number().int().positive().default(12),
-  ARES_THREAD_ID: z.string().default("ares-default"),
+  // Optional. Unset (the default) derives a per-target thread id so audits of
+  // different targets never share checkpointed state; see `config/thread.ts`.
+  ARES_THREAD_ID: z.string().optional(),
   ARES_LOG_LEVEL: z
     .enum(["debug", "info", "warn", "error"])
     .default("info"),

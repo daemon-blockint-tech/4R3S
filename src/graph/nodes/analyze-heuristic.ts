@@ -3,13 +3,33 @@
  * recalled memory, independent of the on-chain/static tool outputs (which are
  * produced by sibling nodes in the same superstep). Contributes findings with
  * source "heuristic".
+ *
+ * Reports its outcome on the `analyzers` channel: this node's only failure mode
+ * is a response that doesn't parse, which yields zero findings and would
+ * otherwise be indistinguishable from "nothing to flag".
  */
 import { analyzeSystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
 import { isKnownProgram, getKnownProgram } from "../../knowledge/known-programs.js";
 import type { GraphDeps } from "../deps.js";
-import type { AresState, AresStateUpdate, Finding } from "../state.js";
-import { chatJson, coerceFindings, extractChecked, downgradeSpeculative } from "../util.js";
+import type {
+  AnalyzerOutcome,
+  AnalyzerReport,
+  AresState,
+  AresStateUpdate,
+  Finding,
+} from "../state.js";
+import {
+  chatJsonResult,
+  coerceFindings,
+  extractChecked,
+  downgradeSpeculative,
+} from "../util.js";
+
+/** Build this node's entry for the `analyzers` channel. */
+function status(outcome: AnalyzerOutcome, detail?: string): AnalyzerReport[] {
+  return [{ analyzer: "heuristic", outcome, detail }];
+}
 
 export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
   return async function analyzeHeuristic(
@@ -41,7 +61,7 @@ export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
       .filter(Boolean)
       .join("\n");
 
-    const raw = await chatJson<unknown>(
+    const { value: raw, parsed } = await chatJsonResult<unknown>(
       deps.chat,
       analyzeSystemPrompt(),
       human,
@@ -71,6 +91,19 @@ export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
       { component: "node.analyze-heuristic", findings: findings.length, coverage: coverage.length, speculative: findings.filter((f) => f.speculative).length },
       "Heuristic analysis complete",
     );
-    return { findings, coverage, iterations: 1 };
+    return {
+      findings,
+      coverage,
+      iterations: 1,
+      analyzers: parsed
+        ? status(
+            "ok",
+            noSource ? "black-box: findings downgraded to speculative" : undefined,
+          )
+        : status(
+            "degraded",
+            "model response was not valid JSON; no findings extracted",
+          ),
+    };
   };
 }
