@@ -164,6 +164,29 @@ test) on every push and pull request to `main`, across Node 20 and 22. Because
 the suite is hermetic, CI needs no secrets or services. Dependency updates are
 grouped into weekly Dependabot PRs (`.github/dependabot.yml`).
 
+Two further jobs cover the evaluation harness: `eval-scorer` runs its pytest
+suite, and `verify-claims` fetches the ground truth and checks that the release
+gate still accepts and rejects at the right F1. See
+[Detection accuracy](#detection-accuracy).
+
+## Detection accuracy
+
+**ARES's detection accuracy is unmeasured.** No prediction output has been scored
+against a labeled dataset, so no precision, recall, or F1 figure for this system
+is published — including the 0.94 F1 that has been quoted internally.
+
+| Metric | Value | Status |
+|---|---|---|
+| Precision | not measured | unverified |
+| Recall | not measured | unverified |
+| F1 | not measured | unverified |
+
+The harness to measure it is in [`eval/`](eval/README.md): `fetch_datasets.py`
+builds a 152-label ground truth set from `FraChiacc99/solana-vuln-rust`,
+`score_detections.py` scores audit output against it, and the `verify-claims` CI
+job fails a `release` event while `eval/predictions/ares-latest.csv` is absent.
+The table above is updated from that job's output, not by hand.
+
 ## Vulnerability knowledge & reporting
 
 The analyzers work through a structured Solana vulnerability catalog
