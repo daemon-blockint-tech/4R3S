@@ -71,6 +71,15 @@ export interface AnalyzerReport {
   detail?: string;
 }
 
+/** How one knowledge source fared during RECALL. */
+export interface RetrievalReport {
+  source: string;
+  /** `skipped` means unconfigured — the documented default, not a defect. */
+  outcome: "ok" | "skipped" | "failed";
+  fragments: number;
+  detail?: string;
+}
+
 /** Structured output of the INTAKE phase. */
 export interface IntakeSummary {
   target: string;
@@ -98,6 +107,15 @@ export const AresStateAnnotation = Annotation.Root({
   intake: Annotation<IntakeSummary | undefined>(),
   /** Memory fragments recalled by the hybrid retriever. */
   recalled: Annotation<ScoredCrystal[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  /**
+   * Per-source outcome of RECALL. A configured knowledge source that errored
+   * returns no fragments, exactly like one that had nothing to say — REPORT
+   * needs this to tell the reader which of the two happened.
+   */
+  retrieval: Annotation<RetrievalReport[]>({
     reducer: (_prev, next) => next,
     default: () => [],
   }),

@@ -6,11 +6,10 @@
  * chunk fragments carrying `doc_id` / `chunk_id` / `entity_id` in metadata so
  * the Neo4j stage can expand them by graph relationships.
  */
-import type { ScoredCrystal } from "../memory/types.js";
 import { logger } from "../config/logger.js";
 import { getSupabase } from "../persistence/supabase.js";
 import { synthCrystal } from "./util.js";
-import type { HybridQuery, Retriever } from "./types.js";
+import type { HybridQuery, RetrievalResult, Retriever } from "./types.js";
 
 interface HybridSearchRow {
   chunk_id: string;
@@ -23,9 +22,9 @@ interface HybridSearchRow {
 export class SupabaseRetriever implements Retriever {
   readonly name = "supabase";
 
-  async retrieve(query: HybridQuery): Promise<ScoredCrystal[]> {
+  async retrieve(query: HybridQuery): Promise<RetrievalResult> {
     const supabase = getSupabase();
-    if (!supabase) return [];
+    if (!supabase) return { fragments: [] };
 
     try {
       const { data, error } = await supabase.rpc("hybrid_search", {
@@ -38,11 +37,11 @@ export class SupabaseRetriever implements Retriever {
           { component: "supabase-retriever", err: error.message },
           "hybrid_search RPC failed; skipping Supabase source",
         );
-        return [];
+        return { fragments: [], error: `hybrid_search RPC failed: ${error.message}` };
       }
 
       const rows = (data ?? []) as HybridSearchRow[];
-      return rows.map((row) => ({
+      const fragments = rows.map((row) => ({
         crystal: synthCrystal({
           id: row.chunk_id,
           content: row.content,
@@ -55,12 +54,13 @@ export class SupabaseRetriever implements Retriever {
         }),
         score: row.score ?? 0,
       }));
+      return { fragments };
     } catch (err) {
       logger.warn(
         { component: "supabase-retriever", err: String(err) },
         "Supabase retrieval errored; skipping source",
       );
-      return [];
+      return { fragments: [], error: String(err) };
     }
   }
 }

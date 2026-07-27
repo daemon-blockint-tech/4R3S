@@ -5,8 +5,11 @@ import { CrystallineStore } from "../../memory/crystalline-store.js";
 import { CrystallineRetriever } from "../../retrieval/crystalline-retriever.js";
 import { HybridRetriever } from "../../retrieval/hybrid-retriever.js";
 import { synthCrystal } from "../../retrieval/util.js";
-import type { ScoredCrystal } from "../../memory/types.js";
-import type { HybridQuery, Retriever } from "../../retrieval/types.js";
+import type {
+  HybridQuery,
+  RetrievalResult,
+  Retriever,
+} from "../../retrieval/types.js";
 import { makeRecallNode } from "./recall.js";
 import type { AresState } from "../state.js";
 
@@ -19,12 +22,18 @@ function nodeOver(crystalline: CrystallineStore, extra?: Retriever) {
     ? // Wrap so the recall node also sees fragments that are not store-native.
       ({
         name: "test",
-        async retrieve(q: HybridQuery) {
+        async retrieveWithStatus(q: HybridQuery) {
           const [a, b] = await Promise.all([
             new HybridRetriever(new CrystallineRetriever(crystalline)).retrieve(q),
             extra.retrieve(q),
           ]);
-          return [...a, ...b];
+          return {
+            fragments: [...a.fragments, ...b.fragments],
+            sources: [
+              { source: "crystalline", outcome: "ok", fragments: a.fragments.length },
+              { source: "kb", outcome: "ok", fragments: b.fragments.length },
+            ],
+          };
         },
       } as any)
     : new HybridRetriever(new CrystallineRetriever(crystalline));
@@ -79,17 +88,19 @@ describe("RECALL activation", () => {
     // a pointless write, and must not throw.
     const kb: Retriever = {
       name: "kb",
-      async retrieve(): Promise<ScoredCrystal[]> {
-        return [
-          {
-            crystal: synthCrystal({
-              id: "chunk-1",
-              content: "kb chunk about overflow",
-              metadata: { source: "supabase" },
-            }),
-            score: 1,
-          },
-        ];
+      async retrieve(): Promise<RetrievalResult> {
+        return {
+          fragments: [
+            {
+              crystal: synthCrystal({
+                id: "chunk-1",
+                content: "kb chunk about overflow",
+                metadata: { source: "supabase" },
+              }),
+              score: 1,
+            },
+          ],
+        };
       },
     };
 

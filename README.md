@@ -71,6 +71,12 @@ several sources ranks higher:
 Every source **degrades gracefully**: with Supabase/Neo4j/embeddings unset,
 recall falls back to Crystalline-only and the agent still runs fully offline.
 
+Because a source that errors returns no fragments — exactly like one that had
+nothing to offer — each source's outcome is recorded on the `retrieval` state
+channel and rendered in the report. An *unconfigured* source is `skipped` (the
+documented default); a *configured* one that failed is `failed`, and that adds a
+line to the assurance banner saying prior audit knowledge was unavailable.
+
 ### CUA investigation analyzer (opt-in)
 
 `analyzeCua` drives a real, Scrapybara-hosted browser to gather external

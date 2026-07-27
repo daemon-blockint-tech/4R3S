@@ -20,7 +20,19 @@ function scored(id: string, score: number, chunkId?: string): ScoredCrystal {
 }
 
 function fakeCrystalline(results: ScoredCrystal[]): CrystallineRetriever {
-  return { name: "crystalline", retrieve: vi.fn(async () => results) } as unknown as CrystallineRetriever;
+  return {
+    name: "crystalline",
+    retrieve: vi.fn(async () => ({ fragments: results })),
+  } as unknown as CrystallineRetriever;
+}
+
+/** Fragments only — the shape the merge assertions care about. */
+async function fragmentIds(
+  retriever: HybridRetriever,
+  query: HybridQuery,
+): Promise<string[]> {
+  const { fragments } = await retriever.retrieve(query);
+  return fragments.map((r) => r.crystal.id);
 }
 
 describe("HybridRetriever", () => {
@@ -28,13 +40,12 @@ describe("HybridRetriever", () => {
     const retriever = new HybridRetriever(
       fakeCrystalline([scored("a", 1), scored("b", 0.5)]),
     );
-    const out = await retriever.retrieve({ text: "q", limit: 8 });
-    expect(out.map((r) => r.crystal.id)).toEqual(["a", "b"]);
+    expect(await fragmentIds(retriever, { text: "q", limit: 8 })).toEqual(["a", "b"]);
   });
 
   it("uses the standalone Neo4j retrieve() path (not only expand)", async () => {
-    const neo4jRetrieve = vi.fn(async () => [scored("graph-1", 2)]);
-    const neo4jExpand = vi.fn(async () => []);
+    const neo4jRetrieve = vi.fn(async () => ({ fragments: [scored("graph-1", 2)] }));
+    const neo4jExpand = vi.fn(async () => ({ fragments: [] }));
     const neo4j = {
       name: "neo4j",
       retrieve: neo4jRetrieve,
@@ -46,22 +57,24 @@ describe("HybridRetriever", () => {
       undefined,
       neo4j,
     );
-    const out = await retriever.retrieve({ text: "q", limit: 8 });
+    const ids = await fragmentIds(retriever, { text: "q", limit: 8 });
 
     // The standalone graph match must appear in the merged output.
     expect(neo4jRetrieve).toHaveBeenCalledTimes(1);
-    expect(out.map((r) => r.crystal.id)).toContain("graph-1");
+    expect(ids).toContain("graph-1");
   });
 
   it("expands Supabase seed chunks through Neo4j", async () => {
     const supabase = {
       name: "supabase",
-      retrieve: vi.fn(async () => [scored("s1", 1, "chunk-1")]),
+      retrieve: vi.fn(async () => ({ fragments: [scored("s1", 1, "chunk-1")] })),
     } as unknown as SupabaseRetriever;
-    const neo4jExpand = vi.fn(async () => [scored("n1", 1, "chunk-2")]);
+    const neo4jExpand = vi.fn(async () => ({
+      fragments: [scored("n1", 1, "chunk-2")],
+    }));
     const neo4j = {
       name: "neo4j",
-      retrieve: vi.fn(async () => []),
+      retrieve: vi.fn(async () => ({ fragments: [] })),
       expand: neo4jExpand,
     } as unknown as Neo4jRetriever;
 
@@ -83,19 +96,56 @@ describe("HybridRetriever", () => {
     const crystalline = fakeCrystalline([scored("shared", 1), scored("solo", 1)]);
     const neo4j = {
       name: "neo4j",
-      retrieve: vi.fn(async () => [scored("shared", 1)]),
-      expand: vi.fn(async () => []),
+      retrieve: vi.fn(async () => ({ fragments: [scored("shared", 1)] })),
+      expand: vi.fn(async () => ({ fragments: [] })),
     } as unknown as Neo4jRetriever;
 
     const retriever = new HybridRetriever(crystalline, undefined, neo4j);
-    const out = await retriever.retrieve({ text: "q", limit: 8 });
-    expect(out[0]!.crystal.id).toBe("shared");
+    const ids = await fragmentIds(retriever, { text: "q", limit: 8 });
+    expect(ids[0]).toBe("shared");
   });
 
   it("respects the result limit", async () => {
     const many = Array.from({ length: 20 }, (_, i) => scored(`c${i}`, 20 - i));
     const retriever = new HybridRetriever(fakeCrystalline(many));
-    const out = await retriever.retrieve({ text: "q", limit: 5 } as HybridQuery);
-    expect(out).toHaveLength(5);
+    const ids = await fragmentIds(retriever, { text: "q", limit: 5 });
+    expect(ids).toHaveLength(5);
+  });
+
+  it("reports each source's outcome, distinguishing unconfigured from failed", async () => {
+    const supabase = {
+      name: "supabase",
+      // A configured source that errored returns no fragments — the same shape
+      // as having nothing to say, which is why the error has to be carried.
+      retrieve: vi.fn(async () => ({ fragments: [], error: "rpc exploded" })),
+    } as unknown as SupabaseRetriever;
+
+    const retriever = new HybridRetriever(fakeCrystalline([scored("a", 1)]), supabase);
+    const { sources } = await retriever.retrieveWithStatus({ text: "q", limit: 8 });
+
+    expect(sources).toEqual([
+      { source: "crystalline", outcome: "ok", fragments: 1 },
+      { source: "supabase", outcome: "failed", fragments: 0, detail: "rpc exploded" },
+      { source: "neo4j", outcome: "skipped", fragments: 0, detail: "not configured" },
+    ]);
+  });
+
+  it("marks the graph failed when only its expansion query errors", async () => {
+    const neo4j = {
+      name: "neo4j",
+      retrieve: vi.fn(async () => ({ fragments: [] })),
+      expand: vi.fn(async () => ({ fragments: [], error: "bolt closed" })),
+    } as unknown as Neo4jRetriever;
+    const supabase = {
+      name: "supabase",
+      retrieve: vi.fn(async () => ({ fragments: [scored("s1", 1, "chunk-1")] })),
+    } as unknown as SupabaseRetriever;
+
+    const retriever = new HybridRetriever(fakeCrystalline([]), supabase, neo4j);
+    const { sources } = await retriever.retrieveWithStatus({ text: "q", limit: 8 });
+
+    const graph = sources.find((s) => s.source === "neo4j")!;
+    expect(graph.outcome).toBe("failed");
+    expect(graph.detail).toBe("bolt closed");
   });
 });
