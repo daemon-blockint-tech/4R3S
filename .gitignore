@@ -10,3 +10,4 @@ docker-data/
 .cache/
 __pycache__/
 .pytest_cache/
+eval/data/
