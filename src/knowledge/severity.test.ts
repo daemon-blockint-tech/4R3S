@@ -9,7 +9,7 @@ import {
   SEVERITY_ORDER,
   SEVERITY_DEFINITIONS,
 } from "./severity.js";
-import type { Finding, Severity } from "../graph/state.js";
+import type { Finding, Severity } from "./finding.js";
 
 describe("severityFromMatrix", () => {
   it("maps the corners of the impact × likelihood matrix", () => {

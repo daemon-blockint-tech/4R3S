@@ -11,8 +11,8 @@
  * deterministic finding-count summary, and stable finding identifiers, rather
  * than letting the model invent its own scheme each run.
  */
-import type { Finding, Severity } from "../graph/state.js";
-import { SEVERITY_RANK } from "../graph/state.js";
+import type { Finding, Severity } from "./finding.js";
+import { SEVERITY_RANK } from "./finding.js";
 
 export type Impact = "high" | "medium" | "low";
 export type Likelihood = "high" | "medium" | "low";

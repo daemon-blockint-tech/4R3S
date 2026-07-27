@@ -9,46 +9,22 @@
 import { Annotation } from "@langchain/langgraph";
 
 import type { ScoredCrystal, KnowledgeLevel } from "../memory/types.js";
+import type { AnalyzerName } from "../knowledge/finding.js";
+import type { Finding } from "../knowledge/finding.js";
 
-export type Severity = "info" | "low" | "medium" | "high" | "critical";
-export type Confidence = "high" | "medium" | "low";
-/** Verdict from the VERIFY phase. Undefined until a finding has been reviewed. */
-export type FindingStatus = "confirmed" | "suspected" | "false-positive";
-
-/** Severity ordering for ranking (higher = more severe). */
-export const SEVERITY_RANK: Record<Severity, number> = {
-  critical: 5,
-  high: 4,
-  medium: 3,
-  low: 2,
-  info: 1,
-};
-
-/** A single audit finding produced by an analyzer. */
-export interface Finding {
-  /** Vulnerability class, e.g. "signer-missing", "owner-check-bypass". */
-  vulnClass: string;
-  /** Instruction / account / file:line the finding concerns. */
-  location: string;
-  severity: Severity;
-  /** Concrete evidence (tool output, code excerpt) supporting the finding. */
-  evidence: string;
-  /** Proposed remediation. */
-  remediation: string;
-  /** Which analyzer produced it. */
-  source: "onchain" | "static" | "heuristic" | "cua";
-  /** Catalog vulnerability id (from VULN_CATALOG), or "other". */
-  category: string;
-  /** True when the finding is pattern-based without code-level evidence. */
-  speculative: boolean;
-  /** Confidence level: high (tool/code evidence), medium (partial), low (speculative). */
-  confidence: Confidence;
-  /** VERIFY verdict. Undefined on freshly-produced (unverified) findings. */
-  status?: FindingStatus;
-}
-
-/** The analyzers that can contribute findings. */
-export type AnalyzerName = Finding["source"];
+/**
+ * Finding vocabulary lives in `knowledge/finding.ts` — it is domain language,
+ * not graph state. Re-exported here so callers that think in graph terms (and
+ * every existing import) keep working.
+ */
+export type {
+  Severity,
+  Confidence,
+  FindingStatus,
+  Finding,
+  AnalyzerName,
+} from "../knowledge/finding.js";
+export { SEVERITY_RANK } from "../knowledge/finding.js";
 
 /**
  * How an analyzer's run ended. The distinction that matters for an audit is

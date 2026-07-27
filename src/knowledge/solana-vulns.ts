@@ -4,7 +4,7 @@
  * remediation guidance. The catalog is injected into analyzer prompts as a
  * checklist, and every finding is tagged with a catalog `id` as its `category`.
  */
-import type { Severity } from "../graph/state.js";
+import type { Severity } from "./finding.js";
 
 export interface VulnEntry {
   /** Unique kebab-case identifier used as the finding `category`. */
