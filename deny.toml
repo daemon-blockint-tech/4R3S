@@ -1,0 +1,47 @@
+# cargo-deny configuration — the cargo half of GOLDEN RULE 1.
+#
+# CLAUDE.md documents `cargo deny check licenses` as the gate keeping
+# strong-copyleft crates out of published artifacts, and asserts "CI checks
+# both". Until now neither this file nor the job existed, so the documented
+# control was fiction. The Rust workspace is still a scaffold (`core/` is one
+# `pub const`), which makes this cheap to add now and correct the moment the
+# real engine crates land in ENG-1 — rather than discovering a copyleft
+# transitive dep after it is load-bearing.
+
+[licenses]
+# Permissive plus weak copyleft. This mirrors the npm gate in
+# scripts/check-licenses.mjs: the rule bans strong copyleft (GPL/AGPL) and
+# explicitly allows "LGPL and permissive".
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "Zlib",
+    "0BSD",
+    "MPL-2.0",
+    "LGPL-2.1-only",
+    "LGPL-3.0-only",
+]
+# Anything not on the allow list fails, which is the point: a new crate under an
+# unrecognized licence should stop CI and get a deliberate decision, not be
+# waved through. Add it here with a reason, or drop the dependency.
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow"
+
+[advisories]
+# Vulnerability checking is the `dependency audit` job's business on the npm and
+# pip side; keep it here too so a Rust advisory cannot land unnoticed.
+yanked = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

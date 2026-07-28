@@ -89,6 +89,18 @@ jobs:
           pip install pip-audit
           pip-audit -r eval/requirements.txt
 
+      # GOLDEN RULE 1: no strong-copyleft third-party dependency in a published
+      # artifact. CLAUDE.md asserted "CI checks both" long before either half
+      # existed; these two steps are what make that true. LGPL and permissive
+      # pass by design — see scripts/check-licenses.mjs and deny.toml.
+      - name: License check (npm)
+        run: node scripts/check-licenses.mjs
+
+      - name: License check (cargo)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources
+
   eval-scorer:
     name: eval scorer (python)
     runs-on: ubuntu-latest
