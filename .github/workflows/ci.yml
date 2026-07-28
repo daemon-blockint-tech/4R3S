@@ -162,11 +162,20 @@ jobs:
             --target-f1 0.94 \
             --json-out eval/data/score.json
 
-      # A release may not claim a metric nobody measured.
+      # GOLDEN RULE 3, guarded at the point the claim is made rather than after
+      # it ships. `release: published` fires only once GitHub has created the
+      # tag and the release page, so blocking there was a post-mortem — the red
+      # check appeared and the release stayed up. There is no pre-publication
+      # release event, so this checks the README on EVERY push instead: a number
+      # nobody measured becomes a problem the moment it is merged, not released.
+      - name: Verify published metrics are re-derivable
+        run: python eval/check_published_claims.py
+
+      # Backstop: a release must not ship unscored even if the README is silent.
       - name: Block unscored release
         if: github.event_name == 'release' && steps.score.outputs.scored != 'true'
         run: |
-          echo "Release blocked: eval/predictions/ares-latest.csv is missing, so the F1 claim is unverified."
+          echo "Release blocked: eval/predictions/ares-latest.csv is missing, so no F1 claim can be verified."
           exit 1
 
       - name: Upload score
