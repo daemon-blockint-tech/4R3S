@@ -16,7 +16,7 @@ import {
   severitySummaryTable,
 } from "../../knowledge/severity.js";
 import type { GraphDeps } from "../deps.js";
-import type { AresState, AresStateUpdate } from "../state.js";
+import type { AresState, AresStateUpdate, Finding } from "../state.js";
 import {
   analyzerStatusTable,
   failedSources,
@@ -25,6 +25,78 @@ import {
   withAssuranceBanner,
 } from "../analyzer-status.js";
 import { chatText } from "../util.js";
+
+/**
+ * A report assembled without the model, for when prose synthesis fails.
+ *
+ * Deliberately plain: it reproduces the tables and the finding list that were
+ * already computed deterministically, and says outright that the narrative is
+ * missing. A terse report a reader can act on beats exiting with nothing after
+ * every analyzer has run and been paid for.
+ */
+export function fallbackReport(input: {
+  target: string;
+  summaryTable: string;
+  statusTable: string;
+  sourceTable: string;
+  findings: Finding[];
+  coverage: string[];
+  error: string;
+}): string {
+  const details = input.findings.length
+    ? input.findings
+        .map((f, i) =>
+          [
+            `### ${formatFindingId(i)} — ${f.vulnClass}  [${f.severity}]`,
+            `- **Status:** ${f.status ?? "suspected"}  **Confidence:** ${f.confidence}` +
+              `  **Source:** ${f.source}  **Category:** ${f.category}`,
+            `- **Location:** ${f.location || "(not specified)"}`,
+            `- **Evidence:** ${f.evidence || "(none)"}`,
+            `- **Recommendation:** ${f.remediation || "(none)"}`,
+          ].join("\n"),
+        )
+        .join("\n\n")
+    : "No findings survived verification within the evaluated scope.";
+
+  return [
+    `# Security Assessment: ${input.target}`,
+    "",
+    "## Executive Summary",
+    "",
+    "> **This report was generated without narrative synthesis.** The language model" +
+      " call that writes the prose sections failed, so what follows is the raw" +
+      " deterministic output of the audit: the findings, their severities, and the" +
+      " coverage tables. The analysis itself completed; only the write-up did not.",
+    "",
+    `Synthesis error: ${input.error}`,
+    "",
+    input.summaryTable,
+    "",
+    "## Scope & Methodology",
+    "",
+    "Analyzer status:",
+    "",
+    input.statusTable,
+    "",
+    "Knowledge sources consulted:",
+    "",
+    input.sourceTable,
+    "",
+    "## Detailed Findings",
+    "",
+    details,
+    "",
+    "## Coverage",
+    "",
+    `Checked ${input.coverage.length} of ${VULN_CATALOG.length} vulnerability classes.` +
+      (input.coverage.length ? ` Classes: ${input.coverage.join(", ")}.` : ""),
+    "",
+    "## Disclaimer",
+    "",
+    "This is an automated assessment, not a substitute for a manual audit; absence of" +
+      " findings is not a guarantee of safety.",
+  ].join("\n");
+}
 
 export function makeReportNode(deps: GraphDeps) {
   return async function report(state: AresState): Promise<AresStateUpdate> {
@@ -102,12 +174,18 @@ export function makeReportNode(deps: GraphDeps) {
       .filter(Boolean)
       .join("\n");
 
+    // Not caught here, for the same reason as VERIFY: a throw parks the run at
+    // this node with every finding checkpointed, so resuming costs one call
+    // rather than a whole re-audit. `fallbackReport` is exported for the CLI,
+    // which is where a failed synthesis must still yield something readable.
     const synthesized = await chatText(deps.chat, reportSystemPrompt(), human);
+
     // Guarantee the warning rather than trusting the model to include it.
     const reportText = withAssuranceBanner(
       synthesized,
       state.analyzers,
       state.retrieval,
+      droppedFalsePositives,
     );
 
     logger.info(

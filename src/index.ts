@@ -29,6 +29,17 @@ import { createKnowledgeWriter } from "./persistence/knowledge-writer.js";
 import { createHybridRetriever } from "./retrieval/index.js";
 import { setCuaOverride } from "./tools/cua.js";
 import { buildAuditGraph } from "./graph/build-graph.js";
+import { fallbackReport } from "./graph/nodes/report.js";
+import {
+  analyzerStatusTable,
+  retrievalStatusTable,
+  withAssuranceBanner,
+} from "./graph/analyzer-status.js";
+import {
+  severityDistribution,
+  severitySummaryTable,
+} from "./knowledge/severity.js";
+import type { AresState } from "./graph/state.js";
 import {
   createBilling,
   canAffordAudit,
@@ -127,18 +138,30 @@ async function main(): Promise<void> {
     "Starting audit",
   );
 
+  const runConfig = {
+    configurable: { thread_id: threadId },
+    recursionLimit: env.ARES_MAX_ITERATIONS * 4,
+  };
+
   try {
-    const result = await graph.invoke(
-      {
-        request: cli.request,
-        programAddress: cli.program,
-        sourcePath: cli.source,
-      },
-      {
-        configurable: { thread_id: threadId },
-        recursionLimit: env.ARES_MAX_ITERATIONS * 4,
-      },
-    );
+    let result;
+    try {
+      result = await graph.invoke(
+        {
+          request: cli.request,
+          programAddress: cli.program,
+          sourcePath: cli.source,
+        },
+        runConfig,
+      );
+    } catch (err) {
+      // A node that throws parks the run at that node with everything completed
+      // so far checkpointed, so the fix is to resume — not to re-audit. Without
+      // this the operator sees "Audit failed" and nothing else, even when every
+      // analyzer already ran and was paid for.
+      await reportParkedRun(graph, runConfig, threadId, err, billing.config.enabled);
+      throw err;
+    }
 
     logger.info(
       { component: "ares", findings: result.mergedFindings.length },
@@ -189,6 +212,85 @@ async function main(): Promise<void> {
     }
     await closeNeo4j();
   }
+}
+
+/**
+ * Emit whatever a failed run already produced, and say how to finish it.
+ *
+ * The checkpointer parks an interrupted run at the node that threw, with the
+ * prior phases' output intact, so re-invoking on the same thread id resumes
+ * from there rather than re-running the analyzers. Exiting with nothing but
+ * "Audit failed" hides both the work already done and that fact.
+ *
+ * When billing is enabled the findings are withheld: settlement runs after the
+ * graph, so nothing has been charged, and releasing a partial report here would
+ * hand over unpaid output. The operator still gets the resume instruction.
+ */
+async function reportParkedRun(
+  graph: ReturnType<typeof buildAuditGraph>,
+  config: Parameters<ReturnType<typeof buildAuditGraph>["getState"]>[0],
+  threadId: string,
+  err: unknown,
+  billingEnabled: boolean,
+): Promise<void> {
+  let parked;
+  try {
+    parked = await graph.getState(config);
+  } catch {
+    return; // No checkpointer, or it is unreachable — nothing to recover.
+  }
+
+  const values = parked?.values as Partial<AresState> | undefined;
+  const pending = parked?.next ?? [];
+  const findings = values?.verifiedFindings?.length
+    ? values.verifiedFindings
+    : (values?.mergedFindings ?? []);
+
+  logger.error(
+    {
+      component: "ares",
+      err: String(err),
+      pendingNode: pending,
+      findings: findings.length,
+      threadId,
+    },
+    "Audit interrupted; run is parked and resumable",
+  );
+
+  if (pending.length > 0) {
+    process.stderr.write(
+      `\n[ares] Run parked at ${pending.join(", ")} with ${findings.length} finding(s) ` +
+        `checkpointed. Re-run with the same target (thread ${threadId}) to resume from ` +
+        "there rather than re-running the analyzers.\n",
+    );
+  }
+
+  if (findings.length === 0) return;
+  if (billingEnabled) {
+    process.stderr.write(
+      "[ares] Partial findings withheld: the run was not settled, so there is nothing to release.\n",
+    );
+    return;
+  }
+
+  const dist = severityDistribution(findings);
+  process.stdout.write(
+    "\n" +
+      withAssuranceBanner(
+        fallbackReport({
+          target: values?.intake?.target ?? values?.request ?? "(unknown target)",
+          summaryTable: severitySummaryTable(dist),
+          statusTable: analyzerStatusTable(values?.analyzers ?? []),
+          sourceTable: retrievalStatusTable(values?.retrieval ?? []),
+          findings,
+          coverage: values?.coverage ?? [],
+          error: String(err),
+        }),
+        values?.analyzers ?? [],
+        values?.retrieval ?? [],
+      ) +
+      "\n",
+  );
 }
 
 main().catch((err) => {

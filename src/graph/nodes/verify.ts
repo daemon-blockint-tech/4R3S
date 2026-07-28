@@ -11,7 +11,7 @@ import { verifySystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate } from "../state.js";
-import { chatJson, coerceVerdicts, applyVerdicts } from "../util.js";
+import { chatJson, coerceVerdicts, applyVerdicts, asData } from "../util.js";
 
 export function makeVerifyNode(deps: GraphDeps) {
   return async function verify(state: AresState): Promise<AresStateUpdate> {
@@ -20,10 +20,19 @@ export function makeVerifyNode(deps: GraphDeps) {
       return { verifiedFindings: [] };
     }
 
+    // Finding text originates in the audited repository (Semgrep paths and rule
+    // messages) and on web pages (the CUA transcript). VERIFY is the only node
+    // that deletes findings, so that text is in a position to argue for its own
+    // dismissal. Fields are stripped by `asData` upstream; the fence is what
+    // tells the model where instructions stop and evidence begins.
+    const FENCE_OPEN = "<<<BEGIN UNTRUSTED FINDING DATA>>>";
+    const FENCE_CLOSE = "<<<END UNTRUSTED FINDING DATA>>>";
+
     const human = [
-      state.intake ? `Target: ${state.intake.target}` : `Request: ${state.request}`,
+      state.intake ? `Target: ${asData(state.intake.target)}` : `Request: ${asData(state.request)}`,
       "",
       "Draft findings to review (index. [severity] category (source) — evidence):",
+      FENCE_OPEN,
       findings
         .map(
           (f, i) =>
@@ -33,12 +42,19 @@ export function makeVerifyNode(deps: GraphDeps) {
             `   evidence: ${f.evidence || "(none)"}`,
         )
         .join("\n"),
+      FENCE_CLOSE,
       "",
       `Return one verdict per finding, referencing each index (0..${findings.length - 1}).`,
     ]
       .filter(Boolean)
       .join("\n");
 
+    // A thrown error is deliberately NOT caught here. The checkpointer parks the
+    // run at this node with the analyzers' findings already persisted, so the
+    // audit is resumable on the same thread id without re-running them — see
+    // "keeps the partial findings of an interrupted run when it is resumed" in
+    // build-graph.test.ts. Swallowing the throw would trade that for a silently
+    // unverified report. The CLI is what must not exit empty-handed; see index.ts.
     const raw = await chatJson<unknown>(deps.chat, verifySystemPrompt(), human, []);
     const verdicts = coerceVerdicts(raw, findings.length);
     const { kept, dropped } = applyVerdicts(findings, verdicts);
