@@ -515,12 +515,19 @@ export function isVulnId(id: string): boolean {
 }
 
 /**
- * Format the catalog as a compact numbered checklist for prompt injection.
- * Each line: `N. <id> — <title> (<one-line detection hint>)`.
+ * Format the catalog as a numbered checklist for prompt injection.
+ * Each line: `N. <id> — <title> (<detection hint>)`.
+ *
+ * The hint is passed whole, collapsed to one line. It used to be cut at the
+ * first ". ", which silently dropped the second sentence — and for several
+ * entries that sentence carries the Anchor-specific half of the guidance
+ * (`missing-owner-check` loses "In Anchor, ensure `Account<'info, T>` types are
+ * used…", `account-data-matching` loses its discriminator note). The analyzer
+ * never saw the part that tells it what to look for in the dominant framework.
  */
 export function formatChecklistForPrompt(): string {
   return VULN_CATALOG.map(
     (v, i) =>
-      `${i + 1}. ${v.id} — ${v.title} (${v.detectionHints.split(". ")[0]})`,
+      `${i + 1}. ${v.id} — ${v.title} (${v.detectionHints.replace(/\s+/g, " ").trim()})`,
   ).join("\n");
 }

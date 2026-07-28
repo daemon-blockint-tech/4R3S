@@ -145,7 +145,19 @@ export function coerceVerdicts(raw: unknown, count: number): Verdict[] {
   for (const v of arr) {
     if (!v || typeof v !== "object") continue;
     const o = v as Record<string, unknown>;
-    const index = Number(o.index);
+    // `Number(o.index)` alone is unsafe: Number(null), Number(false) and
+    // Number("") are all 0, and 0 passes Number.isInteger. MERGE has already
+    // sorted findings by severity descending, so index 0 is the most severe
+    // finding in the report — a verdict with a null or empty index would be
+    // applied to it, and a "false-positive" status would delete it outright.
+    // Only genuine numbers, or numeric strings, may address a finding.
+    const rawIndex = o.index;
+    const index =
+      typeof rawIndex === "number"
+        ? rawIndex
+        : typeof rawIndex === "string" && rawIndex.trim() !== ""
+          ? Number(rawIndex)
+          : Number.NaN;
     if (!Number.isInteger(index) || index < 0 || index >= count || seen.has(index)) {
       continue;
     }

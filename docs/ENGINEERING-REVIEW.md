@@ -18,10 +18,12 @@
 > | S12 embedding failure writes null vectors | **Partly fixed** | ingestion now exits non-zero rather than reporting success; `embedBatch` still returns `undefined` for both "not configured" and "failed" |
 > | N1 `mapCategory` keyword-mapping | **Partly fixed** | rule ids in `rules/solana.yml` are exactly catalog ids, so the exact branch hits; the fuzzy fallback remains for third-party rules |
 > | S19 CUA transcript interpolated unfenced | **Partly fixed** | the VERIFY finding block is fenced and sanitized via `asData`; the CUA transcript's own path into the analyzer prompt is not |
-> | S5 `coerceVerdicts` coerces a null index to 0 | **Open — verified, most severe of the remainder** | `Number(null)`, `Number(false)` and `Number("")` are all `0` and pass `Number.isInteger`, so a malformed verdict applies to index 0, which MERGE has sorted to be the highest-severity finding |
-> | S3 MERGE dedup key, S6 unverified writeback | **Open** | both pinned as expected-fail cases in `src/known-defects.test.ts` |
-> | S16 detection hints truncated at the first `". "` | **Open — verified** | `src/knowledge/solana-vulns.ts`; two-sentence hints lose their Anchor half before reaching the prompt |
-> | N3 log metadata can overwrite `level` | **Open — verified** | `src/config/logger.ts` spreads meta after `level` |
+> | S5 `coerceVerdicts` coerces a null index to 0 | **Fixed** | only real numbers and non-empty numeric strings may address a finding; `null`/`false`/`""` no longer resolve to index 0, which MERGE has sorted to be the highest-severity finding |
+> | S3 MERGE dedup key | **Fixed** | unlocated findings never merge; a real catalog `category` is preferred over free-text `vulnClass` as identity — `src/graph/nodes/merge.test.ts` |
+> | S6 unverified writeback into the corpus | **Fixed** | REMEMBER persists only `confirmed` and non-speculative findings, and logs what it withheld — `src/graph/nodes/remember.test.ts` |
+> | S12 embedding dimension mismatch scored as 0 | **Fixed** | `cosineSimilarity` throws on a mismatch; scoring falls back to tags and warns, and consolidation refuses to merge incomparable vectors |
+> | S16 detection hints truncated at the first `". "` | **Fixed** | full hint reaches the prompt, so the Anchor half of two-sentence hints is no longer dropped |
+> | N3 log metadata can overwrite `level` | **Fixed** | reserved fields `t`/`level`/`msg` are protected; a colliding meta key is prefixed `meta_` rather than dropped |
 > | S1, S2, S4, S7, S8, S10, S11, S14, S15, S17, N2, N4 | **Open** | unchanged from the text below |
 >
 > Documentation claims the review flagged (README's on-chain analyzer description,
@@ -974,6 +976,58 @@ loose ends around them.
 
 6. **Refuted candidate.** One candidate finding was refuted during verification and is deliberately
    absent. It is not listed here so it cannot be mistaken for a deferred item.
+
+---
+
+## 5b. Remediation status
+
+Both Blockers and five Should Fix findings are implemented and verified on the
+branch **`fix/audit-integrity`** (`npm test`: 241 passing, hermetic, ~7s;
+typecheck and lint clean).
+
+| Finding | Status | Where |
+| --- | --- | --- |
+| **B1** source never loaded | Fixed | `src/tools/source.ts` + `nodes/load-source.ts`, wired RECALL → LOAD-SOURCE → fan-out |
+| **B1** bogus `--source` raised confidence | Fixed | `analyze-heuristic.ts` keys the downgrade on bytes loaded, not on the path string |
+| **B2** failed scan reported `ok` | Fixed | `classifyScan()` reads exit code, `errors[]`, stderr; `scan-error`/`scan-timeout` → `failed` |
+| **S18** no Semgrep deadline | Fixed | `SEMGREP_TIMEOUT_MS` + SIGKILL + output cap |
+| **S1** VERIFY stamped `confirmed` | Fixed | `applyVerdicts` refuses `confirmed` without a checkable artifact |
+| **S2** coverage read as measured | Fixed | relabelled analyzer-asserted; REPORT states whether source was read |
+| **S3** MERGE silently dropped findings | Fixed | unlocated findings are never deduped; `category` joins the key |
+| **S4** severity failed open to `info` | Fixed | normalize, synonyms, catalog-default fallback, warn |
+| **S5** null index deleted top finding | Fixed | `parseIndex()` replaces `Number()` |
+
+Two verification notes worth keeping:
+
+- The e2e test at `build-graph.test.ts` that asserted a `high`, `confirmed`
+  finding from `sourcePath: "/does-not-exist-xyz"` was **codifying the B1
+  inversion**. It now asserts the corrected behaviour (`info`, speculative,
+  `suspected`). Read that diff first when reviewing.
+- B2 was confirmed against the real Semgrep binary, not just a mock: a broken
+  ruleset now yields `{available: false, reason: "scan-error"}` ("semgrep exited
+  7") where it previously yielded `{available: true, findings: []}` → `ok`.
+  Separately, a real `--config auto` scan of a one-line file exceeded **60
+  seconds** fetching its registry ruleset — direct evidence for both the
+  determinism concern in B1 and the need for S18's deadline.
+
+**Not fixed here** (still open): S6–S17, S19, N1–N4.
+
+### Concurrency warning
+
+A second agent was working this repository at the same time and independently
+implemented an overlapping set of fixes on **`test/known-defect-register`**
+(pushed to `origin`). The two branches must be reconciled before either merges;
+do not merge both blindly. From a structural diff:
+
+- That branch goes **wider** — it also touches `index.ts` (S9 billing pre-flight),
+  `neo4j-retriever.ts` (S11), `ingest-solsec.ts` (S12), `prompts.ts` and
+  `analyzer-status.ts`, which `fix/audit-integrity` does not.
+- It does **not touch `merge.ts` at all**, so **S3 is unfixed there** — that is
+  the finding where a model response omitting `vulnClass`/`location` collapses
+  every finding onto one key and silently discards the rest.
+- Both implement B1 and B2 independently, so those files will conflict.
+
+Its test suite was not run as part of this review.
 
 ---
 

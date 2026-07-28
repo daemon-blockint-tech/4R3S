@@ -32,7 +32,31 @@ function toLevel(level: number | string | undefined): KnowledgeLevel {
 
 export function makeRememberNode(deps: GraphDeps) {
   return async function remember(state: AresState): Promise<AresStateUpdate> {
-    const findings = state.verifiedFindings;
+    // Only confirmed, non-speculative findings may become durable knowledge.
+    //
+    // VERIFY fails open: `applyVerdicts` keeps any finding the critic returned
+    // no verdict for and marks it "suspected". Reading `verifiedFindings` whole
+    // therefore fed unconfirmed — and, before source grounding, sometimes
+    // fabricated — findings into memory that RECALL replays into later audits'
+    // prompts as prior knowledge. That is a feedback loop that amplifies its own
+    // errors, and it is worth being strict here precisely because it is silent:
+    // a wrong memory costs every future audit, while a missed memory costs none.
+    const eligible = state.verifiedFindings.filter(
+      (f) => f.status === "confirmed" && !f.speculative,
+    );
+    const withheld = state.verifiedFindings.length - eligible.length;
+    if (withheld > 0) {
+      logger.info(
+        {
+          component: "node.remember",
+          withheld,
+          eligible: eligible.length,
+        },
+        "Unconfirmed or speculative findings withheld from durable memory",
+      );
+    }
+
+    const findings = eligible;
     if (findings.length === 0) {
       return { memoryWrites: [], iterations: 0 };
     }

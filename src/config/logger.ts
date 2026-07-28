@@ -46,6 +46,9 @@ const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi;
 
 export const REDACTED = "[redacted]";
 
+/** Record fields a caller's metadata may not overwrite. */
+const RESERVED_FIELDS = new Set(["t", "level", "msg"]);
+
 /** Strip credentials embedded in any URL inside a string. */
 function scrubUrls(value: string): string {
   return value.replace(URL_CREDENTIALS, (_m, scheme, user) => `${scheme}${user}:${REDACTED}@`);
@@ -79,11 +82,21 @@ function emit(
 ): void {
   if (ORDER[level] < THRESHOLD) return;
   const { msg, meta } = normalize(a, b);
+  // Metadata is spread after the record's own fields, so a caller passing a key
+  // named `level` (or `t`/`msg`) would overwrite the log's severity — a metadata
+  // field called `level` is an easy thing to log, and losing the real severity
+  // breaks every downstream filter. Collisions are prefixed instead of dropped,
+  // so the caller's value survives without displacing ours.
+  const redacted = redact(meta ?? {}) as Record<string, unknown>;
+  const safeMeta: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(redacted)) {
+    safeMeta[RESERVED_FIELDS.has(k) ? `meta_${k}` : k] = v;
+  }
   const line = JSON.stringify({
     t: new Date().toISOString(),
     level,
     msg: scrubUrls(msg),
-    ...(redact(meta ?? {}) as Record<string, unknown>),
+    ...safeMeta,
   });
   // Never stdout: that stream carries the report.
   process.stderr.write(line + "\n");
