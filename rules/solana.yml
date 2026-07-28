@@ -1,0 +1,61 @@
+# ARES static-analysis ruleset — Solana / Anchor.
+#
+# Pinned and committed deliberately. The previous default was `--config auto`,
+# which resolves rules from the Semgrep registry over the network: that made the
+# one analyzer advertising determinism depend on a remote, silently-versioned
+# ruleset, and it sent an outbound request on every scan even in the offline
+# configuration SECURITY.md describes.
+#
+# Every `id` here is exactly a VULN_CATALOG id from src/knowledge/solana-vulns.ts.
+# That is load-bearing: analyze-static maps a rule id onto a catalog category, and
+# an exact id spares it the substring guessing it would otherwise fall back to.
+#
+# This is a deliberately small, high-confidence starter set, not coverage of the
+# catalog. Most classes in the catalog need dataflow or cross-function reasoning
+# that a pattern matcher cannot decide (whether a signer check exists on the path
+# that matters, whether a CPI target is attacker-controlled). Findings here are a
+# floor, never a ceiling — see the Coverage section of the report.
+#
+# Type-level rules use pattern-regex because semgrep's Rust parser rejects a bare
+# type as a pattern ("no pattern found"); expression rules use real patterns.
+rules:
+  - id: unsafe-type-cast
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Narrowing `as` cast silently truncates or reinterprets bits. On a token
+      amount, price, or length this corrupts the value with no error. Use
+      `try_into()` and handle the failure, or bounds-check before casting.
+    metadata:
+      category: arithmetic
+      cwe: "CWE-681"
+    patterns:
+      - pattern-either:
+          - pattern: $X as u64
+          - pattern: $X as u32
+          - pattern: $X as usize
+          - pattern: $X as i64
+
+  - id: anchor-constraint-gap
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `UncheckedAccount` opts out of Anchor's type and ownership checking. Add an
+      `#[account(address = ...)]` constraint, or use a typed `Account<'info, T>`
+      / `Program<'info, T>` so the discriminator and owner are enforced.
+    metadata:
+      category: framework
+      cwe: "CWE-284"
+    pattern-regex: '\bUncheckedAccount\s*<'
+
+  - id: type-cosplay
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      Manual Borsh deserialization from raw account data skips the 8-byte
+      discriminator, so an account of a different type with the same layout
+      deserializes successfully. Use `Account<'info, T>` or check a type tag.
+    metadata:
+      category: access-control
+      cwe: "CWE-843"
+    pattern-regex: '\btry_from_slice\s*\(\s*&?\s*\w+\.data\.borrow'

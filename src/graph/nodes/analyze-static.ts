@@ -32,6 +32,11 @@ function status(outcome: AnalyzerOutcome, detail?: string): AnalyzerReport[] {
  * other reason means source analysis was expected but did not happen: a missing
  * path is an outright failure, while a missing binary or unusable output leaves
  * the scan degraded.
+ *
+ * `scan-error` and `scan-timeout` are named explicitly rather than left to the
+ * `default`, which is `degraded` and too weak for them: a scanner that exited
+ * non-zero, reported rule errors, or was killed on its deadline did not inspect
+ * the source at all, so its silence carries no assurance whatsoever.
  */
 function outcomeFor(reason: SemgrepSkipReason | undefined): AnalyzerOutcome {
   switch (reason) {
@@ -39,6 +44,8 @@ function outcomeFor(reason: SemgrepSkipReason | undefined): AnalyzerOutcome {
       return "skipped";
     case "path-missing":
     case "spawn-error":
+    case "scan-error":
+    case "scan-timeout":
       return "failed";
     default:
       return "degraded";
