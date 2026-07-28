@@ -11,7 +11,13 @@ import { verifySystemPrompt } from "../../llm/prompts.js";
 import { logger } from "../../config/logger.js";
 import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate } from "../state.js";
-import { chatJson, coerceVerdicts, applyVerdicts, asData } from "../util.js";
+import {
+  chatJson,
+  coerceVerdicts,
+  applyVerdicts,
+  asData,
+  fenceUntrusted,
+} from "../util.js";
 
 export function makeVerifyNode(deps: GraphDeps) {
   return async function verify(state: AresState): Promise<AresStateUpdate> {
@@ -24,25 +30,23 @@ export function makeVerifyNode(deps: GraphDeps) {
     // messages) and on web pages (the CUA transcript). VERIFY is the only node
     // that deletes findings, so that text is in a position to argue for its own
     // dismissal. Fields are stripped by `asData` upstream; the fence is what
-    // tells the model where instructions stop and evidence begins.
-    const FENCE_OPEN = "<<<BEGIN UNTRUSTED FINDING DATA>>>";
-    const FENCE_CLOSE = "<<<END UNTRUSTED FINDING DATA>>>";
-
+    // tells the model where instructions stop and evidence begins. Shared with
+    // `analyze-cua`, which fences the same class of text on the way in.
     const human = [
       state.intake ? `Target: ${asData(state.intake.target)}` : `Request: ${asData(state.request)}`,
       "",
       "Draft findings to review (index. [severity] category (source) — evidence):",
-      FENCE_OPEN,
-      findings
-        .map(
-          (f, i) =>
-            `${i}. [${f.severity}] ${f.category} (${f.source})` +
-            `${f.speculative ? " [speculative]" : ""}\n` +
-            `   vulnClass: ${f.vulnClass} @ ${f.location}\n` +
-            `   evidence: ${f.evidence || "(none)"}`,
-        )
-        .join("\n"),
-      FENCE_CLOSE,
+      fenceUntrusted(
+        findings
+          .map(
+            (f, i) =>
+              `${i}. [${f.severity}] ${f.category} (${f.source})` +
+              `${f.speculative ? " [speculative]" : ""}\n` +
+              `   vulnClass: ${f.vulnClass} @ ${f.location}\n` +
+              `   evidence: ${f.evidence || "(none)"}`,
+          )
+          .join("\n"),
+      ),
       "",
       `Return one verdict per finding, referencing each index (0..${findings.length - 1}).`,
     ]

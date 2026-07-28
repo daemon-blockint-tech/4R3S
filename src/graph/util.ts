@@ -57,6 +57,33 @@ export function asData(value: string, max = 300): string {
 /** Evidence carries real code excerpts, so it gets a longer bound than labels. */
 const EVIDENCE_MAX = 2000;
 
+/** Markers delimiting attacker-reachable text inside a prompt. */
+export const FENCE_OPEN = "<<<BEGIN UNTRUSTED DATA>>>";
+export const FENCE_CLOSE = "<<<END UNTRUSTED DATA>>>";
+
+/**
+ * Wrap attacker-reachable text so a model can tell data from instructions.
+ *
+ * `asData` is the wrong tool for a payload with structure — it collapses
+ * whitespace, which destroys a browser transcript or a code excerpt. This keeps
+ * the shape and instead does the two things that matter for a fence: it removes
+ * any text that looks like a fence marker, so the payload cannot close its own
+ * fence and continue as if it were the operator speaking, and it bounds the
+ * length, so a hostile page cannot exhaust the context window.
+ *
+ * The fence is a boundary marker, not a sanitizer. It cannot stop a model from
+ * being persuaded by prose inside it; what it removes is the cheap structural
+ * trick, and it gives the system prompt something concrete to refer to.
+ */
+export function fenceUntrusted(text: string, max = 20_000): string {
+  const stripped = text
+    // Any BEGIN/END sentinel in the payload, however spaced or cased.
+    .replace(/<{2,}\s*(?:BEGIN|END)[^>]*>{2,}/gi, "[fence marker removed]")
+    .slice(0, max);
+  const truncated = text.length > max ? "\n[truncated at fence budget]" : "";
+  return [FENCE_OPEN, stripped + truncated, FENCE_CLOSE].join("\n");
+}
+
 /** Words models reach for that aren't on our scale, mapped to the closest level. */
 const SEVERITY_SYNONYMS: Record<string, Severity> = {
   severe: "critical",
