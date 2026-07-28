@@ -222,7 +222,13 @@ describe("audit graph (end to end)", () => {
     expect(result.report).toContain("Executive Summary");
     expect(result.findings.length).toBeGreaterThanOrEqual(1);
     expect(result.mergedFindings.length).toBeGreaterThanOrEqual(1);
-    expect(result.mergedFindings[0]!.severity).toBe("high");
+    // The path does not exist, so no source reached the model: whatever severity
+    // it claimed, the finding is a hypothesis about code nobody read. It must be
+    // demoted. A supplied-but-unreadable path used to skip this demotion, because
+    // the check keyed off `sourcePath` being set rather than source being read.
+    expect(result.source?.available).toBe(false);
+    expect(result.mergedFindings[0]!.severity).toBe("info");
+    expect(result.mergedFindings[0]!.speculative).toBe(true);
     expect(result.mergedFindings[0]!.source).toBe("heuristic");
     expect(result.mergedFindings[0]!.category).toBe("integer-overflow-underflow");
     expect(result.coverage.length).toBeGreaterThanOrEqual(1);

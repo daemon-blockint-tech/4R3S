@@ -108,6 +108,12 @@ const schema = z.object({
 
   // ARES runtime
   ARES_MAX_ITERATIONS: z.coerce.number().int().positive().default(12),
+  /**
+   * Character budget for source loaded into analyzer context. A real Anchor
+   * workspace exceeds any usable context window, so this is a hard constraint,
+   * not a tuning knob; the report states when it truncated.
+   */
+  ARES_SOURCE_BUDGET_CHARS: z.coerce.number().int().positive().default(120_000),
   // Optional. Unset (the default) derives a per-target thread id so audits of
   // different targets never share checkpointed state; see `config/thread.ts`.
   ARES_THREAD_ID: z.string().optional(),

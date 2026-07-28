@@ -164,6 +164,15 @@ export function makeReportNode(deps: GraphDeps) {
             .join("\n")
         : "(no findings)",
       "",
+      // What was actually read is as material as what was found: a reader
+      // cannot weigh "no findings" without knowing whether any code was opened.
+      state.source?.available
+        ? `Source read: ${state.source.files.length} of ${state.source.discovered.length} discovered file(s)` +
+          (state.source.truncated
+            ? " — TRUNCATED at the context budget. State in Scope & Methodology that the unread files were not examined."
+            : ".")
+        : "Source read: NONE — this was a black-box review. State plainly in Scope & Methodology that no program source was analyzed and that findings are pattern-based hypotheses, not observations.",
+      "",
       `Coverage: checked ${state.coverage.length} of ${VULN_CATALOG.length} vulnerability classes.`,
       state.coverage.length
         ? `Checked classes: ${state.coverage.join(", ")}`
