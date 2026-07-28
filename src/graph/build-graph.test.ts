@@ -33,8 +33,12 @@ function makeFakeChat(): BaseChatModel {
           content: JSON.stringify({
             findings: [
               {
+                // Cites a real file: the grounded-source tests write `lib.rs`,
+                // and `citesLoadedFile` demotes any finding pointing at a file
+                // that was never loaded. In the black-box tests nothing is
+                // loaded, so this is demoted regardless of what it names.
                 vulnClass: "arithmetic-overflow",
-                location: "ix:1",
+                location: "lib.rs:2",
                 severity: "high",
                 evidence: "unchecked add",
                 remediation: "use checked_add",
