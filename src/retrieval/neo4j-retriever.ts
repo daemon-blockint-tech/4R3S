@@ -26,6 +26,28 @@ interface GraphRow {
   proximity: number;
 }
 
+/** Lucene syntax characters that would otherwise be parsed as operators. */
+const LUCENE_SPECIAL = /[+\-&|!(){}[\]^"~*?:\\/]/g;
+
+/**
+ * Turn a natural-language query into a safe Lucene OR query.
+ *
+ * The full-text index speaks Lucene, so an unescaped `:` or `-` from a program
+ * address or a file path is a syntax error, not a search term — and a raw
+ * sentence would be ANDed into nothing. Terms are escaped, short noise words
+ * dropped, and the rest ORed so any overlap ranks. Returns "" when nothing
+ * usable survives, which the caller treats as "no fragments" rather than
+ * sending a query that matches everything.
+ */
+export function toLuceneQuery(text: string, maxTerms = 24): string {
+  return (text ?? "")
+    .split(/\s+/)
+    .map((t) => t.replace(LUCENE_SPECIAL, "").trim())
+    .filter((t) => t.length > 2)
+    .slice(0, maxTerms)
+    .join(" OR ");
+}
+
 export class Neo4jRetriever implements Retriever {
   readonly name = "neo4j";
 
@@ -33,16 +55,28 @@ export class Neo4jRetriever implements Retriever {
     // neo4j.int(): the driver packs a plain JS number as a PackStream Float, and
     // Cypher's LIMIT wants an integer. Passing 8 sends `LIMIT 8.0`.
     const limit = neo4j.int(query.limit ?? 20);
+
+    // `CONTAINS` required a single chunk to contain the *entire* query string
+    // verbatim. The query is `intake.summary` — a whole sentence, and when
+    // INTAKE has no summary, the raw request — so no seeded corpus chunk ever
+    // matched, and the source reported `ok` with zero fragments on every run:
+    // "answered and had nothing" was indistinguishable from "never worked".
+    // The full-text index this needs has existed unused in
+    // db/neo4j/schema.cypher since the schema was written.
+    const terms = toLuceneQuery(query.text);
+    if (!terms) return { fragments: [] };
+
     const { rows, error } = await this.run(
       `
-      MATCH (c:Chunk)
-      WHERE toLower(c.content) CONTAINS toLower($text)
+      CALL db.index.fulltext.queryNodes('chunk_content', $terms)
+      YIELD node AS c, score
       OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
       RETURN c.chunk_id AS id, c.content AS content,
-             e.entity_id AS entityId, 1.0 AS proximity
+             e.entity_id AS entityId, score AS proximity
+      ORDER BY proximity DESC
       LIMIT $limit
       `,
-      { text: query.text, limit },
+      { terms, limit },
     );
     return { fragments: this.toScored(rows, "neo4j-search"), error };
   }
