@@ -62,23 +62,38 @@ Phases: **P0** = consolidation/licensing gate (do first) · **P1** = Auditor MVP
 
 ## Commands
 
+**What actually works today.** The shipping auditor is the TypeScript agent at
+root `src/`, built with **npm** — not pnpm. `pnpm-workspace.yaml` globs
+`packages/*` and `apps/*`, which contain only README stubs, so `pnpm -r test`
+matches zero projects and **exits 0 having run none of the 31 suites**. An agent
+satisfying "Tests green in CI" that way would report success truthfully and
+wrongly. CI is authoritative and uses `npm ci`.
+
 ```bash
-# Rust core
-cargo build --workspace && cargo test --workspace
-cargo run -p ares-cli -- scan <path>          # deterministic source scan
-cargo run -p ares-cli -- poc <finding>        # generate PoC harness
-cargo deny check licenses                     # blocks incoming GPL/AGPL third-party crates
+# TS auditor (root src/) — this is the real build
+npm ci
+npm run typecheck && npm run lint && npm run build && npm test
 
-# TS / apps
-pnpm install && pnpm -r build && pnpm -r test
-pnpm --filter auditor-web dev
+npm run audit -- --program <ADDRESS>          # run an audit
+npm run audit -- --source ./path/to/program   # source audit
 
-# Python
-uv sync    # or: pip install -e apps/auditor-api
+# Dependency gates (the `dependency audit` CI job runs these)
+npm audit --audit-level=high
+node scripts/check-licenses.mjs               # blocks GPL/AGPL npm deps
+cargo deny check licenses bans sources        # blocks GPL/AGPL crates
 
 # Eval
-python eval/verify_claims.py                  # re-derive all published metrics
+pip install -r eval/requirements.txt          # needs Python >=3.10
+python -m pytest eval -q
+python eval/score_detections.py --truth <t.csv> --predictions <p.csv> --target-f1 0.94
+python eval/check_published_claims.py         # README metrics must be re-derivable
 ```
+
+**Not wired yet — do not rely on these.** `cargo build/test --workspace` compiles
+the 11-line `core/` scaffold and reports "running 0 tests"; there is no
+`ares-cli`, no `apps/auditor-api` to `pip install -e`, no `auditor-web` to serve,
+and `eval/verify_claims.py` does not exist (the harness is `score_detections.py`
+plus the `verify-claims` CI job). They land with PLAT-1/ENG-1.
 
 ## When unsure
 
