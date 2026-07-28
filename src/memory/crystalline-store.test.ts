@@ -10,7 +10,12 @@ describe("cosineSimilarity", () => {
   });
 
   it("returns 0 on length mismatch or a zero vector", () => {
-    expect(cosineSimilarity([1, 2, 3], [1, 2])).toBe(0);
+    // A dimension mismatch is a configuration error — vectors written under a
+    // different EMBEDDINGS_MODEL — not a similarity of zero. Returning 0 made it
+    // indistinguishable from "genuinely unrelated", so switching models scored
+    // every stored crystal at zero while recall still reported success.
+    expect(() => cosineSimilarity([1, 2, 3], [1, 2])).toThrow(/dimension mismatch/);
+    // A zero vector is still a legitimate 0: same dimension, no direction.
     expect(cosineSimilarity([0, 0], [1, 1])).toBe(0);
   });
 });

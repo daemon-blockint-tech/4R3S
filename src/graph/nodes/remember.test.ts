@@ -129,3 +129,57 @@ describe("REMEMBER node", () => {
     expect(persist).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * RECALL replays durable memory into later audits' prompts, so a wrong memory
+ * costs every future audit while a missed one costs none. VERIFY fails open — a
+ * finding the critic returned no verdict for is kept and marked "suspected" —
+ * so reading `verifiedFindings` whole fed unconfirmed, and before source
+ * grounding sometimes fabricated, findings straight into that loop.
+ */
+describe("REMEMBER gating", () => {
+  function nodeWith(persist = vi.fn().mockResolvedValue(undefined)) {
+    const node = makeRememberNode({
+      chat: fakeChat([{ level: 4, content: "pattern worth keeping", tags: ["x"] }]),
+      crystalline: new CrystallineStore(new InMemoryStore()),
+      retriever: undefined as never,
+      knowledge: { enabled: true, persist },
+    });
+    return { node, persist };
+  }
+
+  const confirmed = baseState().verifiedFindings[0]!;
+
+  it("withholds a merely suspected finding", async () => {
+    const { node, persist } = nodeWith();
+    const update = await node(
+      baseState({ verifiedFindings: [{ ...confirmed, status: "suspected" }] }),
+    );
+    expect(update.memoryWrites).toEqual([]);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("withholds a speculative finding even when the critic confirmed it", async () => {
+    const { node, persist } = nodeWith();
+    const update = await node(
+      baseState({ verifiedFindings: [{ ...confirmed, speculative: true }] }),
+    );
+    expect(update.memoryWrites).toEqual([]);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("remembers only the eligible finding from a mixed set", async () => {
+    const { node } = nodeWith();
+    const update = await node(
+      baseState({
+        verifiedFindings: [
+          { ...confirmed, status: "suspected" },
+          confirmed,
+          { ...confirmed, speculative: true },
+        ],
+      }),
+    );
+    // One eligible finding → the model is asked once and one write is made.
+    expect(update.memoryWrites).toHaveLength(1);
+  });
+});

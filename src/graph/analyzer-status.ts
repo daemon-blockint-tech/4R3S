@@ -127,12 +127,15 @@ export function retrievalStatusTable(
 export function assuranceBanner(
   reports: readonly AnalyzerReport[],
   retrieval: readonly RetrievalReport[] = [],
+  droppedFalsePositives = 0,
 ): string | undefined {
   const unreliable = unreliableAnalyzers(reports);
   const missing = missingAnalyzers(reports);
   const sources = failedSources(retrieval);
   const affected = unreliable.length + missing.length;
-  if (affected === 0 && sources.length === 0) return undefined;
+  if (affected === 0 && sources.length === 0 && droppedFalsePositives <= 0) {
+    return undefined;
+  }
 
   const detail = [
     ...unreliable.map(
@@ -149,8 +152,10 @@ export function assuranceBanner(
       `> **Incomplete assessment — ${affected} of ${ANALYZER_ORDER.length} analyzers did not run reliably.**`,
       `> ${detail}.`,
     );
-  } else {
+  } else if (sources.length > 0) {
     lines.push("> **Incomplete assessment — the knowledge base was not fully consulted.**");
+  } else {
+    lines.push("> **Findings were removed during verification.**");
   }
 
   // A configured knowledge source that errored means the analyzers reasoned
@@ -162,6 +167,18 @@ export function assuranceBanner(
     lines.push(
       `> Knowledge sources unavailable: ${sourceDetail}. Prior audit knowledge` +
         " that would normally inform this review was missing.",
+    );
+  }
+
+  // The critic is the only stage that deletes findings, and a deleted finding
+  // appears nowhere else in the report. Stating the count in code keeps that
+  // visible even when the model omits the parenthetical it was handed.
+  if (droppedFalsePositives > 0) {
+    lines.push(
+      `> ${droppedFalsePositives} draft finding(s) were discarded as false positives by the` +
+        " verification pass and do not appear below. Verification judges a finding against" +
+        " its own stated evidence, so a high count relative to the findings shown means the" +
+        " result is unsettled rather than clean.",
     );
   }
 
@@ -179,8 +196,9 @@ export function withAssuranceBanner(
   report: string,
   reports: readonly AnalyzerReport[],
   retrieval: readonly RetrievalReport[] = [],
+  droppedFalsePositives = 0,
 ): string {
-  const banner = assuranceBanner(reports, retrieval);
+  const banner = assuranceBanner(reports, retrieval, droppedFalsePositives);
   if (!banner) return report;
   return `${banner}\n\n${report}`;
 }

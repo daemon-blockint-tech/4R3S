@@ -10,6 +10,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
+import { timedFetch } from "../config/timeout.js";
 
 let cached: SupabaseClient | null | undefined;
 
@@ -31,6 +32,11 @@ export function getSupabase(): SupabaseClient | undefined {
 
   cached = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
+    // Without a deadline the `hybrid_search` RPC inherits bare `fetch`, and a
+    // project that accepts the connection but never answers hangs RECALL
+    // forever — `withRetry` cannot help, because a request that never settles
+    // never produces an error to retry. See config/timeout.ts.
+    global: { fetch: timedFetch(env.SUPABASE_TIMEOUT_MS) },
   });
   logger.debug({ component: "supabase" }, "Supabase client initialized");
   return cached;

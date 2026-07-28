@@ -19,6 +19,7 @@ import type {
   Severity,
 } from "../state.js";
 import { VULN_IDS } from "../../knowledge/solana-vulns.js";
+import { asData } from "../util.js";
 
 /** Build this node's entry for the `analyzers` channel. */
 function status(outcome: AnalyzerOutcome, detail?: string): AnalyzerReport[] {
@@ -32,6 +33,11 @@ function status(outcome: AnalyzerOutcome, detail?: string): AnalyzerReport[] {
  * other reason means source analysis was expected but did not happen: a missing
  * path is an outright failure, while a missing binary or unusable output leaves
  * the scan degraded.
+ *
+ * `scan-error` and `scan-timeout` are named explicitly rather than left to the
+ * `default`, which is `degraded` and too weak for them: a scanner that exited
+ * non-zero, reported rule errors, or was killed on its deadline did not inspect
+ * the source at all, so its silence carries no assurance whatsoever.
  */
 function outcomeFor(reason: SemgrepSkipReason | undefined): AnalyzerOutcome {
   switch (reason) {
@@ -39,6 +45,8 @@ function outcomeFor(reason: SemgrepSkipReason | undefined): AnalyzerOutcome {
       return "skipped";
     case "path-missing":
     case "spawn-error":
+    case "scan-error":
+    case "scan-timeout":
       return "failed";
     default:
       return "degraded";
@@ -77,12 +85,18 @@ function mapCategory(ruleId: string): string {
   return "other";
 }
 
+/**
+ * `path` comes from the audited repository and `message` from a Semgrep rule
+ * that may interpolate matched source, so both are attacker-reachable text on
+ * its way to the VERIFY prompt — a directory named to read like an instruction
+ * is enough. See `asData` in graph/util.ts.
+ */
 function toFinding(f: SemgrepFinding): Finding {
   return {
-    vulnClass: f.ruleId,
-    location: `${f.path}:${f.line}`,
+    vulnClass: asData(f.ruleId),
+    location: asData(`${f.path}:${f.line}`),
     severity: mapSeverity(f.severity),
-    evidence: f.message,
+    evidence: asData(f.message, 2000),
     remediation: "Review the flagged code against the Semgrep rule guidance.",
     source: "static",
     category: mapCategory(f.ruleId),

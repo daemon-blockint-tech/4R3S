@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph";
 
@@ -30,8 +33,12 @@ function makeFakeChat(): BaseChatModel {
           content: JSON.stringify({
             findings: [
               {
+                // Cites a real file: the grounded-source tests write `lib.rs`,
+                // and `citesLoadedFile` demotes any finding pointing at a file
+                // that was never loaded. In the black-box tests nothing is
+                // loaded, so this is demoted regardless of what it names.
                 vulnClass: "arithmetic-overflow",
-                location: "ix:1",
+                location: "lib.rs:2",
                 severity: "high",
                 evidence: "unchecked add",
                 remediation: "use checked_add",
@@ -222,7 +229,13 @@ describe("audit graph (end to end)", () => {
     expect(result.report).toContain("Executive Summary");
     expect(result.findings.length).toBeGreaterThanOrEqual(1);
     expect(result.mergedFindings.length).toBeGreaterThanOrEqual(1);
-    expect(result.mergedFindings[0]!.severity).toBe("high");
+    // The path does not exist, so no source reached the model: whatever severity
+    // it claimed, the finding is a hypothesis about code nobody read. It must be
+    // demoted. A supplied-but-unreadable path used to skip this demotion, because
+    // the check keyed off `sourcePath` being set rather than source being read.
+    expect(result.source?.available).toBe(false);
+    expect(result.mergedFindings[0]!.severity).toBe("info");
+    expect(result.mergedFindings[0]!.speculative).toBe(true);
     expect(result.mergedFindings[0]!.source).toBe("heuristic");
     expect(result.mergedFindings[0]!.category).toBe("integer-overflow-underflow");
     expect(result.coverage.length).toBeGreaterThanOrEqual(1);
@@ -236,8 +249,10 @@ describe("audit graph (end to end)", () => {
     // CUA is opt-in and unconfigured in the test env: the 4th analyzer runs
     // as part of the fan-out but contributes nothing.
     expect(result.findings.some((f) => f.source === "cua")).toBe(false);
-    // intake + heuristic + verify + remember + report each count one LLM turn.
-    expect(result.iterations).toBeGreaterThanOrEqual(5);
+    // intake + heuristic + verify + report each count one LLM turn. REMEMBER
+    // makes no call here: this run has no readable source, so its only finding
+    // is speculative and nothing is eligible for durable memory.
+    expect(result.iterations).toBeGreaterThanOrEqual(4);
   });
 
   it("marks the report as incomplete when an analyzer could not run", async () => {
@@ -301,7 +316,7 @@ describe("audit graph (end to end)", () => {
     expect(result.report).not.toContain("Knowledge sources unavailable");
   });
 
-  it("persists a crystal in the REMEMBER phase", async () => {
+  it("persists a crystal in the REMEMBER phase when the finding is grounded", async () => {
     const store = new InMemoryStore();
     const crystalline = new CrystallineStore(store);
     const retriever = new HybridRetriever(new CrystallineRetriever(crystalline));
@@ -311,13 +326,51 @@ describe("audit graph (end to end)", () => {
       store,
     });
 
-    await graph.invoke(
+    // Real source on disk, so the finding is grounded rather than speculative.
+    // REMEMBER only persists confirmed, non-speculative findings, so a
+    // black-box run (the previous form of this test) legitimately writes
+    // nothing — durable memory is replayed into later audits and must not be
+    // seeded from findings nobody confirmed.
+    const dir = mkdtempSync(join(tmpdir(), "ares-e2e-src-"));
+    try {
+      writeFileSync(
+        join(dir, "lib.rs"),
+        "pub fn deposit(a: u128) {\n    let b = a as u64;\n}\n",
+      );
+
+      await graph.invoke(
+        { request: "audit source", sourcePath: dir },
+        { configurable: { thread_id: "test-e2e-2" } },
+      );
+
+      // The remembered fragment (level 4 = semantic) should now be recallable.
+      const recalled = await crystalline.recall({ query: "overflow", tags: ["overflow"] });
+      expect(recalled.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("withholds unconfirmed findings from durable memory", async () => {
+    const store = new InMemoryStore();
+    const crystalline = new CrystallineStore(store);
+    const retriever = new HybridRetriever(new CrystallineRetriever(crystalline));
+    const graph = buildAuditGraph({
+      deps: { chat: makeFakeChat(), crystalline, retriever },
+      checkpointer: new MemorySaver(),
+      store,
+    });
+
+    // No readable source → the finding is demoted to speculative, so however
+    // the critic labelled it, nothing may enter memory that future audits recall.
+    const result = await graph.invoke(
       { request: "audit source", sourcePath: "/does-not-exist-xyz" },
-      { configurable: { thread_id: "test-e2e-2" } },
+      { configurable: { thread_id: "test-e2e-5" } },
     );
 
-    // The remembered fragment (level 4 = semantic) should now be recallable.
+    expect(result.verifiedFindings.length).toBeGreaterThanOrEqual(1);
+    expect(result.memoryWrites).toEqual([]);
     const recalled = await crystalline.recall({ query: "overflow", tags: ["overflow"] });
-    expect(recalled.length).toBeGreaterThanOrEqual(1);
+    expect(recalled).toEqual([]);
   });
 });

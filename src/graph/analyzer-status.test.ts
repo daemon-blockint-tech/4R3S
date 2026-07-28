@@ -209,3 +209,32 @@ describe("analyzerStatusTable", () => {
     }
   });
 });
+
+describe("dropped false positives", () => {
+  /** Every analyzer healthy, so nothing else can raise the banner. */
+  const allOk = [
+    { analyzer: "onchain" as const, outcome: "ok" as const },
+    { analyzer: "static" as const, outcome: "ok" as const },
+    { analyzer: "heuristic" as const, outcome: "ok" as const },
+    { analyzer: "cua" as const, outcome: "ok" as const },
+  ];
+
+  it("stays silent when the critic dropped nothing", () => {
+    expect(assuranceBanner(allOk, [], 0)).toBeUndefined();
+  });
+
+  it("discloses the count when the critic deleted findings", () => {
+    // VERIFY is the only stage that removes findings, and a removed finding
+    // appears nowhere else in the report — so a clean-looking report after six
+    // deletions must still say six things were deleted.
+    const banner = assuranceBanner(allOk, [], 6);
+    expect(banner).toBeDefined();
+    expect(banner).toContain("6 draft finding(s) were discarded");
+  });
+
+  it("is prepended to the report body", () => {
+    const out = withAssuranceBanner("# Report", allOk, [], 2);
+    expect(out.startsWith(">")).toBe(true);
+    expect(out).toContain("# Report");
+  });
+});

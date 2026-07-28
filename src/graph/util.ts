@@ -27,10 +27,43 @@ const VALID_STATUS = new Set([
 ] as FindingStatus[]);
 
 /**
+ * Neutralize a string that originated outside the auditor before it is placed
+ * in a prompt.
+ *
+ * Finding fields are reachable by the audited party. Semgrep lifts `path`
+ * straight from the target repository — a directory name is enough — and
+ * `message` from rule metavariables that interpolate matched source; the CUA
+ * transcript is whatever a web page said. VERIFY is the only node that deletes
+ * findings, so text that reaches its prompt is text that can argue for its own
+ * dismissal.
+ *
+ * This strips control characters (including the newlines used to fake a
+ * delimiter), neutralizes backticks, collapses whitespace and truncates. It is
+ * not a parser and cannot make prose safe — the structural defence is the
+ * sentinel fence in `verify.ts`. What it removes is the cheap trick, and it
+ * bounds prompt growth on a hostile input at the same time.
+ */
+export function asData(value: string, max = 300): string {
+  const cleaned = value
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/`/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length > max ? `${cleaned.slice(0, max)}\u2026` : cleaned;
+}
+
+/** Evidence carries real code excerpts, so it gets a longer bound than labels. */
+const EVIDENCE_MAX = 2000;
+
+/**
  * Coerce loosely-typed LLM output into `Finding[]`, forcing `source` and
  * validating severity. Accepts either a bare array or an object with a
  * `.findings` array (the analyzers now return `{ findings, checked }`).
  * Non-array / malformed input yields `[]`.
+ *
+ * Free-text fields pass through `asData` — they end up in the VERIFY prompt,
+ * and `category` is the only field that was ever validated.
  */
 export function coerceFindings(
   raw: unknown,
@@ -49,11 +82,11 @@ export function coerceFindings(
       const rawCategory = String(f.category ?? "");
       const conf = String(f.confidence ?? "").toLowerCase();
       return {
-        vulnClass: String(f.vulnClass ?? f.vuln_class ?? "unknown"),
-        location: String(f.location ?? ""),
+        vulnClass: asData(String(f.vulnClass ?? f.vuln_class ?? "unknown")),
+        location: asData(String(f.location ?? "")),
         severity: (VALID_SEVERITY.has(sev) ? sev : "info") as Severity,
-        evidence: String(f.evidence ?? ""),
-        remediation: String(f.remediation ?? ""),
+        evidence: asData(String(f.evidence ?? ""), EVIDENCE_MAX),
+        remediation: asData(String(f.remediation ?? ""), EVIDENCE_MAX),
         source,
         category: isVulnId(rawCategory) ? rawCategory : "other",
         speculative: Boolean(f.speculative ?? false),
@@ -112,7 +145,19 @@ export function coerceVerdicts(raw: unknown, count: number): Verdict[] {
   for (const v of arr) {
     if (!v || typeof v !== "object") continue;
     const o = v as Record<string, unknown>;
-    const index = Number(o.index);
+    // `Number(o.index)` alone is unsafe: Number(null), Number(false) and
+    // Number("") are all 0, and 0 passes Number.isInteger. MERGE has already
+    // sorted findings by severity descending, so index 0 is the most severe
+    // finding in the report — a verdict with a null or empty index would be
+    // applied to it, and a "false-positive" status would delete it outright.
+    // Only genuine numbers, or numeric strings, may address a finding.
+    const rawIndex = o.index;
+    const index =
+      typeof rawIndex === "number"
+        ? rawIndex
+        : typeof rawIndex === "string" && rawIndex.trim() !== ""
+          ? Number(rawIndex)
+          : Number.NaN;
     if (!Number.isInteger(index) || index < 0 || index >= count || seen.has(index)) {
       continue;
     }

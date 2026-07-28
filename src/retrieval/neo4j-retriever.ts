@@ -11,6 +11,8 @@
  * See `db/neo4j/schema.cypher` for the node/relationship model. All methods
  * degrade to `[]` when Neo4j is not configured or a query fails.
  */
+import neo4j from "neo4j-driver";
+
 import type { ScoredCrystal } from "../memory/types.js";
 import { logger } from "../config/logger.js";
 import { withNeo4jSession } from "../persistence/neo4j.js";
@@ -28,7 +30,9 @@ export class Neo4jRetriever implements Retriever {
   readonly name = "neo4j";
 
   async retrieve(query: HybridQuery): Promise<RetrievalResult> {
-    const limit = query.limit ?? 20;
+    // neo4j.int(): the driver packs a plain JS number as a PackStream Float, and
+    // Cypher's LIMIT wants an integer. Passing 8 sends `LIMIT 8.0`.
+    const limit = neo4j.int(query.limit ?? 20);
     const { rows, error } = await this.run(
       `
       MATCH (c:Chunk)
@@ -49,6 +53,7 @@ export class Neo4jRetriever implements Retriever {
    */
   async expand(seedChunkIds: string[], limit = 20): Promise<RetrievalResult> {
     if (seedChunkIds.length === 0) return { fragments: [] };
+    const limitInt = neo4j.int(limit);
     const { rows, error } = await this.run(
       `
       MATCH (seed:Chunk) WHERE seed.chunk_id IN $ids
@@ -61,7 +66,7 @@ export class Neo4jRetriever implements Retriever {
       ORDER BY proximity DESC
       LIMIT $limit
       `,
-      { ids: seedChunkIds, limit },
+      { ids: seedChunkIds, limit: limitInt },
     );
     return { fragments: this.toScored(rows, "neo4j-expand"), error };
   }

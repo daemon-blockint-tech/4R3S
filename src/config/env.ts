@@ -54,11 +54,19 @@ const schema = z.object({
   POSTGRES_USER: z.string().default("ares"),
   POSTGRES_PASSWORD: z.string().default("ares_dev_password"),
   POSTGRES_SSL: boolFlag(),
+  /**
+   * Connect and statement deadline for Postgres. Neither the `pg` pool nor
+   * PostgresSaver applies one by default, so a wedged server would hang the
+   * checkpoint write at every superstep boundary.
+   */
+  POSTGRES_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
   // Supabase (hybrid keyword + vector retrieval). Optional — falls back to
   // Crystalline-only recall when unset.
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  /** Per-request deadline for Supabase reads (the `hybrid_search` RPC). */
+  SUPABASE_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 
   // Neo4j (knowledge-graph expansion + relationship reranking). Optional.
   NEO4J_URI: z.string().optional(),
@@ -73,6 +81,13 @@ const schema = z.object({
   EMBEDDINGS_DIM: z.coerce.number().int().positive().default(1536),
   /** Per-request deadline for embedding calls. */
   EMBEDDINGS_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+
+  /**
+   * Deadline for a Semgrep scan. The spawn is a local subprocess, so no fetch
+   * deadline covers it; without this a hung scan never settles and the parallel
+   * ANALYZE superstep never fans in.
+   */
+  SEMGREP_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
 
   // Seed knowledge base.
   SOLSEC_REPO_URL: z
@@ -93,6 +108,12 @@ const schema = z.object({
 
   // ARES runtime
   ARES_MAX_ITERATIONS: z.coerce.number().int().positive().default(12),
+  /**
+   * Character budget for source loaded into analyzer context. A real Anchor
+   * workspace exceeds any usable context window, so this is a hard constraint,
+   * not a tuning knob; the report states when it truncated.
+   */
+  ARES_SOURCE_BUDGET_CHARS: z.coerce.number().int().positive().default(120_000),
   // Optional. Unset (the default) derives a per-target thread id so audits of
   // different targets never share checkpointed state; see `config/thread.ts`.
   ARES_THREAD_ID: z.string().optional(),
@@ -116,9 +137,36 @@ function loadEnv(): AresEnv {
 
 export const env = loadEnv();
 
-/** Postgres connection string built from individual env vars. */
+/**
+ * Postgres connection string built from individual env vars.
+ *
+ * User and password are percent-encoded. A generated password containing `@`,
+ * `/`, `?` or `#` would otherwise terminate the authority component early — a
+ * password of `kf9@qa2.internal/x` silently resolves to host `qa2.internal`,
+ * presenting ARES credentials to a host the operator never configured.
+ *
+ * The deadline travels in the DSN because `PostgresSaver.fromConnString` only
+ * accepts `{schema}` and exposes no pool config; `pg` reads `connect_timeout`
+ * and passes `options` through to the server.
+ */
 export const postgresConnectionString = (): string => {
-  const { POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB } =
-    env;
-  return `postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}`;
+  const {
+    POSTGRES_USER,
+    POSTGRES_PASSWORD,
+    POSTGRES_HOST,
+    POSTGRES_PORT,
+    POSTGRES_DB,
+    POSTGRES_TIMEOUT_MS,
+  } = env;
+  const user = encodeURIComponent(POSTGRES_USER);
+  const password = encodeURIComponent(POSTGRES_PASSWORD);
+  const connectSeconds = Math.max(1, Math.ceil(POSTGRES_TIMEOUT_MS / 1000));
+  // encodeURIComponent, not URLSearchParams: the latter encodes the space in
+  // `-c statement_timeout=…` as `+`, which pg's decodeURIComponent leaves as a
+  // literal plus and the server then rejects.
+  const options = encodeURIComponent(`-c statement_timeout=${POSTGRES_TIMEOUT_MS}`);
+  return (
+    `postgresql://${user}:${password}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}` +
+    `?connect_timeout=${connectSeconds}&options=${options}`
+  );
 };

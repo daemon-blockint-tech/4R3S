@@ -23,7 +23,7 @@ import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { getSupabase, hasSupabase } from "../persistence/supabase.js";
 import { hasNeo4j, withNeo4jSession, closeNeo4j } from "../persistence/neo4j.js";
-import { embedBatch } from "../retrieval/embeddings.js";
+import { embedBatch, hasEmbeddings } from "../retrieval/embeddings.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = resolve(HERE, "..", "..", ".cache", "solsec");
@@ -229,6 +229,31 @@ async function main(): Promise<void> {
   await upsertSupabase(docs);
   await upsertNeo4j(docs);
   await closeNeo4j();
+
+  // `embedBatch` returns undefined for "not configured" and for "configured but
+  // the request failed" alike, and ingestFile folds both into `embedding: null`.
+  // A mid-run 429 therefore NULLs every remaining chunk while the run still
+  // exits 0, and `select count(*)` looks right forever after — the vector half
+  // of hybrid_search silently contributes nothing, and at audit time the source
+  // reports `ok` with lexical-only hits. Fail loudly instead.
+  if (hasEmbeddings()) {
+    const total = docs.reduce((n, d) => n + d.chunks.length, 0);
+    const missing = docs.reduce(
+      (n, d) => n + d.chunks.filter((c) => c.embedding === null).length,
+      0,
+    );
+    if (missing > 0) {
+      logger.error(
+        { component: "ingest", missing, total },
+        "Embeddings are configured but some chunks were stored without one; " +
+          "the knowledge base is incomplete and semantic recall will silently " +
+          "miss them. Re-run once the embedding endpoint is healthy.",
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   logger.info({ component: "ingest" }, "Ingestion complete");
 }
 

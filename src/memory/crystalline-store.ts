@@ -171,16 +171,37 @@ export class CrystallineStore {
       }
     }
 
-    // Score each candidate.
+    // Score each candidate. A crystal whose vector has a different dimension
+    // than the query was embedded by a different model and is not comparable;
+    // it falls back to tag scoring rather than being silently scored at zero.
+    let dimMismatches = 0;
     const scored = candidates.map((c) => {
       const act = this.decayedActivation(c);
-      const sim =
-        query.queryEmbedding && c.embedding
-          ? cosineSimilarity(query.queryEmbedding, c.embedding)
-          : tagSimilarity(query.query, c.tags);
+      const comparable =
+        query.queryEmbedding &&
+        c.embedding &&
+        query.queryEmbedding.length === c.embedding.length;
+      if (query.queryEmbedding && c.embedding && !comparable) dimMismatches += 1;
+      const sim = comparable
+        ? cosineSimilarity(query.queryEmbedding!, c.embedding!)
+        : tagSimilarity(query.query, c.tags);
       const base = act * 0.4 + sim * 0.6;
       return { crystal: c, score: base, act };
     });
+
+    if (dimMismatches > 0) {
+      log.warn(
+        {
+          component: "crystalline",
+          mismatched: dimMismatches,
+          candidates: candidates.length,
+          queryDim: query.queryEmbedding?.length,
+        },
+        "Stored embeddings have a different dimension than the query; semantic " +
+          "scoring fell back to tags for those crystals. Re-ingest after an " +
+          "EMBEDDINGS_MODEL change.",
+      );
+    }
 
     // Spreading activation: boost scores of neighbors of top candidates.
     const topIds = new Set(
@@ -361,6 +382,8 @@ export class CrystallineStore {
       for (const other of crystals) {
         if (other.id === c.id || consumed.has(other.id)) continue;
         if (!other.embedding) continue;
+        // Incomparable vectors must not merge two unrelated crystals.
+        if (other.embedding.length !== c.embedding.length) continue;
         if (
           cosineSimilarity(c.embedding, other.embedding) >=
           this.cfg.mergeSimilarity
@@ -384,8 +407,22 @@ export class CrystallineStore {
 // Vector helpers
 // ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Cosine similarity of two equal-length vectors.
+ *
+ * Throws on a length mismatch rather than returning 0. Returning 0 made a
+ * configuration error — vectors written under a different EMBEDDINGS_MODEL —
+ * indistinguishable from "genuinely unrelated", so changing the model silently
+ * scored every stored crystal at zero while recall still reported success.
+ * Callers are expected to check dimensions and degrade explicitly.
+ */
 export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0;
+  if (a.length !== b.length) {
+    throw new Error(
+      `cosineSimilarity: dimension mismatch (${a.length} vs ${b.length}) — ` +
+        "stored vectors were probably written under a different embedding model",
+    );
+  }
   let dot = 0;
   let na = 0;
   let nb = 0;

@@ -9,6 +9,7 @@
 import { Annotation } from "@langchain/langgraph";
 
 import type { ScoredCrystal, KnowledgeLevel } from "../memory/types.js";
+import type { LoadedSource } from "../tools/source.js";
 import type { AnalyzerName } from "../knowledge/finding.js";
 import type { Finding } from "../knowledge/finding.js";
 
@@ -81,6 +82,15 @@ export const AresStateAnnotation = Annotation.Root({
   sourcePath: Annotation<string | undefined>(),
   /** Structured intake summary (LLM-parsed). */
   intake: Annotation<IntakeSummary | undefined>(),
+  /**
+   * Program source loaded from `sourcePath`, shared by every analyzer in the
+   * parallel superstep. Without this the LLM analyzers reason from a summary
+   * and must invent the `location` and `evidence` they report.
+   */
+  source: Annotation<LoadedSource | undefined>({
+    reducer: (_prev, next) => next,
+    default: () => undefined,
+  }),
   /** Memory fragments recalled by the hybrid retriever. */
   recalled: Annotation<ScoredCrystal[]>({
     reducer: (_prev, next) => next,
