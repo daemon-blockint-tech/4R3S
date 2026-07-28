@@ -981,9 +981,9 @@ loose ends around them.
 
 ## 5b. Remediation status
 
-Both Blockers and five Should Fix findings are implemented and verified on the
-branch **`fix/audit-integrity`** (`npm test`: 241 passing, hermetic, ~7s;
-typecheck and lint clean).
+All of the below is merged into **`main`** (`npm test`: 236 passing, hermetic;
+typecheck, lint and build clean). Two branches independently remediated the same
+review — see "Reconciliation" below for how they were consolidated.
 
 | Finding | Status | Where |
 | --- | --- | --- |
@@ -1012,7 +1012,42 @@ Two verification notes worth keeping:
 
 **Not fixed here** (still open): S6–S17, S19, N1–N4.
 
-### Concurrency warning
+### Reconciliation
+
+Two agents worked this review concurrently and produced overlapping
+remediations, so consolidation onto `main` was not a clean fast-forward:
+
+- `test/known-defect-register` was the wider and more advanced implementation —
+  it additionally verifies that a finding cites a file that was actually loaded
+  (`citesLoadedFile`), injects the scanner binary via `SEMGREP_BIN` so the suite
+  is hermetic on hosts that have Semgrep, fences untrusted finding text in the
+  VERIFY prompt, and covers S6/S9/S11/S12.
+- `fix/audit-integrity` overlapped on B1/B2 (14 conflicting files) but uniquely
+  covered **S1** and **S4**.
+
+Conflicts were resolved in favour of the implementation already on `main`, and
+S1/S4 were then applied on top rather than hand-merged, so the merge commit is
+purely "keep the better implementation" and the follow-up commit is reviewable
+on its own. `analyze-static.test.ts` was retained from `fix/audit-integrity`.
+
+Three defects were found *during* consolidation and fixed:
+
+1. The other branch's own new test (`persists a crystal in the REMEMBER phase`)
+   failed against its own new gate: the shared fake-chat fixture cited `ix:1`
+   while the test writes `lib.rs`, so `citesLoadedFile` demoted the finding and
+   the confirmed-only gate then withheld it.
+2. **S1 and REMEMBER's confirmed-only gate silently cancelled each other out.**
+   A static-only clamp means no heuristic finding can ever be `confirmed`, so
+   durable memory would never be written on any host without Semgrep — each fix
+   is correct alone and the pair is a no-op. Resolved by letting `confirmed`
+   rest on *any* mechanical check: Semgrep's output, or a citation verified
+   against files actually read. This is the kind of interaction that only
+   surfaces when parallel work is merged, and it would not have failed loudly.
+3. A stray NUL byte in `merge.ts` (from `fix/audit-integrity`) that made git
+   treat the file as binary; caught before merge and scanned for across all
+   changed files.
+
+### Concurrency warning (historical — resolved by the merge above)
 
 A second agent was working this repository at the same time and independently
 implemented an overlapping set of fixes on **`test/known-defect-register`**
