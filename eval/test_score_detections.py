@@ -150,3 +150,52 @@ def test_cli_exits_zero_when_target_is_met(tmp_path):
     preds = tmp_path / "preds.csv"
     preds.write_text("target_id,category\nprog1,arbitrary-cpi\n")
     assert main(["--truth", str(truth), "--predictions", str(preds), "--target-f1", "0.94"]) == 0
+
+
+# --- `speculative` column typing (S14) -------------------------------------
+# The regression: `.astype(bool)` treated a missing value, and any non-empty
+# string, as True — silently dropping real predictions. This feeds the release
+# gate, so a metric computed over the wrong subset is worse than a failed run.
+
+def _preds(spec_values):
+    return pd.DataFrame(
+        {
+            "target_id": [f"t{i}" for i in range(len(spec_values))],
+            "category": ["missing-signer-check"] * len(spec_values),
+            "speculative": spec_values,
+        }
+    )
+
+
+def test_absent_speculative_value_is_not_speculative():
+    # JSONL with the field missing on some rows arrives as float64 [0.0, nan];
+    # nan.astype(bool) is True, which dropped a prediction nobody flagged.
+    kept = filter_predictions(_preds([0.0, float("nan")]), None, (), False)
+    assert len(kept) == 2
+
+
+def test_string_false_is_not_truthy():
+    # StringDtype makes every non-empty string truthy, so "false"/"no" dropped
+    # every prediction and reported F1 0.0 for a system that found everything.
+    kept = filter_predictions(_preds(["false", "no", "FALSE", ""]), None, (), False)
+    assert len(kept) == 4
+
+
+def test_string_true_is_still_filtered():
+    kept = filter_predictions(_preds(["true", "yes", "1"]), None, (), False)
+    assert len(kept) == 0
+
+
+def test_native_bools_still_work():
+    kept = filter_predictions(_preds([True, False]), None, (), False)
+    assert len(kept) == 1
+
+
+def test_include_speculative_keeps_everything():
+    kept = filter_predictions(_preds(["true", "false"]), None, (), True)
+    assert len(kept) == 2
+
+
+def test_unrecognized_value_raises_rather_than_guessing():
+    with pytest.raises(ValueError, match="unrecognized `speculative`"):
+        filter_predictions(_preds(["maybe"]), None, (), False)

@@ -70,8 +70,49 @@ def filter_predictions(
             raise ValueError(f"unknown confidence value(s) {bad}; expected one of {sorted(CONFIDENCE_RANK)}")
         kept = kept[ranks >= floor]
     if not include_speculative and "speculative" in kept.columns:
-        kept = kept[~kept["speculative"].astype(bool)]
+        kept = kept[~as_bool(kept["speculative"])]
     return kept
+
+
+TRUE_TOKENS = {"true", "1", "yes", "y", "t"}
+FALSE_TOKENS = {"false", "0", "no", "n", "f", ""}
+
+
+def as_bool(column: pd.Series) -> pd.Series:
+    """Interpret a loosely-typed boolean column, mirroring `confidence` above.
+
+    `.astype(bool)` is wrong here in three ways, and every one of them silently
+    discards real predictions rather than raising:
+
+    * `eval/README.md` documents `speculative` as optional, so a JSONL with the
+      value missing on some rows arrives as float64 `[0.0, nan]` — and
+      `nan.astype(bool)` is True, so a prediction nobody flagged is dropped and
+      scores as a false negative.
+    * The CSV form with a blank cell raises `TypeError: boolean value of NA is
+      ambiguous`, naming no column.
+    * Anything pandas does not parse into a native bool becomes `StringDtype`,
+      where *every* non-empty string is truthy — so `speculative` written as
+      `no,no`, or as the JSON string `"false"`, drops **every** prediction and
+      reports F1 0.0 for a system that detected everything.
+
+    Absent means not speculative, matching `Boolean(f.speculative ?? false)` on
+    the TypeScript side. An unrecognized value raises rather than guessing: this
+    feeds the release gate, and a metric quietly computed over the wrong subset
+    is worse than a failed run.
+    """
+    if column.dtype == bool:
+        return column
+    if pd.api.types.is_numeric_dtype(column):
+        return column.fillna(0).astype(bool)
+
+    text = column.astype("string").str.strip().str.lower().fillna("")
+    unknown = sorted(set(text) - TRUE_TOKENS - FALSE_TOKENS)
+    if unknown:
+        raise ValueError(
+            f"unrecognized `speculative` value(s) {unknown}; "
+            f"expected one of {sorted(TRUE_TOKENS | FALSE_TOKENS - {''})} or empty"
+        )
+    return text.isin(TRUE_TOKENS)
 
 
 def score(tp: int, fp: int, fn: int) -> Scores:
