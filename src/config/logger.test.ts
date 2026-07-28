@@ -123,3 +123,43 @@ describe("redaction", () => {
     expect(JSON.parse(err[0]!).apiKey).toBe(REDACTED);
   });
 });
+
+describe("query-string secret redaction (N4)", () => {
+  it("redacts the api-key shape .env.example actually documents", () => {
+    // HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=xxxxxxxx
+    const out = redact({
+      err: "FetchError: request to https://mainnet.helius-rpc.com/?api-key=SECRET123 failed",
+    }) as { err: string };
+    expect(out.err).not.toContain("SECRET123");
+    expect(out.err).toContain("api-key=[redacted]");
+  });
+
+  it("covers the common secret parameter names", () => {
+    for (const param of ["api_key", "apikey", "access_token", "token", "secret", "password", "auth"]) {
+      const out = redact({ url: `https://h/x?${param}=LEAK&page=2` }) as { url: string };
+      expect(out.url).not.toContain("LEAK");
+      // Non-secret parameters are left alone: over-redacting makes logs useless.
+      expect(out.url).toContain("page=2");
+    }
+  });
+
+  it("still redacts user:pass@ credentials", () => {
+    const out = redact({ err: "postgresql://ares:hunter2@localhost:5432/ares" }) as {
+      err: string;
+    };
+    expect(out.err).toBe("postgresql://ares:[redacted]@localhost:5432/ares");
+  });
+
+  it("redacts both shapes in one string", () => {
+    const out = redact({
+      err: "bolt://neo4j:pw@host used https://rpc/?api-key=K1",
+    }) as { err: string };
+    expect(out.err).not.toContain("pw@host".slice(0, 2) + "@");
+    expect(out.err).not.toContain("K1");
+  });
+
+  it("leaves a URL with no secret untouched", () => {
+    const url = "https://api.mainnet-beta.solana.com/?commitment=confirmed";
+    expect((redact({ url }) as { url: string }).url).toBe(url);
+  });
+});

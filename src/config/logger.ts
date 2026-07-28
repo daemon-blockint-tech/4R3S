@@ -49,9 +49,30 @@ export const REDACTED = "[redacted]";
 /** Record fields a caller's metadata may not overwrite. */
 const RESERVED_FIELDS = new Set(["t", "level", "msg"]);
 
+/**
+ * Secrets carried as a URL query parameter rather than as `user:pass@`.
+ *
+ * This is the shape the project actually documents: `.env.example` shows
+ * `HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=xxxxxxxx`. The
+ * `user:pass@` pattern above never covered it, and neither did `SENSITIVE_KEY`,
+ * which matches metadata *keys* — a URL inside a string under a key like `err`
+ * is not one.
+ *
+ * No live leak path was found when this was added: `solana.ts` logs
+ * `String(err)` after an RPC failure, and under Node's undici a failed fetch
+ * yields "TypeError: fetch failed" with no URL, while the timeout path yields
+ * "TimeoutError". This closes the gap before a dependency upgrade or a
+ * different client starts putting request URLs in error strings — which is the
+ * kind of change nobody reviews for secret exposure.
+ */
+const URL_SECRET_PARAM =
+  /([?&](?:[a-z0-9_-]*(?:key|token|secret|password|auth|credential)[a-z0-9_-]*)=)([^&\s"'<>]+)/gi;
+
 /** Strip credentials embedded in any URL inside a string. */
 function scrubUrls(value: string): string {
-  return value.replace(URL_CREDENTIALS, (_m, scheme, user) => `${scheme}${user}:${REDACTED}@`);
+  return value
+    .replace(URL_CREDENTIALS, (_m, scheme, user) => `${scheme}${user}:${REDACTED}@`)
+    .replace(URL_SECRET_PARAM, (_m, prefix) => `${prefix}${REDACTED}`);
 }
 
 /**
