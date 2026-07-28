@@ -200,7 +200,10 @@ async function main(): Promise<void> {
           config: billing.config,
           resource: threadId,
         });
-        billing.store?.save(billing.account);
+        // One transaction: the debit entries and the balance they produced go
+        // to disk together, or neither does. Writing them separately let a
+        // crash or a lost revision race leave the two permanently disagreeing.
+        billing.store?.commit(billing.account, billing.ledger.drainUncommitted());
         process.stdout.write("\n" + report + "\n");
         process.stdout.write(`\n[billing] ${bill.summary}\n`);
       } catch (err) {

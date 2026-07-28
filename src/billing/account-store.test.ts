@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -95,19 +96,56 @@ describe("FileAccountStore", () => {
     });
   });
 
-  it("acts as a ledger sink that survives a reopen", () => {
+  it("commits a debit and the balance it produced as one durable write", () => {
     const path = tmpFile();
     const store = new FileAccountStore(path);
     const acct = account({ systemCredits: 100 });
-    // Wiring the store as the ledger sink records debits durably.
-    const ledger = new CreditLedger(acct, store);
+    const ledger = new CreditLedger(acct);
     ledger.charge(30, "audit A", "acct-1");
-    store.save(acct);
+    store.commit(acct, ledger.drainUncommitted());
 
     const reopened = new FileAccountStore(path);
     // The debit is keyed by account even though its ref names the audit.
     expect(reopened.ledger("acct-1")).toHaveLength(1);
     expect(reopened.load("acct-1")!.systemCredits).toBe(70);
+  });
+
+  it("writes neither half when the revision check fails", () => {
+    // The property `save`+`append` could not offer: a losing race must leave no
+    // orphan debit behind. Previously the entry was already durable by then.
+    const path = tmpFile();
+    const a = new FileAccountStore(path);
+    const b = new FileAccountStore(path);
+    a.load("acct-1");
+    b.load("acct-1");
+
+    a.commit(account({ systemCredits: 90 }), []);
+
+    const acct = account({ systemCredits: 70 });
+    const ledger = new CreditLedger(acct);
+    ledger.charge(30, "audit B", "acct-1");
+    expect(() => b.commit(acct, ledger.drainUncommitted())).toThrow(
+      ConcurrentAccountUpdateError,
+    );
+
+    const reopened = new FileAccountStore(path);
+    expect(reopened.ledger("acct-1")).toHaveLength(0);
+    expect(reopened.load("acct-1")!.systemCredits).toBe(90);
+  });
+
+  it("does not delete a lock that another run took over", () => {
+    // The stale break can revoke a lock held by a stalled process. If that
+    // process then removed whatever lock file it found, it would delete its
+    // successor's and admit a third writer mid-transaction.
+    const path = tmpFile();
+    const store = new FileAccountStore(path);
+    store.save(account({ systemCredits: 100 }));
+
+    writeFileSync(`${path}.lock`, "someone-else:token");
+    // Release is a no-op for a lock we do not hold; the owner's file survives.
+    (store as unknown as { releaseLock(): void }).releaseLock();
+    expect(readFileSync(`${path}.lock`, "utf8")).toBe("someone-else:token");
+    rmSync(`${path}.lock`, { force: true });
   });
 
   it("refuses to start from an empty balance when the file is corrupt", () => {

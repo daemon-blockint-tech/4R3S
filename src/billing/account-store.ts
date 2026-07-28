@@ -13,6 +13,7 @@
  * `BILLING_ACCOUNT_STORE_PATH`. Both are optional: with no store wired, billing
  * behaves exactly as before.
  */
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -33,6 +34,18 @@ export interface AccountStore extends LedgerSink {
   load(id: string): CreditAccount | undefined;
   /** Persist the account's current balances. */
   save(account: CreditAccount): void;
+  /**
+   * Persist a new balance and the entries that produced it as ONE transaction.
+   *
+   * `save` and `append` are separate locked writes, so a debit could reach disk
+   * while the balance that debit produced did not — a crash, a disk-full
+   * staging failure or a lost `ConcurrentAccountUpdateError` between the two
+   * left the ledger and the balance permanently disagreeing, with the error
+   * message ("The charge was not persisted") stating the opposite of what had
+   * happened. Settlement uses this instead: one lock, one revision check, one
+   * atomic write, both halves or neither.
+   */
+  commit(account: CreditAccount, entries: readonly LedgerEntry[]): void;
   /** All ledger entries recorded for an account (oldest first). */
   ledger(id: string): LedgerEntry[];
 }
@@ -63,6 +76,11 @@ export class InMemoryAccountStore implements AccountStore {
 
   append(entry: LedgerEntry): void {
     this.data.ledger.push(entry);
+  }
+
+  commit(account: CreditAccount, entries: readonly LedgerEntry[]): void {
+    this.data.accounts[account.id] = { ...account };
+    this.data.ledger.push(...entries);
   }
 
   ledger(id: string): LedgerEntry[] {
@@ -134,6 +152,11 @@ export class FileAccountStore implements AccountStore {
   private data: StoreShape;
   /** Revision each account was at when this process loaded it. */
   private readonly loadedRev = new Map<string, number>();
+  /**
+   * Identifies this instance's hold on the lock file. The pid alone is not
+   * enough: pids are reused, and two stores in one process share one.
+   */
+  private readonly lockToken = `${process.pid}:${randomUUID()}`;
 
   constructor(private readonly path: string) {
     this.data = this.read();
@@ -153,13 +176,22 @@ export class FileAccountStore implements AccountStore {
   }
 
   save(account: CreditAccount): void {
+    this.commit(account, []);
+  }
+
+  commit(account: CreditAccount, entries: readonly LedgerEntry[]): void {
     this.withLock(() => {
       const current = this.data.revs[account.id] ?? 0;
       const expected = this.loadedRev.get(account.id) ?? current;
       if (current !== expected) {
+        // Nothing has been mutated yet, so throwing here leaves neither the
+        // balance nor the entries on disk — the whole point of one transaction.
         throw new ConcurrentAccountUpdateError(account.id, expected, current);
       }
       this.data.accounts[account.id] = { ...account };
+      // Re-read inside the lock means concurrent appends merge rather than
+      // being clobbered; pushing here keeps them under the same revision bump.
+      if (entries.length > 0) this.data.ledger.push(...entries);
       this.data.revs[account.id] = current + 1;
       this.loadedRev.set(account.id, current + 1);
     });
@@ -197,7 +229,7 @@ export class FileAccountStore implements AccountStore {
     const deadline = Date.now() + LOCK_TIMEOUT_MS;
     for (;;) {
       try {
-        writeFileSync(this.lockPath, String(process.pid), { flag: "wx" });
+        writeFileSync(this.lockPath, this.lockToken, { flag: "wx" });
         return;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
@@ -227,10 +259,31 @@ export class FileAccountStore implements AccountStore {
     }
   }
 
+  /**
+   * Release the lock, but only if we still hold it.
+   *
+   * `rmSync` unconditionally was a second-order bug. The stale break above can
+   * revoke a lock held by a process that stalled past `LOCK_STALE_MS`; that
+   * process then finished its critical section and deleted whatever lock file
+   * it found — its *successor's* — admitting a third writer while the second
+   * was mid read-modify-write. That converted a bounded two-writer race into an
+   * unbounded one. Reading the token back turns the wrong case into a warning
+   * instead of a cascade.
+   */
   private releaseLock(): void {
     try {
+      const held = readFileSync(this.lockPath, "utf8");
+      if (held !== this.lockToken) {
+        log.warn(
+          { component: "billing.account-store", path: this.lockPath },
+          "Account-store lock was taken over by another run; leaving it alone",
+        );
+        return;
+      }
       rmSync(this.lockPath, { force: true });
     } catch (err) {
+      // ENOENT means someone already broke it — same situation, nothing to do.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       log.warn(
         { component: "billing.account-store", path: this.lockPath, err: String(err) },
         "Could not remove account-store lock",

@@ -91,11 +91,35 @@ export interface LedgerSink {
  */
 export class CreditLedger {
   private readonly entries: LedgerEntry[] = [];
+  /**
+   * Entries recorded but not yet made durable.
+   *
+   * They are deliberately NOT written through to the sink as they happen. A
+   * debit on disk whose balance never followed is worse than neither: it makes
+   * the ledger and the balance disagree permanently, with no way to tell which
+   * is right. Settlement drains this and hands it to `AccountStore.commit`,
+   * which writes the entries and the balance under one lock.
+   */
+  private readonly uncommitted: LedgerEntry[] = [];
 
   constructor(
     private readonly account: CreditAccount,
     private readonly sink?: LedgerSink,
   ) {}
+
+  /**
+   * Take the entries awaiting durable write. Callers must persist them together
+   * with the account balance; dropping them loses the audit trail for a charge
+   * that did happen.
+   */
+  drainUncommitted(): LedgerEntry[] {
+    return this.uncommitted.splice(0, this.uncommitted.length);
+  }
+
+  /** Entries recorded but not yet persisted. */
+  pendingCount(): number {
+    return this.uncommitted.length;
+  }
 
   /** Add prepaid (system) credits — a subscription refill or top-up. */
   grant(credits: number, reason: string, ref?: string): LedgerEntry {
@@ -179,7 +203,10 @@ export class CreditLedger {
       ...partial,
     };
     this.entries.push(entry);
-    this.sink?.append(entry);
+    // Buffered, not written through — see `uncommitted`. A sink is still
+    // accepted for callers that genuinely want fire-and-forget auditing of
+    // something that carries no balance change.
+    this.uncommitted.push(entry);
     return entry;
   }
 }

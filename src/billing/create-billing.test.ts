@@ -55,14 +55,24 @@ describe("createBilling — account hydration", () => {
     expect(billing.account.onDemandLimit).toBe(50);
   });
 
-  it("persists ledger debits through the store sink", () => {
+  it("holds ledger debits until they are committed with the balance", () => {
     const store = new InMemoryAccountStore();
     const billing = createBilling({
       config: config({ planCredits: 100 }),
       store,
     });
     billing.ledger.charge(20, "audit", "default");
+
+    // Deliberately NOT durable yet. A debit on disk whose balance never
+    // followed is worse than neither: the two disagree permanently and nothing
+    // says which is right. This is the defect the commit path exists to remove.
+    expect(store.ledger("default")).toHaveLength(0);
+    expect(billing.ledger.pendingCount()).toBe(1);
+
+    store.commit(billing.account, billing.ledger.drainUncommitted());
     expect(store.ledger("default")).toHaveLength(1);
+    expect(store.load("default")!.systemCredits).toBe(80);
+    expect(billing.ledger.pendingCount()).toBe(0);
   });
 });
 
