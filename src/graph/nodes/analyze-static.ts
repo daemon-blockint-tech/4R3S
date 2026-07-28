@@ -65,9 +65,28 @@ function mapSeverity(semgrep: string): Severity {
   }
 }
 
-/** Best-effort map a Semgrep ruleId to a catalog vulnerability id. */
-function mapCategory(ruleId: string): string {
+/**
+ * Best-effort map a Semgrep ruleId to a catalog vulnerability id.
+ *
+ * Gated on the finding being about Rust. The keyword chain below assigns a
+ * *specific* Solana class from a single generic word, and a scan covers whatever
+ * is under the source path — JS, Python, YAML, Dockerfiles — so rule ids from
+ * unrelated languages reached it. Measured against 1594 rule ids from the live
+ * registry, exactly one collided:
+ * `python.lang.security.deserialization.pickle.avoid-cPickle` contains "cpi" and
+ * was labelled `arbitrary-cpi`. One is not many, but the label is then pushed
+ * into `coverage` as a class considered, and the fix costs a line.
+ *
+ * Note the `id.includes(lower)` direction of the exact-match loop is dead: rule
+ * ids are fully-qualified dotted paths and can never be a substring of a short
+ * kebab-case catalog id. Kept for the `lower.includes(id)` direction, which does
+ * fire for a committed Solana ruleset naming its rules after catalog ids.
+ */
+function mapCategory(ruleId: string, path: string): string {
   const lower = ruleId.toLowerCase();
+  const isRust = lower.startsWith("rust.") || path.toLowerCase().endsWith(".rs");
+  if (!isRust) return "other";
+
   for (const id of VULN_IDS) {
     if (lower.includes(id) || id.includes(lower)) {
       return id;
@@ -99,9 +118,13 @@ function toFinding(f: SemgrepFinding): Finding {
     evidence: asData(f.message, 2000),
     remediation: "Review the flagged code against the Semgrep rule guidance.",
     source: "static",
-    category: mapCategory(f.ruleId),
+    category: mapCategory(f.ruleId, f.path),
     speculative: false,
-    confidence: "high",
+    // A tool hit is real evidence, but "high" was hardcoded regardless of how
+    // the rule was matched. A finding whose class we could not identify is not
+    // one we should assert confidently — VERIFY reads this, and `applyVerdicts`
+    // lets a non-speculative static finding be stamped `confirmed`.
+    confidence: mapCategory(f.ruleId, f.path) === "other" ? "medium" : "high",
   };
 }
 

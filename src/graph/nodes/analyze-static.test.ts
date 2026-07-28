@@ -70,3 +70,42 @@ describe("analyzeStatic outcome mapping", () => {
     expect(unreliableAnalyzers([report])).toEqual([]);
   });
 });
+
+describe("mapCategory language gate (N1)", () => {
+  async function categoryOf(ruleId: string, path: string) {
+    runSemgrep.mockResolvedValue({
+      available: true,
+      findings: [{ ruleId, path, line: 1, severity: "ERROR", message: "m" }],
+    });
+    const out = await node({ sourcePath: "/some/path" } as unknown as AresState);
+    return (out as { findings: Array<{ category: string; confidence: string }> })
+      .findings[0]!;
+  }
+
+  it("does not label a Python rule as a Solana vulnerability class", async () => {
+    // The real collision, found by running mapCategory over 1594 registry rule
+    // ids: "cPickle" contains "cpi", so this was reported as arbitrary-cpi —
+    // and the bogus class was then credited in `coverage` as considered.
+    const f = await categoryOf(
+      "python.lang.security.deserialization.pickle.avoid-cPickle",
+      "tools/build.py",
+    );
+    expect(f.category).toBe("other");
+  });
+
+  it("still maps a Rust rule by its id", async () => {
+    const f = await categoryOf("rust.lang.security.missing-signer-check", "src/lib.rs");
+    expect(f.category).toBe("missing-signer-check");
+  });
+
+  it("maps by file extension when the rule id is not namespaced", async () => {
+    const f = await categoryOf("local.overflow-check", "programs/vault/src/lib.rs");
+    expect(f.category).toBe("integer-overflow-underflow");
+  });
+
+  it("does not assert high confidence on a finding it could not classify", async () => {
+    const f = await categoryOf("javascript.lang.best-practice.eqeqeq", "web/app.js");
+    expect(f.category).toBe("other");
+    expect(f.confidence).toBe("medium");
+  });
+});
