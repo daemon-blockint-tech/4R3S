@@ -12,13 +12,17 @@
  * instead of beside each unit. Every case was reproduced against the real code
  * paths — none is hypothetical.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 import { cosineSimilarity } from "./memory/crystalline-store.js";
 import { CrystallineStore } from "./memory/crystalline-store.js";
 import { makeMergeNode } from "./graph/nodes/merge.js";
 import { makeRememberNode } from "./graph/nodes/remember.js";
+import { makeAnalyzeStaticNode } from "./graph/nodes/analyze-static.js";
 import { coerceFindings } from "./graph/util.js";
 import type { AresState, Finding } from "./graph/state.js";
 import type { KnowledgeWriter } from "./persistence/knowledge-writer.js";
@@ -97,6 +101,49 @@ describe("cosineSimilarity hides an embedding dimension mismatch", () => {
     };
     expect(mismatch()).not.toBe(0);
   });
+});
+
+describe("a failed Semgrep scan reports outcome 'ok'", () => {
+  const realPath = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = realPath;
+  });
+
+  /**
+   * `runSemgrep` spawns with stderr discarded and handles `close` without the
+   * exit code (tools/semgrep.ts), so a scan that dies still resolves
+   * `{available: true, findings: []}` with no `reason`. The guard in
+   * analyze-static.ts is `!result.available || result.reason` — both false — so
+   * the node reports `ok`, `unreliableAnalyzers` stays empty and no assurance
+   * banner fires. The report then states static analysis ran and found nothing.
+   *
+   * This is not hypothetical: the production call site passes `--config auto`,
+   * which resolves its ruleset from the Semgrep registry over the network, so
+   * any egress-restricted machine takes exactly this path.
+   */
+  it.fails("marks the analyzer unreliable when semgrep exits non-zero", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ares-semgrep-"));
+    try {
+      const bin = join(dir, "bin");
+      const src = join(dir, "src");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(src, { recursive: true });
+      writeFileSync(join(src, "a.rs"), "fn main(){}\n");
+      writeFileSync(
+        join(bin, "semgrep"),
+        '#!/bin/sh\necho "[ERROR] failed to download config" >&2\nexit 2\n',
+      );
+      chmodSync(join(bin, "semgrep"), 0o755);
+      process.env.PATH = bin;
+
+      const update = await makeAnalyzeStaticNode()({ sourcePath: src } as AresState);
+
+      // A scan that never parsed a line must not read as a clean pass.
+      expect(update.analyzers?.[0]?.outcome).not.toBe("ok");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 describe("REMEMBER persists knowledge derived from unconfirmed findings", () => {
