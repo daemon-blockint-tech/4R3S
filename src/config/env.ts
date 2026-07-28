@@ -71,6 +71,12 @@ const schema = z.object({
   // Neo4j (knowledge-graph expansion + relationship reranking). Optional.
   NEO4J_URI: z.string().optional(),
   NEO4J_USER: z.string().optional(),
+  /**
+   * Deadline for Neo4j connect, pool acquisition and query execution. Bolt runs
+   * over raw TCP, so unlike the HTTP clients there is no fetch to wrap and no
+   * undici backstop; without this a dead peer hangs RECALL indefinitely.
+   */
+  NEO4J_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   NEO4J_PASSWORD: z.string().optional(),
 
   // Embeddings (OpenAI-compatible endpoint). Optional — semantic search and

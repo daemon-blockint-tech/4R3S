@@ -15,7 +15,7 @@ import neo4j from "neo4j-driver";
 
 import type { ScoredCrystal } from "../memory/types.js";
 import { logger } from "../config/logger.js";
-import { withNeo4jSession } from "../persistence/neo4j.js";
+import { withNeo4jSession, NEO4J_TX_CONFIG } from "../persistence/neo4j.js";
 import { synthCrystal } from "./util.js";
 import type { HybridQuery, RetrievalResult, Retriever } from "./types.js";
 
@@ -111,7 +111,7 @@ export class Neo4jRetriever implements Retriever {
   ): Promise<{ rows: GraphRow[]; error?: string }> {
     try {
       const result = await withNeo4jSession(async (session) => {
-        const res = await session.run(cypher, params);
+        const res = await session.run(cypher, params, NEO4J_TX_CONFIG);
         return res.records.map((r) => ({
           id: String(r.get("id")),
           content: String(r.get("content") ?? ""),
