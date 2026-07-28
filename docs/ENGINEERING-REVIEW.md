@@ -1018,21 +1018,38 @@ discriminated and no longer overwrites good vectors with null), **S16** (the
 checklist truncation at the first `". "` is gone), and **N3** (log metadata
 colliding with `t`/`level`/`msg` is prefixed rather than overwriting).
 
-### Still open, verified against the merged tree
+### All findings closed
 
-| Finding | Status |
+Every finding from this review is now fixed on `main`. Verified by running each
+gate, not by reading the diffs:
+
+| Finding | Where |
 | --- | --- |
-| **S7** ledger debit and balance are two durable writes | Open |
-| **S8** `releaseLock` has no ownership check | Open |
-| **S11** Neo4j still uses `CONTAINS` over the whole query string | **Partial** — `neo4j.int()` on `LIMIT` landed, the full-text index is still unused, so the source still contributes nothing while reporting `ok` |
-| **S13** outbound deadlines | **Partial** — Supabase has `timedFetch`; the Neo4j driver still has no connection or transaction timeout |
-| **S14** eval scorer's `speculative` filter is a raw `astype(bool)` | Open — latent until a predictions file lands, then it feeds the release gate |
-| **S15** no license check in CI, no `deny.toml` | Open — GOLDEN RULE 1 still asserts a control that does not exist |
-| **S17** CLAUDE.md documents `pnpm -r` commands that run zero tests | Open |
-| **S19** CUA transcript is still interpolated unfenced into an analyzer prompt | Open — `asData` and the VERIFY fence protect the critic, not this node |
-| **N1** `mapCategory` has no language gate | Open |
-| **N2** release gate fires only on `release: published` | Open |
-| **N4** log redaction does not cover query-string secrets | Open |
+| **S7** debit and balance were two durable writes | `AccountStore.commit()` — one lock, one revision check, both halves or neither |
+| **S8** `releaseLock` had no ownership check | per-instance `pid:uuid` token, verified before unlink |
+| **S11** Neo4j matched whole sentences with `CONTAINS` | `db.index.fulltext.queryNodes` over the index that had sat unused, with a Lucene query builder |
+| **S13** Neo4j driver had no deadlines | `NEO4J_TIMEOUT_MS` on connect, pool acquisition and per-query transaction |
+| **S14** scorer's `speculative` filter trusted truthiness | `as_bool()` maps tokens explicitly; unrecognized values raise |
+| **S15** licence gate was asserted but absent | `scripts/check-licenses.mjs` + `deny.toml`, both in the `dependency audit` job |
+| **S17** documented commands ran zero tests | Commands block replaced with what runs; unwired tooling named as such |
+| **S19** CUA transcript reached a prompt unfenced | `fenceUntrusted()`, shared with VERIFY |
+| **N1** `mapCategory` had no language gate | Rust-only, and unclassifiable hits no longer claim high confidence |
+| **N2** release gate fired after publication | `check_published_claims.py` verifies README metrics on every push |
+| **N4** redaction missed query-string secrets | `URL_SECRET_PARAM`, covering the `?api-key=` shape `.env.example` documents |
+
+Two of these were fixed differently from what this document originally
+recommended, and the reasoning is worth keeping:
+
+- **N2.** The recommendation was to drop the `event_name == 'release'` guard so
+  the unscored state fails on push. That would have turned `main` red
+  immediately and permanently, since no predictions file exists and the README
+  correctly says so — which is exactly how the `npm audit` gate died the first
+  time. Guarding the *claim* rather than the *release* fixes the real harm ("a
+  number is published that nobody measured") and can run on every push.
+- **S15.** Implemented rather than softened, including the cargo half, even
+  though `core/` is a scaffold — cheap now, correct the moment real crates land.
+  The rule's *product-boundary* half is still unautomated and now says so,
+  because `apps/*` are README stubs with no imports to check.
 
 Note on **S2**: it was fixed on `fix/audit-integrity`, then lost when that
 branch's `report.ts` was discarded during conflict resolution in favour of
