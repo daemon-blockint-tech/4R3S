@@ -1,0 +1,5 @@
+# PLAT-1 skeleton. The repo currently still builds from root `src/` under npm;
+# migrate TS packages here as `src/*` moves into `packages/*` (see packages/README.md).
+packages:
+  - "packages/*"
+  - "apps/*"

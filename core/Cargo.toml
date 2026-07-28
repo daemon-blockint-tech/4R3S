@@ -1,0 +1,9 @@
+[package]
+name = "ares-core"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "ARES deterministic Solana security engine (scaffold — PLAT-1)."
+
+[lib]
+path = "src/lib.rs"
