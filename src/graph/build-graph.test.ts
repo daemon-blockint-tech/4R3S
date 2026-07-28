@@ -275,6 +275,32 @@ describe("audit graph (end to end)", () => {
     expect(result.report).toContain("not evidence that none exist");
   });
 
+  it("records which knowledge sources answered, without calling absence a failure", async () => {
+    const store = new InMemoryStore();
+    const crystalline = new CrystallineStore(store);
+    const retriever = new HybridRetriever(new CrystallineRetriever(crystalline));
+    const graph = buildAuditGraph({
+      deps: { chat: makeFakeChat(), crystalline, retriever },
+      checkpointer: new MemorySaver(),
+      store,
+    });
+
+    const result = await graph.invoke(
+      { request: "audit source", sourcePath: "/does-not-exist-xyz" },
+      { configurable: { thread_id: "test-e2e-4" } },
+    );
+
+    // Supabase and Neo4j are unconfigured in the test env: that is the
+    // documented default mode, so it must read as skipped rather than failed.
+    expect(
+      Object.fromEntries(result.retrieval.map((r) => [r.source, r.outcome])),
+    ).toEqual({ crystalline: "ok", supabase: "skipped", neo4j: "skipped" });
+
+    // The banner fires for the failed static analyzer, but must not accuse the
+    // knowledge base of anything.
+    expect(result.report).not.toContain("Knowledge sources unavailable");
+  });
+
   it("persists a crystal in the REMEMBER phase", async () => {
     const store = new InMemoryStore();
     const crystalline = new CrystallineStore(store);

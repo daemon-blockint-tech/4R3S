@@ -16,7 +16,12 @@
  * a future node that forgets to emit one — would render as a clean assessment,
  * which is exactly the failure this module exists to prevent.
  */
-import type { AnalyzerName, AnalyzerOutcome, AnalyzerReport } from "./state.js";
+import type {
+  AnalyzerName,
+  AnalyzerOutcome,
+  AnalyzerReport,
+  RetrievalReport,
+} from "./state.js";
 
 /**
  * Every analyzer expected to report, in the order the report lists them
@@ -84,6 +89,33 @@ export function analyzerStatusTable(reports: readonly AnalyzerReport[]): string 
   ].join("\n");
 }
 
+/** Knowledge sources that were configured but did not answer. */
+export function failedSources(
+  retrieval: readonly RetrievalReport[],
+): RetrievalReport[] {
+  return retrieval.filter((r) => r.outcome === "failed");
+}
+
+/** Markdown table of knowledge-source outcomes for the methodology section. */
+export function retrievalStatusTable(
+  retrieval: readonly RetrievalReport[],
+): string {
+  const label: Record<RetrievalReport["outcome"], string> = {
+    ok: "answered",
+    skipped: "not configured",
+    failed: "failed",
+  };
+  const rows = retrieval.map(
+    (r) =>
+      `| ${r.source} | ${label[r.outcome]} | ${r.fragments} | ${r.detail ?? "—"} |`,
+  );
+  return [
+    "| Knowledge source | Status | Fragments | Detail |",
+    "| ---------------- | ------ | --------- | ------ |",
+    ...(rows.length ? rows : ["| — | no sources reported | 0 | — |"]),
+  ].join("\n");
+}
+
 /**
  * Blockquote warning for a report whose coverage is incomplete, or `undefined`
  * when every expected analyzer either ran or was legitimately not applicable.
@@ -94,11 +126,13 @@ export function analyzerStatusTable(reports: readonly AnalyzerReport[]): string 
  */
 export function assuranceBanner(
   reports: readonly AnalyzerReport[],
+  retrieval: readonly RetrievalReport[] = [],
 ): string | undefined {
   const unreliable = unreliableAnalyzers(reports);
   const missing = missingAnalyzers(reports);
+  const sources = failedSources(retrieval);
   const affected = unreliable.length + missing.length;
-  if (affected === 0) return undefined;
+  if (affected === 0 && sources.length === 0) return undefined;
 
   const detail = [
     ...unreliable.map(
@@ -109,11 +143,32 @@ export function assuranceBanner(
     .join("; ")
     .trim();
 
-  return [
-    `> **Incomplete assessment — ${affected} of ${ANALYZER_ORDER.length} analyzers did not run reliably.**`,
-    `> ${detail}.`,
+  const lines: string[] = [];
+  if (affected > 0) {
+    lines.push(
+      `> **Incomplete assessment — ${affected} of ${ANALYZER_ORDER.length} analyzers did not run reliably.**`,
+      `> ${detail}.`,
+    );
+  } else {
+    lines.push("> **Incomplete assessment — the knowledge base was not fully consulted.**");
+  }
+
+  // A configured knowledge source that errored means the analyzers reasoned
+  // with less prior knowledge than this deployment is set up to provide.
+  if (sources.length > 0) {
+    const sourceDetail = sources
+      .map((r) => `${r.source}${r.detail ? ` (${r.detail})` : ""}`)
+      .join("; ");
+    lines.push(
+      `> Knowledge sources unavailable: ${sourceDetail}. Prior audit knowledge` +
+        " that would normally inform this review was missing.",
+    );
+  }
+
+  lines.push(
     "> Absence of findings in the affected areas is not evidence that none exist.",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 /**
@@ -123,8 +178,9 @@ export function assuranceBanner(
 export function withAssuranceBanner(
   report: string,
   reports: readonly AnalyzerReport[],
+  retrieval: readonly RetrievalReport[] = [],
 ): string {
-  const banner = assuranceBanner(reports);
+  const banner = assuranceBanner(reports, retrieval);
   if (!banner) return report;
   return `${banner}\n\n${report}`;
 }

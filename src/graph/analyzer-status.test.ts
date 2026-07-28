@@ -3,12 +3,26 @@ import { describe, it, expect } from "vitest";
 import {
   analyzerStatusTable,
   assuranceBanner,
+  failedSources,
   missingAnalyzers,
   orderAnalyzers,
+  retrievalStatusTable,
   unreliableAnalyzers,
   withAssuranceBanner,
 } from "./analyzer-status.js";
-import type { AnalyzerReport } from "./state.js";
+import type { AnalyzerReport, RetrievalReport } from "./state.js";
+
+const sourcesOk: RetrievalReport[] = [
+  { source: "crystalline", outcome: "ok", fragments: 3 },
+  { source: "supabase", outcome: "skipped", fragments: 0, detail: "not configured" },
+  { source: "neo4j", outcome: "skipped", fragments: 0, detail: "not configured" },
+];
+
+const sourceDown: RetrievalReport[] = [
+  { source: "crystalline", outcome: "ok", fragments: 3 },
+  { source: "supabase", outcome: "failed", fragments: 0, detail: "rpc exploded" },
+  { source: "neo4j", outcome: "skipped", fragments: 0, detail: "not configured" },
+];
 
 const ok: AnalyzerReport[] = [
   { analyzer: "onchain", outcome: "ok" },
@@ -102,6 +116,42 @@ describe("assuranceBanner", () => {
     expect(banner).toBeDefined();
     expect(banner).toContain("4 of 4");
     expect(banner).toContain("onchain reported no result");
+  });
+});
+
+describe("knowledge sources", () => {
+  it("counts only configured sources that errored as failed", () => {
+    // Unconfigured is the documented default mode, not a fault.
+    expect(failedSources(sourcesOk)).toEqual([]);
+    expect(failedSources(sourceDown).map((r) => r.source)).toEqual(["supabase"]);
+  });
+
+  it("renders each source with its fragment count", () => {
+    const table = retrievalStatusTable(sourceDown);
+    expect(table).toContain("| Knowledge source | Status | Fragments | Detail |");
+    expect(table).toContain("| crystalline | answered | 3 | — |");
+    expect(table).toContain("| supabase | failed | 0 | rpc exploded |");
+    expect(table).toContain("| neo4j | not configured | 0 | not configured |");
+  });
+
+  it("warns when a configured source did not answer, even with healthy analyzers", () => {
+    // Every analyzer ran, so without this the report would read as complete
+    // while the knowledge base that should have informed it was down.
+    const banner = assuranceBanner(ok, sourceDown);
+    expect(banner).toBeDefined();
+    expect(banner).toContain("knowledge base was not fully consulted");
+    expect(banner).toContain("supabase (rpc exploded)");
+    expect(banner).toContain("Prior audit knowledge");
+  });
+
+  it("stays silent when sources are merely unconfigured", () => {
+    expect(assuranceBanner(ok, sourcesOk)).toBeUndefined();
+  });
+
+  it("reports analyzer and source problems together", () => {
+    const banner = assuranceBanner(rpcFailed, sourceDown)!;
+    expect(banner).toContain("1 of 4 analyzers");
+    expect(banner).toContain("Knowledge sources unavailable: supabase");
   });
 });
 

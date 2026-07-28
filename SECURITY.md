@@ -19,7 +19,14 @@ We aim to acknowledge reports within a few business days.
   browser analyzer is constrained by prompt to navigation and reading only
   (see `src/llm/prompts.ts` → `cuaInvestigationSystemPrompt`).
 - **Secrets stay in the environment.** All credentials come from `.env`
-  (git-ignored); only `OPENROUTER_API_KEY` is required and none are logged.
+  (git-ignored); only `OPENROUTER_API_KEY` is required.
+- **Logs are redacted at the sink.** `src/config/logger.ts` drops any metadata
+  value under a credential-shaped key (`key`, `token`, `password`, `secret`,
+  `authorization`, `credential`, `dsn`) and strips `user:password@` credentials
+  out of every URL it finds in a string, at any nesting depth — which is how the
+  Postgres DSN would otherwise escape, inside a stringified driver error rather
+  than under a conveniently-named field. All log output goes to stderr; stdout
+  carries only the audit report.
 - **Hermetic by default.** With Supabase/Neo4j/embeddings/Helius unset, ARES
   runs fully offline against the in-process Crystalline store, so a default run
   makes no outbound calls beyond the configured LLM endpoint.
@@ -28,6 +35,12 @@ We aim to acknowledge reports within a few business days.
 
 Dependencies are monitored by Dependabot and `npm audit` in CI. The current
 tracked advisories:
+
+### Resolved
+
+- **`brace-expansion` — DoS via unbounded expansion** (`GHSA-mh99-v99m-4gvg`,
+  High). Reached transitively; a patched 5.0.8 was already permitted by the
+  parent ranges, so the lock file was bumped to it. No manifest change.
 
 ### Resolved via `overrides`
 
@@ -60,3 +73,9 @@ tracked advisories:
 CI does **not** run a blocking `npm audit` step, because the unfixable
 `bigint-buffer` advisory would make every build red for no actionable reason.
 Advisories are tracked through Dependabot and this document instead.
+
+Dependabot is configured (`.github/dependabot.yml`) to hold TypeScript at major
+and minor versions: typescript-eslint 8.x peer-caps TypeScript below 6.1 and
+hard-throws on TS 7, so an unrestricted bump breaks `npm ci` and `npm run lint`
+outright. Patch updates still flow, and the pin should be lifted once
+typescript-eslint supports TS 7.

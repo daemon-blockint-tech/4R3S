@@ -20,6 +20,18 @@ describe("isTransientError", () => {
     expect(isTransientError({ response: { status: 500 } })).toBe(true);
   });
 
+  it("treats the deadlines this codebase now imposes as transient", () => {
+    // Each client words its timeout differently; all three must be retried,
+    // otherwise adding timeouts would turn blips into hard audit failures.
+    expect(isTransientError(new Error("Request timed out."))).toBe(true); // OpenAI SDK
+    expect(
+      isTransientError(new Error("The operation was aborted due to timeout")),
+    ).toBe(true); // AbortSignal.timeout
+    expect(isTransientError({ name: "TimeoutError", message: "signal timed out" })).toBe(
+      true,
+    );
+  });
+
   it("treats other 4xx as permanent", () => {
     expect(isTransientError({ status: 400 })).toBe(false);
     expect(isTransientError({ status: 401 })).toBe(false);

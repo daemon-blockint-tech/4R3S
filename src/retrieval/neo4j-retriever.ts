@@ -15,7 +15,7 @@ import type { ScoredCrystal } from "../memory/types.js";
 import { logger } from "../config/logger.js";
 import { withNeo4jSession } from "../persistence/neo4j.js";
 import { synthCrystal } from "./util.js";
-import type { HybridQuery, Retriever } from "./types.js";
+import type { HybridQuery, RetrievalResult, Retriever } from "./types.js";
 
 interface GraphRow {
   id: string;
@@ -27,9 +27,9 @@ interface GraphRow {
 export class Neo4jRetriever implements Retriever {
   readonly name = "neo4j";
 
-  async retrieve(query: HybridQuery): Promise<ScoredCrystal[]> {
+  async retrieve(query: HybridQuery): Promise<RetrievalResult> {
     const limit = query.limit ?? 20;
-    const rows = await this.run(
+    const { rows, error } = await this.run(
       `
       MATCH (c:Chunk)
       WHERE toLower(c.content) CONTAINS toLower($text)
@@ -40,16 +40,16 @@ export class Neo4jRetriever implements Retriever {
       `,
       { text: query.text, limit },
     );
-    return this.toScored(rows, "neo4j-search");
+    return { fragments: this.toScored(rows, "neo4j-search"), error };
   }
 
   /**
    * Expand a set of seed chunk ids by graph relationships. Neighbors closer in
    * the graph (fewer hops) score higher.
    */
-  async expand(seedChunkIds: string[], limit = 20): Promise<ScoredCrystal[]> {
-    if (seedChunkIds.length === 0) return [];
-    const rows = await this.run(
+  async expand(seedChunkIds: string[], limit = 20): Promise<RetrievalResult> {
+    if (seedChunkIds.length === 0) return { fragments: [] };
+    const { rows, error } = await this.run(
       `
       MATCH (seed:Chunk) WHERE seed.chunk_id IN $ids
       MATCH path = (seed)-[*1..2]-(n:Chunk)
@@ -63,13 +63,13 @@ export class Neo4jRetriever implements Retriever {
       `,
       { ids: seedChunkIds, limit },
     );
-    return this.toScored(rows, "neo4j-expand");
+    return { fragments: this.toScored(rows, "neo4j-expand"), error };
   }
 
   private async run(
     cypher: string,
     params: Record<string, unknown>,
-  ): Promise<GraphRow[]> {
+  ): Promise<{ rows: GraphRow[]; error?: string }> {
     try {
       const result = await withNeo4jSession(async (session) => {
         const res = await session.run(cypher, params);
@@ -80,13 +80,13 @@ export class Neo4jRetriever implements Retriever {
           proximity: Number(r.get("proximity") ?? 0),
         }));
       });
-      return result ?? [];
+      return { rows: result ?? [] };
     } catch (err) {
       logger.warn(
         { component: "neo4j-retriever", err: String(err) },
         "Neo4j query failed; skipping graph source",
       );
-      return [];
+      return { rows: [], error: String(err) };
     }
   }
 

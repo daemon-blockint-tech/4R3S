@@ -73,6 +73,10 @@ export function isTransientError(err: unknown): boolean {
     msg.includes("econnrefused") ||
     msg.includes("enotfound") ||
     msg.includes("timeout") ||
+    // The OpenAI SDK words its deadline as "Request timed out."; AbortSignal
+    // says "aborted due to timeout". Both are transient.
+    msg.includes("timed out") ||
+    msg.includes("aborted") ||
     msg.includes("socket hang up") ||
     msg.includes("network") ||
     msg.includes("fetch failed") ||

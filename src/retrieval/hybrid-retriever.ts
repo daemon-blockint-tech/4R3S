@@ -12,14 +12,33 @@
  *      that is both semantically similar AND graph-adjacent) ranks higher.
  *
  * Any source that is unconfigured or errors contributes nothing; with only
- * Crystalline present this reduces to plain activation recall.
+ * Crystalline present this reduces to plain activation recall. The difference
+ * between those two cases matters, though — an unconfigured source is the
+ * documented default, a configured one that errored means the audit ran with
+ * less prior knowledge than intended — so `retrieveWithStatus` reports each
+ * source's outcome for RECALL to carry into the report.
  */
 import type { ScoredCrystal } from "../memory/types.js";
 import { logger } from "../config/logger.js";
 import type { CrystallineRetriever } from "./crystalline-retriever.js";
 import type { SupabaseRetriever } from "./supabase-retriever.js";
 import type { Neo4jRetriever } from "./neo4j-retriever.js";
-import type { HybridQuery, Retriever } from "./types.js";
+import type { HybridQuery, RetrievalResult, Retriever } from "./types.js";
+
+/** How one knowledge source fared during a recall. */
+export interface SourceStatus {
+  source: "crystalline" | "supabase" | "neo4j";
+  /** `skipped` means the source is not configured — the documented default. */
+  outcome: "ok" | "skipped" | "failed";
+  fragments: number;
+  detail?: string;
+}
+
+/** Fragments plus the per-source outcomes that produced them. */
+export interface HybridRecall {
+  fragments: ScoredCrystal[];
+  sources: SourceStatus[];
+}
 
 /** Per-source weights applied after normalization. */
 const WEIGHTS = {
@@ -37,51 +56,66 @@ export class HybridRetriever implements Retriever {
     private readonly neo4j?: Neo4jRetriever,
   ) {}
 
-  async retrieve(query: HybridQuery): Promise<ScoredCrystal[]> {
+  /** `Retriever` contract: fragments only. Use `retrieveWithStatus` for outcomes. */
+  async retrieve(query: HybridQuery): Promise<RetrievalResult> {
+    const { fragments } = await this.retrieveWithStatus(query);
+    return { fragments };
+  }
+
+  /** Recall, with each source's outcome reported alongside the fragments. */
+  async retrieveWithStatus(query: HybridQuery): Promise<HybridRecall> {
     const limit = query.limit ?? 8;
 
     // Stage 1: Crystalline recall, Supabase candidates, and a standalone Neo4j
     // lexical match — all in parallel.
-    const [crystalResults, supabaseResults, graphMatches] = await Promise.all([
+    const [crystalResult, supabaseResult, graphResult] = await Promise.all([
       this.crystalline.retrieve(query),
-      this.supabase?.retrieve({ ...query, limit: (limit ?? 8) * 3 }) ??
-        Promise.resolve([]),
-      this.neo4j?.retrieve({ ...query, limit: (limit ?? 8) * 3 }) ??
-        Promise.resolve([]),
+      this.supabase?.retrieve({ ...query, limit: limit * 3 }),
+      this.neo4j?.retrieve({ ...query, limit: limit * 3 }),
     ]);
 
     // Stage 2: expand Supabase candidates via Neo4j graph topology.
-    const seedChunkIds = supabaseResults
+    const seedChunkIds = (supabaseResult?.fragments ?? [])
       .map((r) => r.crystal.metadata.chunk_id)
       .filter((id): id is string => typeof id === "string");
-    const graphExpansion = this.neo4j
+    const expansion = this.neo4j
       ? await this.neo4j.expand(seedChunkIds, limit * 3)
-      : [];
+      : undefined;
 
     // The graph contributes both its standalone matches and the expansion of
     // Supabase seeds; both share the Neo4j weight bucket.
-    const graphResults = [...graphMatches, ...graphExpansion];
+    const graphFragments = [
+      ...(graphResult?.fragments ?? []),
+      ...(expansion?.fragments ?? []),
+    ];
 
     // Stage 3: weighted merge across sources.
-    const merged = this.merge([
-      { weight: WEIGHTS.crystalline, results: crystalResults },
-      { weight: WEIGHTS.supabase, results: supabaseResults },
-      { weight: WEIGHTS.neo4j, results: graphResults },
-    ]);
+    const fragments = this.merge([
+      { weight: WEIGHTS.crystalline, results: crystalResult.fragments },
+      { weight: WEIGHTS.supabase, results: supabaseResult?.fragments ?? [] },
+      { weight: WEIGHTS.neo4j, results: graphFragments },
+    ]).slice(0, limit);
+
+    const sources: SourceStatus[] = [
+      status("crystalline", this.crystalline !== undefined, crystalResult),
+      status("supabase", this.supabase !== undefined, supabaseResult),
+      status("neo4j", this.neo4j !== undefined, {
+        fragments: graphFragments,
+        // Either query failing means the graph did not contribute what it could.
+        error: graphResult?.error ?? expansion?.error,
+      }),
+    ];
 
     logger.debug(
       {
         component: "hybrid-retriever",
-        crystalline: crystalResults.length,
-        supabase: supabaseResults.length,
-        neo4jMatch: graphMatches.length,
-        neo4jExpand: graphExpansion.length,
-        merged: merged.length,
+        merged: fragments.length,
+        sources: sources.map((s) => `${s.source}:${s.outcome}`),
       },
       "Hybrid recall complete",
     );
 
-    return merged.slice(0, limit);
+    return { fragments, sources };
   }
 
   /**
@@ -109,4 +143,24 @@ export class HybridRetriever implements Retriever {
 
     return [...acc.values()].sort((a, b) => b.score - a.score);
   }
+}
+
+/** Classify one source's result. An unconfigured source is skipped, not failed. */
+function status(
+  source: SourceStatus["source"],
+  configured: boolean,
+  result: RetrievalResult | undefined,
+): SourceStatus {
+  if (!configured || !result) {
+    return { source, outcome: "skipped", fragments: 0, detail: "not configured" };
+  }
+  if (result.error) {
+    return {
+      source,
+      outcome: "failed",
+      fragments: result.fragments.length,
+      detail: result.error,
+    };
+  }
+  return { source, outcome: "ok", fragments: result.fragments.length };
 }

@@ -4,9 +4,8 @@
  * `HybridQuery` onto `CrystallineStore.recall`.
  */
 import type { CrystallineStore } from "../memory/crystalline-store.js";
-import type { ScoredCrystal } from "../memory/types.js";
 import { logger } from "../config/logger.js";
-import type { HybridQuery, Retriever } from "./types.js";
+import type { HybridQuery, RetrievalResult, Retriever } from "./types.js";
 
 export class CrystallineRetriever implements Retriever {
   readonly name = "crystalline";
@@ -16,20 +15,21 @@ export class CrystallineRetriever implements Retriever {
     this.store = store;
   }
 
-  async retrieve(query: HybridQuery): Promise<ScoredCrystal[]> {
+  async retrieve(query: HybridQuery): Promise<RetrievalResult> {
     try {
-      return await this.store.recall({
+      const fragments = await this.store.recall({
         query: query.text,
         queryEmbedding: query.embedding,
         tags: query.tags,
         limit: query.limit,
       });
+      return { fragments };
     } catch (err) {
       logger.warn(
         { component: "crystalline-retriever", err: String(err) },
         "Crystalline recall failed; returning no fragments",
       );
-      return [];
+      return { fragments: [], error: String(err) };
     }
   }
 }

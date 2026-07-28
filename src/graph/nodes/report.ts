@@ -19,6 +19,8 @@ import type { GraphDeps } from "../deps.js";
 import type { AresState, AresStateUpdate } from "../state.js";
 import {
   analyzerStatusTable,
+  failedSources,
+  retrievalStatusTable,
   unreliableAnalyzers,
   withAssuranceBanner,
 } from "../analyzer-status.js";
@@ -43,6 +45,10 @@ export function makeReportNode(deps: GraphDeps) {
     // Analyzer coverage: which analyzers ran, and whose silence can't be trusted.
     const statusTable = analyzerStatusTable(state.analyzers);
     const unreliable = unreliableAnalyzers(state.analyzers);
+    // Knowledge sources: a configured one that errored means the analyzers
+    // reasoned with less prior knowledge than this deployment provides.
+    const sourceTable = retrievalStatusTable(state.retrieval);
+    const brokenSources = failedSources(state.retrieval);
 
     const human = [
       state.intake ? `Target: ${state.intake.target}` : `Request: ${state.request}`,
@@ -53,6 +59,15 @@ export function makeReportNode(deps: GraphDeps) {
       "",
       "Analyzer status (reproduce this table verbatim in Scope & Methodology):",
       statusTable,
+      "",
+      "Knowledge sources consulted (reproduce verbatim in Scope & Methodology):",
+      sourceTable,
+      "",
+      brokenSources.length
+        ? "IMPORTANT: the knowledge sources marked failed above were configured " +
+          "but did not answer, so prior audit knowledge that would normally " +
+          "inform this review was unavailable. State this in Scope & Methodology."
+        : "",
       "",
       unreliable.length
         ? "IMPORTANT: the analyzers listed above as failed or degraded did not " +
@@ -89,7 +104,11 @@ export function makeReportNode(deps: GraphDeps) {
 
     const synthesized = await chatText(deps.chat, reportSystemPrompt(), human);
     // Guarantee the warning rather than trusting the model to include it.
-    const reportText = withAssuranceBanner(synthesized, state.analyzers);
+    const reportText = withAssuranceBanner(
+      synthesized,
+      state.analyzers,
+      state.retrieval,
+    );
 
     logger.info(
       {
@@ -99,6 +118,7 @@ export function makeReportNode(deps: GraphDeps) {
         severity: dist,
         analyzers: state.analyzers.map((a) => `${a.analyzer}:${a.outcome}`),
         unreliableAnalyzers: unreliable.length,
+        failedSources: brokenSources.map((s) => s.source),
       },
       "Report synthesized",
     );

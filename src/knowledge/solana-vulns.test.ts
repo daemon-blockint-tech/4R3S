@@ -7,7 +7,7 @@ import {
   isVulnId,
   formatChecklistForPrompt,
 } from "./solana-vulns.js";
-import { SEVERITY_RANK } from "../graph/state.js";
+import { SEVERITY_RANK } from "./finding.js";
 
 const VALID_SEVERITIES = new Set(Object.keys(SEVERITY_RANK));
 

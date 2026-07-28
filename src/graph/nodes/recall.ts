@@ -9,6 +9,11 @@
  * `consolidate()` can never fire and activation can only ever decay. Fragments
  * synthesized from Supabase/Neo4j are skipped: they have no crystal in the store
  * to update.
+ *
+ * Each source's outcome is recorded on the `retrieval` channel. Supabase and
+ * Neo4j degrade to no fragments when they error, which is indistinguishable
+ * from having nothing relevant to offer, so REPORT states which sources
+ * actually answered.
  */
 import { logger } from "../../config/logger.js";
 import { embed } from "../../retrieval/embeddings.js";
@@ -48,7 +53,7 @@ export function makeRecallNode(deps: GraphDeps) {
     const tags = state.intake?.concerns;
 
     const embedding = await embed(queryText);
-    const recalled = await deps.retriever.retrieve({
+    const { fragments: recalled, sources } = await deps.retriever.retrieveWithStatus({
       text: queryText,
       embedding,
       tags,
@@ -57,10 +62,26 @@ export function makeRecallNode(deps: GraphDeps) {
 
     const activated = await activateRecalled(deps, recalled);
 
+    const failed = sources.filter((s) => s.outcome === "failed");
+    if (failed.length > 0) {
+      logger.warn(
+        {
+          component: "node.recall",
+          failed: failed.map((s) => `${s.source}: ${s.detail}`),
+        },
+        "Knowledge sources failed; this audit runs with less prior knowledge",
+      );
+    }
+
     logger.info(
-      { component: "node.recall", recalled: recalled.length, activated },
+      {
+        component: "node.recall",
+        recalled: recalled.length,
+        activated,
+        sources: sources.map((s) => `${s.source}:${s.outcome}`),
+      },
       "Recall complete",
     );
-    return { recalled };
+    return { recalled, retrieval: sources };
   };
 }
