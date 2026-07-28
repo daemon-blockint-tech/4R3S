@@ -1010,7 +1010,35 @@ Two verification notes worth keeping:
   seconds** fetching its registry ruleset — direct evidence for both the
   determinism concern in B1 and the need for S18's deadline.
 
-**Not fixed here** (still open): S6–S17, S19, N1–N4.
+Also fixed, from the branch that was merged alongside: **S6** (REMEMBER persists
+only confirmed, non-speculative findings; runtime-written chunks carry a
+`runtime/` provenance path), **S9** (`canAffordAudit`'s result is now acted on),
+**S10** (`createBilling` is inert when disabled), **S12** (embeddings failure is
+discriminated and no longer overwrites good vectors with null), **S16** (the
+checklist truncation at the first `". "` is gone), and **N3** (log metadata
+colliding with `t`/`level`/`msg` is prefixed rather than overwriting).
+
+### Still open, verified against the merged tree
+
+| Finding | Status |
+| --- | --- |
+| **S7** ledger debit and balance are two durable writes | Open |
+| **S8** `releaseLock` has no ownership check | Open |
+| **S11** Neo4j still uses `CONTAINS` over the whole query string | **Partial** — `neo4j.int()` on `LIMIT` landed, the full-text index is still unused, so the source still contributes nothing while reporting `ok` |
+| **S13** outbound deadlines | **Partial** — Supabase has `timedFetch`; the Neo4j driver still has no connection or transaction timeout |
+| **S14** eval scorer's `speculative` filter is a raw `astype(bool)` | Open — latent until a predictions file lands, then it feeds the release gate |
+| **S15** no license check in CI, no `deny.toml` | Open — GOLDEN RULE 1 still asserts a control that does not exist |
+| **S17** CLAUDE.md documents `pnpm -r` commands that run zero tests | Open |
+| **S19** CUA transcript is still interpolated unfenced into an analyzer prompt | Open — `asData` and the VERIFY fence protect the critic, not this node |
+| **N1** `mapCategory` has no language gate | Open |
+| **N2** release gate fires only on `release: published` | Open |
+| **N4** log redaction does not cover query-string secrets | Open |
+
+Note on **S2**: it was fixed on `fix/audit-integrity`, then lost when that
+branch's `report.ts` was discarded during conflict resolution in favour of
+main's. Restored afterwards — a reminder that "resolve in favour of the better
+implementation" silently drops the *other* implementation's unique work, which
+is exactly what happened to S1 and S4 before they were re-applied deliberately.
 
 ### Reconciliation
 

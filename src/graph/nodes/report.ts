@@ -88,7 +88,15 @@ export function fallbackReport(input: {
     "",
     "## Coverage",
     "",
-    `Checked ${input.coverage.length} of ${VULN_CATALOG.length} vulnerability classes.` +
+    // Analyzer-asserted, not measured. `coverage` is the union of each
+    // analyzer's `checked` array, and for the three LLM analyzers that is the
+    // model's own claim — validated for catalog membership and nothing else, so
+    // a black-box run can assert every class. Printing a bare "checked N of M"
+    // read as a measured figure it has never been.
+    `The analyzers reported considering ${input.coverage.length} of ` +
+      `${VULN_CATALOG.length} vulnerability classes. This is self-reported by ` +
+      `the analyzers, not an independently measured or verified figure, and a ` +
+      `listed class was not necessarily soundly checked.` +
       (input.coverage.length ? ` Classes: ${input.coverage.join(", ")}.` : ""),
     "",
     "## Disclaimer",
@@ -173,10 +181,15 @@ export function makeReportNode(deps: GraphDeps) {
             : ".")
         : "Source read: NONE — this was a black-box review. State plainly in Scope & Methodology that no program source was analyzed and that findings are pattern-based hypotheses, not observations.",
       "",
-      `Coverage: checked ${state.coverage.length} of ${VULN_CATALOG.length} vulnerability classes.`,
+      `Coverage (ANALYZER-ASSERTED, not measured): the analyzers reported` +
+        ` considering ${state.coverage.length} of ${VULN_CATALOG.length}` +
+        ` vulnerability classes.`,
       state.coverage.length
-        ? `Checked classes: ${state.coverage.join(", ")}`
+        ? `Classes the analyzers claim to have considered: ${state.coverage.join(", ")}`
         : "(no coverage reported)",
+      "IMPORTANT: present coverage as self-reported by the analyzers. Do not" +
+        " describe it as measured or verified, and do not imply that a listed" +
+        " class was soundly checked.",
       "",
       "Write the final audit report in the required markdown structure, using the exact finding IDs above.",
     ]
