@@ -11,3 +11,6 @@ docker-data/
 __pycache__/
 .pytest_cache/
 eval/data/
+
+# Rust
+target/
