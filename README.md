@@ -22,11 +22,12 @@ growing body of security knowledge.
 | Phase        | What it does                                                                 |
 | ------------ | ---------------------------------------------------------------------------- |
 | **INTAKE**   | LLM parses the request into a structured target/depth/concerns summary.      |
+| **LOAD-SOURCE** | Reads the target's `.rs` and Anchor IDL files into context, bounded by `ARES_SOURCE_BUDGET_CHARS`. Shared by every analyzer. |
 | **RECALL**   | Hybrid retriever pulls relevant prior knowledge (see below).                 |
 | **ANALYZE**  | Four analyzers run **in parallel** and append findings:                      |
-|              | · `onchain` — loads the program via Solana/Helius RPC and reasons over it.   |
-|              | · `static` — runs Semgrep over a source path (optional binary).              |
-|              | · `heuristic` — LLM reasoning over intake + recalled memory.                 |
+|              | · `onchain` — reads the program **account's deployment metadata** via Solana/Helius RPC (owner, loader, size, upgrade authority). It does **not** disassemble the deployed bytecode, so its findings are about deployment posture, not program logic. |
+|              | · `static` — runs Semgrep over the source path using the committed ruleset in `rules/` (optional binary; a scan that fails is reported as `failed`, never as clean). |
+|              | · `heuristic` — LLM reasoning over the **loaded program source**, plus intake and recalled memory. Findings must cite a file that was actually read; ones that don't are demoted to speculative. With no readable source the analyzer runs black-box and all its findings are demoted. |
 |              | · `cua` — **opt-in**: drives a real browser (Scrapybara Computer Use Agent)  |
 |              |   to investigate explorers/repos/docs. See below.                            |
 | **MERGE**    | Fan-in join: dedupes and severity-ranks the combined findings.               |

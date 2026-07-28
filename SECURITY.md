@@ -29,12 +29,17 @@ We aim to acknowledge reports within a few business days.
   carries only the audit report.
 - **Hermetic by default.** With Supabase/Neo4j/embeddings/Helius unset, ARES
   runs fully offline against the in-process Crystalline store, so a default run
-  makes no outbound calls beyond the configured LLM endpoint.
+  makes no outbound calls beyond the configured LLM endpoint. Semgrep is part of
+  that guarantee: it is invoked with the committed ruleset in `rules/` and
+  `--metrics=off`, never `--config auto`, which would resolve rules from the
+  Semgrep registry over the network on every scan and report usage telemetry —
+  an outbound disclosure about a client's unreleased program that this bullet
+  would otherwise have promised did not happen.
 
 ## Known dependency advisories
 
-Dependencies are monitored by Dependabot and `npm audit` in CI. The current
-tracked advisories:
+Dependencies are monitored by Dependabot. CI runs no `npm audit` step — see the
+note at the end of this section for why. The current tracked advisories:
 
 ### Resolved
 
