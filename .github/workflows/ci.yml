@@ -53,6 +53,42 @@ jobs:
       - name: Test
         run: npm test
 
+  audit:
+    # This gate was previously absent because the unfixable `bigint-buffer`
+    # advisory would have made every build red. That advisory reached the tree
+    # only through `@solana/spl-token`, which nothing imported, so removing the
+    # dependency cleared it at the root and the gate can now hold the line.
+    # If it goes red, fix or justify the advisory — do not weaken the check.
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit (high and above)
+        run: npm audit --audit-level=high
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: eval/requirements.txt
+
+      - name: pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit -r eval/requirements.txt
+
   eval-scorer:
     name: eval scorer (python)
     runs-on: ubuntu-latest

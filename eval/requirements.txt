@@ -1,4 +1,8 @@
 numpy>=2.0
 pandas>=2.2
-pyarrow>=15.0
-pytest>=8.0
+# Floors below are set by security advisories, not by API needs:
+#   pyarrow >=23.0.1 — PYSEC-2026-113
+#   pytest  >=9.0.3  — PYSEC-2026-1845
+# Raise them when a later advisory lands; do not lower them to widen resolution.
+pyarrow>=23.0.1
+pytest>=9.0.3

@@ -57,27 +57,43 @@ note at the end of this section for why. The current tracked advisories:
   `jayson`, `@solana/web3.js`, `@solana/spl-token-group`, and
   `@solana/spl-token-metadata`.
 
-### Accepted residual risk
+### Resolved by dropping an unused dependency
 
 - **`bigint-buffer` — buffer overflow in `toBigIntLE()`** (`GHSA-3gc7-fjrx-p6mg`,
-  High). Transitive via `@solana/spl-token` → `@solana/buffer-layout-utils` →
-  `bigint-buffer`. **No fixed version exists** — the advisory affects all
-  published releases, and npm's only "fix" is a semver-major downgrade of
-  `@solana/spl-token` that would break the SDK. We accept this residual because:
-  - The advisory's CVSS 4.0 vector (`AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H`)
-    is **availability-only** — no confidentiality or integrity impact — with
-    proof-of-concept (`E:P`), not weaponized, exploit maturity.
-  - The vulnerable `toBigIntLE()` path is reached only when parsing SPL token
-    account layouts. ARES parses **trusted RPC responses read-only**, not
-    attacker-controlled byte buffers, so the overflow is not reachable with
-    adversarial input in normal operation.
+  High). Reached via `@solana/spl-token` → `@solana/buffer-layout-utils` →
+  `bigint-buffer`. No patched release of `bigint-buffer` exists, and npm's only
+  offered "fix" was a semver-major downgrade of `@solana/spl-token`.
 
-  This will be cleared automatically once `@solana/buffer-layout-utils` drops
-  `bigint-buffer` or a patched release ships; Dependabot will surface it.
+  It was resolved instead by removing `@solana/spl-token` from `package.json`.
+  **Nothing in the repository ever imported it** — the only textual match
+  outside the manifest was the string `spl_token::transfer` inside a Rust
+  detection hint in the vulnerability catalog. Dropping it removes the entire
+  transitive chain rather than mitigating it, with no code change and no
+  downgrade.
 
-CI does **not** run a blocking `npm audit` step, because the unfixable
-`bigint-buffer` advisory would make every build red for no actionable reason.
-Advisories are tracked through Dependabot and this document instead.
+  This document previously listed the advisory as accepted residual risk, on the
+  reasoning that the vulnerable path "is reached only when parsing SPL token
+  account layouts" and that ARES only parses trusted RPC responses. That
+  reasoning was weaker than the truth and rested on a false premise: the package
+  was never loaded at all. If SPL token parsing is added later, reintroduce the
+  dependency deliberately and re-evaluate the advisory then.
+
+### Python dependencies
+
+`eval/requirements.txt` pins security floors on `pyarrow` (`>=23.0.1`,
+`PYSEC-2026-113`) and `pytest` (`>=9.0.3`, `PYSEC-2026-1845`). Those floors exist
+for advisories, not API needs — raise them when a later advisory lands, and do
+not lower them to widen resolution. Note `pyarrow >=23` requires Python >=3.10;
+CI runs 3.12.
+
+### Audit gate
+
+CI runs a blocking **`dependency audit`** job: `npm audit --audit-level=high`
+plus `pip-audit` over `eval/requirements.txt`. This gate was previously absent
+because the unfixable `bigint-buffer` advisory would have made every build red
+for no actionable reason; with that advisory cleared at the root, the gate can
+hold the line. If it goes red, fix the dependency or record a justified
+exception here — do not weaken the check.
 
 Dependabot is configured (`.github/dependabot.yml`) to hold TypeScript at major
 and minor versions: typescript-eslint 8.x peer-caps TypeScript below 6.1 and
