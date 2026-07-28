@@ -113,10 +113,15 @@ export async function runSemgrep(
       resolve(result);
     };
 
+    // Read at call time, not from the frozen `env` snapshot, so a test can make
+    // the binary deterministically absent. The suite must not depend on whether
+    // semgrep happens to be installed on the machine running it: with a real one
+    // present, several test files spawn it in parallel and contend for seconds.
+    const bin = process.env.SEMGREP_BIN ?? "semgrep";
     let child;
     try {
       child = spawn(
-        "semgrep",
+        bin,
         [
           "--json",
           "--quiet",

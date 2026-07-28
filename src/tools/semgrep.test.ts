@@ -21,6 +21,9 @@ function shimSemgrep(script: string): { src: string; cleanup: () => void } {
   writeFileSync(join(bin, "semgrep"), script);
   chmodSync(join(bin, "semgrep"), 0o755);
   process.env.PATH = bin;
+  // vitest.config.ts points SEMGREP_BIN at a name that does not exist so the
+  // rest of the suite never spawns a real scanner; these tests want theirs.
+  process.env.SEMGREP_BIN = "semgrep";
   return { src, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -40,8 +43,9 @@ describe("runSemgrep", () => {
 
   it("degrades gracefully when semgrep is not installed on a real path", async () => {
     // The path exists, so it gets past the access() check and tries to spawn
-    // semgrep. In CI/hermetic envs semgrep isn't installed → available:false,
-    // never a throw. If it happens to be installed, we still get a valid shape.
+    // the scanner. SEMGREP_BIN is set to a name that does not exist (see
+    // vitest.config.ts), so this deterministically exercises the not-installed
+    // path instead of depending on the host having semgrep.
     const dir = mkdtempSync(join(tmpdir(), "ares-semgrep-"));
     try {
       const res = await runSemgrep(dir);
@@ -64,8 +68,11 @@ describe("runSemgrep", () => {
  */
 describe("a scan that did not complete is not a clean result", () => {
   const realPath = process.env.PATH;
+  const realBin = process.env.SEMGREP_BIN;
   afterEach(() => {
     process.env.PATH = realPath;
+    if (realBin === undefined) delete process.env.SEMGREP_BIN;
+    else process.env.SEMGREP_BIN = realBin;
   });
 
   it("reports scan-error when semgrep exits non-zero", async () => {
