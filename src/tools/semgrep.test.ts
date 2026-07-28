@@ -50,7 +50,10 @@ describe("runSemgrep", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+    // Generous deadline on purpose: where semgrep IS installed this spawns it for
+    // real, and a cold start with rule parsing runs to several seconds. The 5s
+    // default made this red on developer machines and green in hermetic CI.
+  }, 20_000);
 });
 
 /**

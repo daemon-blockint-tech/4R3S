@@ -138,6 +138,20 @@ async function main(): Promise<void> {
     "Starting audit",
   );
 
+  // Checked BEFORE the graph runs, not after. `canAffordAudit` was computed and
+  // its result discarded, so an account that cannot pay still bought a full
+  // audit at the provider — every analyzer, verify, remember and report — and
+  // only then had the report withheld at settlement. Every run, on the config
+  // .env.example leaves you in (BILLING_ENABLED=true, zero plan credits, no
+  // on-demand).
+  if (billing.config.enabled && !canAffordAudit(billing)) {
+    throw new Error(
+      "Payment required: the account has no prepaid credits and on-demand billing is " +
+        "unavailable or its cap is exhausted. Top up before running — refusing to " +
+        "spend on an audit whose report could not be released.",
+    );
+  }
+
   const runConfig = {
     configurable: { thread_id: threadId },
     recursionLimit: env.ARES_MAX_ITERATIONS * 4,

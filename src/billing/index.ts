@@ -128,7 +128,15 @@ export function createBilling(options: CreateBillingOptions = {}): Billing {
 export function canAffordAudit(billing: Billing): boolean {
   const { account, config } = billing;
   if (!config.enabled) return true;
-  const affordable = account.systemCredits > 0 || account.onDemandEnabled;
+  // An exhausted cap is as unpayable as a disabled one: `charge()` throws when
+  // `onDemandLimit - onDemandSpent` cannot cover the overflow, so treating
+  // `onDemandEnabled` alone as affordable returned true for an account that is
+  // guaranteed to fail at settlement.
+  const onDemandHeadroom =
+    account.onDemandEnabled &&
+    (account.onDemandLimit === undefined ||
+      account.onDemandLimit - account.onDemandSpent > 0);
+  const affordable = account.systemCredits > 0 || onDemandHeadroom;
   if (!affordable) {
     log.warn(
       {
@@ -136,9 +144,12 @@ export function canAffordAudit(billing: Billing): boolean {
         accountId: account.id,
         systemCredits: account.systemCredits,
         onDemandEnabled: account.onDemandEnabled,
+        onDemandLimit: account.onDemandLimit,
+        onDemandSpent: account.onDemandSpent,
       },
-      "Billing enabled but account has no prepaid balance and on-demand is disabled; " +
-        "any non-zero charge will fail. Set BILLING_PLAN_CREDITS or BILLING_ONDEMAND_ENABLED.",
+      "Billing enabled but the account cannot cover any non-zero charge: no prepaid " +
+        "balance, and on-demand is disabled or its cap is exhausted. Set " +
+        "BILLING_PLAN_CREDITS or BILLING_ONDEMAND_ENABLED / raise the on-demand limit.",
     );
   }
   return affordable;

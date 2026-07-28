@@ -90,4 +90,51 @@ describe("canAffordAudit", () => {
     });
     expect(canAffordAudit(billing)).toBe(false);
   });
+
+  it("is false when on-demand is enabled but its cap is already spent", () => {
+    // charge() throws once the remaining cap cannot cover the overflow, so
+    // reporting this account as affordable sends a run to a settlement that is
+    // guaranteed to fail — after the whole audit has been bought.
+    const store = new InMemoryAccountStore();
+    // The cap comes from config — createBilling re-asserts it over the persisted
+    // value each run — while the spend is the persisted balance.
+    const spent: CreditAccount = {
+      id: "default",
+      systemCredits: 0,
+      onDemandEnabled: true,
+      onDemandLimit: 1000,
+      onDemandSpent: 1000,
+    };
+    store.save(spent);
+    const billing = createBilling({
+      config: config({
+        planCredits: 0,
+        onDemandEnabled: true,
+        onDemandLimitCredits: 1000,
+      }),
+      store,
+    });
+    expect(canAffordAudit(billing)).toBe(false);
+  });
+
+  it("is true when on-demand still has headroom under its cap", () => {
+    const store = new InMemoryAccountStore();
+    const partial: CreditAccount = {
+      id: "default",
+      systemCredits: 0,
+      onDemandEnabled: true,
+      onDemandLimit: 1000,
+      onDemandSpent: 400,
+    };
+    store.save(partial);
+    const billing = createBilling({
+      config: config({
+        planCredits: 0,
+        onDemandEnabled: true,
+        onDemandLimitCredits: 1000,
+      }),
+      store,
+    });
+    expect(canAffordAudit(billing)).toBe(true);
+  });
 });
