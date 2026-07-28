@@ -91,6 +91,14 @@ const schema = z.object({
   CUA_TIMEOUT_HOURS: z.coerce.number().positive().default(1),
   CUA_RECURSION_LIMIT: z.coerce.number().int().positive().default(100),
 
+  /**
+   * Deadline for the Semgrep child process. A spawned scan needs a bound for the
+   * same reason every outbound HTTP call has one (see `config/timeout.ts`): a
+   * scan that never finishes wedges the parallel ANALYZE superstep, and MERGE is
+   * a hard fan-in join, so the whole audit hangs.
+   */
+  SEMGREP_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+
   // ARES runtime
   ARES_MAX_ITERATIONS: z.coerce.number().int().positive().default(12),
   // Optional. Unset (the default) derives a per-target thread id so audits of

@@ -8,15 +8,33 @@ import { logger } from "../../config/logger.js";
 import type { AresState, AresStateUpdate, Finding } from "../state.js";
 import { SEVERITY_RANK } from "../state.js";
 
-function key(f: Finding): string {
-  return `${f.vulnClass.toLowerCase()}::${f.location.toLowerCase()}`;
+/**
+ * Identity for dedup purposes.
+ *
+ * Two problems with keying on `vulnClass + location` alone. Both fields are
+ * free text from the model, and `coerceFindings` defaults them to `"unknown"`
+ * and `""` — so any response that omitted them collapsed *every* finding onto
+ * the single key `unknown::`, and all but one were discarded. MERGE is the only
+ * node that deletes a finding without saying so: REPORT derives its dropped
+ * count as `mergedFindings.length - verifiedFindings.length`, which cannot see
+ * a loss that happened before VERIFY.
+ *
+ * So: an unlocated finding is never deduped (it has no identity to compare),
+ * and `category` — the one field validated against the catalog — joins the key
+ * so two genuinely different classes at one location stay separate.
+ */
+function key(f: Finding, index: number): string {
+  // Per-finding sentinel, so an unlocated finding only ever matches itself.
+  // Contains no "::", so it can never collide with a real key below.
+  if (!f.location.trim()) return `unlocated#${index}`;
+  return `${f.category}::${f.vulnClass.toLowerCase()}::${f.location.toLowerCase()}`;
 }
 
 export function makeMergeNode() {
   return async function merge(state: AresState): Promise<AresStateUpdate> {
     const byKey = new Map<string, Finding>();
-    for (const f of state.findings) {
-      const k = key(f);
+    state.findings.forEach((f, index) => {
+      const k = key(f, index);
       const existing = byKey.get(k);
       if (
         !existing ||
@@ -26,11 +44,21 @@ export function makeMergeNode() {
       ) {
         byKey.set(k, f);
       }
-    }
+    });
 
     const mergedFindings = [...byKey.values()].sort(
       (a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity],
     );
+
+    // Deduping discards a finding that no later phase can account for, so say so
+    // at warn level rather than leaving it implicit in two info counters.
+    const deduped = state.findings.length - mergedFindings.length;
+    if (deduped > 0) {
+      logger.warn(
+        { component: "node.merge", deduped, raw: state.findings.length },
+        "Findings discarded as duplicates during merge",
+      );
+    }
 
     logger.info(
       {

@@ -50,6 +50,19 @@ export function makeReportNode(deps: GraphDeps) {
     const sourceTable = retrievalStatusTable(state.retrieval);
     const brokenSources = failedSources(state.retrieval);
 
+    // Whether the auditor actually read the program. A report that reviews code
+    // nobody loaded must say so in Scope & Methodology rather than leaving the
+    // reader to assume a source review happened because a path was passed.
+    const sourceSummary = state.sourceFiles.length
+      ? `Source reviewed: ${state.sourceFiles.length} file(s) were read and placed in analysis context` +
+        `${state.sourceFiles.some((f) => f.truncated) ? " (some were truncated to fit, so the review of those files is partial)" : ""}.`
+      : state.sourcePath
+        ? "IMPORTANT: a source path was supplied but NO source code could be read." +
+          " State plainly in Scope & Methodology that no code was reviewed and that" +
+          " any findings are unverified inference, not code review."
+        : "No source path was supplied: this is a black-box review and no program" +
+          " code was read. Say so in Scope & Methodology.";
+
     const human = [
       state.intake ? `Target: ${state.intake.target}` : `Request: ${state.request}`,
       state.intake ? `Summary: ${state.intake.summary}` : "",
@@ -92,10 +105,21 @@ export function makeReportNode(deps: GraphDeps) {
             .join("\n")
         : "(no findings)",
       "",
-      `Coverage: checked ${state.coverage.length} of ${VULN_CATALOG.length} vulnerability classes.`,
+      // Self-reported, and must be labelled as such. `coverage` is the union of
+      // whatever each analyzer put in its `checked` array — for the three LLM
+      // analyzers that is the model's own claim, validated only for catalog
+      // membership, so a black-box run can assert all of them. Printing it as
+      // "checked N of M" read as a measured figure. It is not one.
+      `Coverage (analyzer-asserted, not independently measured): the analyzers` +
+        ` reported considering ${state.coverage.length} of ${VULN_CATALOG.length}` +
+        ` vulnerability classes.`,
       state.coverage.length
-        ? `Checked classes: ${state.coverage.join(", ")}`
+        ? `Classes the analyzers claim to have considered: ${state.coverage.join(", ")}`
         : "(no coverage reported)",
+      "IMPORTANT: describe coverage as self-reported by the analyzers. Do not" +
+        " present it as a measured or verified figure, and do not infer that a" +
+        " listed class was soundly checked.",
+      sourceSummary,
       "",
       "Write the final audit report in the required markdown structure, using the exact finding IDs above.",
     ]

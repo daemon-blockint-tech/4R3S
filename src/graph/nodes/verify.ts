@@ -41,7 +41,7 @@ export function makeVerifyNode(deps: GraphDeps) {
 
     const raw = await chatJson<unknown>(deps.chat, verifySystemPrompt(), human, []);
     const verdicts = coerceVerdicts(raw, findings.length);
-    const { kept, dropped } = applyVerdicts(findings, verdicts);
+    const { kept, dropped, clamped } = applyVerdicts(findings, verdicts);
 
     logger.info(
       {
@@ -50,6 +50,10 @@ export function makeVerifyNode(deps: GraphDeps) {
         kept: kept.length,
         droppedFalsePositives: dropped,
         confirmed: kept.filter((f) => f.status === "confirmed").length,
+        // Findings the critic called `confirmed` without an artifact to check
+        // against; demoted to `suspected`. A high number here means the model
+        // is over-confirming, which is worth seeing.
+        clampedToSuspected: clamped,
       },
       "Verification pass complete",
     );

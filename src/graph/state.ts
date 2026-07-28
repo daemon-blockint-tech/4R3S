@@ -9,6 +9,7 @@
 import { Annotation } from "@langchain/langgraph";
 
 import type { ScoredCrystal, KnowledgeLevel } from "../memory/types.js";
+import type { SourceFile } from "../tools/source.js";
 import type { AnalyzerName } from "../knowledge/finding.js";
 import type { Finding } from "../knowledge/finding.js";
 
@@ -79,6 +80,18 @@ export const AresStateAnnotation = Annotation.Root({
   programAddress: Annotation<string | undefined>(),
   /** Concrete source path, if the audit is for local source. */
   sourcePath: Annotation<string | undefined>(),
+  /**
+   * Program source actually read off disk by the LOAD-SOURCE phase.
+   *
+   * This exists so nothing downstream has to infer "was the code read?" from
+   * "was a path supplied?" — they are different questions, and conflating them
+   * made a bogus `--source` path produce a *more* confident report than no flag
+   * at all. Empty means no bytes were loaded, whatever `sourcePath` says.
+   */
+  sourceFiles: Annotation<SourceFile[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
   /** Structured intake summary (LLM-parsed). */
   intake: Annotation<IntakeSummary | undefined>(),
   /** Memory fragments recalled by the hybrid retriever. */

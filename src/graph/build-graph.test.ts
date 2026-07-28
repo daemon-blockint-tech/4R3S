@@ -1,6 +1,45 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { InMemoryStore, MemorySaver } from "@langchain/langgraph";
+
+/**
+ * Stub Semgrep to "not installed" — the CI condition.
+ *
+ * Now that LOAD-SOURCE lets a test point at a real source tree, `analyzeStatic`
+ * would otherwise spawn a real `semgrep` on any developer machine that has one
+ * and fetch its ruleset over the network, so the suite's hermeticity would
+ * depend on who is running it. These tests are about graph wiring, not Semgrep;
+ * `src/tools/semgrep.test.ts` covers the scanner itself.
+ */
+vi.mock("../tools/semgrep.js", () => ({
+  runSemgrep: async (sourcePath?: string) => {
+    if (!sourcePath) {
+      return {
+        available: false,
+        findings: [],
+        note: "no source path provided",
+        reason: "no-source" as const,
+      };
+    }
+    if (!existsSync(sourcePath)) {
+      return {
+        available: false,
+        findings: [],
+        note: `source path not found: ${sourcePath}`,
+        reason: "path-missing" as const,
+      };
+    }
+    return {
+      available: false,
+      findings: [],
+      note: "semgrep not installed",
+      reason: "not-installed" as const,
+    };
+  },
+}));
 
 import { CrystallineStore } from "../memory/crystalline-store.js";
 import { CrystallineRetriever } from "../retrieval/crystalline-retriever.js";
@@ -200,6 +239,46 @@ describe("audit graph (state isolation across runs)", () => {
   });
 });
 
+describe("source loading (GOLDEN RULE 5)", () => {
+  it("puts the program's actual source in front of the analyzers, and keeps findings first-class", async () => {
+    // The counterpart to the bogus-path case below. With real code on disk,
+    // LOAD-SOURCE reads it, the heuristic analyzer receives it, and its
+    // findings keep the severity the model assigned instead of being demoted.
+    const dir = mkdtempSync(join(tmpdir(), "ares-e2e-src-"));
+    writeFileSync(
+      join(dir, "lib.rs"),
+      "pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> { Ok(()) }",
+    );
+    try {
+      const store = new InMemoryStore();
+      const crystalline = new CrystallineStore(store);
+      const retriever = new HybridRetriever(new CrystallineRetriever(crystalline));
+      const graph = buildAuditGraph({
+        deps: { chat: makeFakeChat(), crystalline, retriever },
+        checkpointer: new MemorySaver(),
+        store,
+      });
+
+      const result = await graph.invoke(
+        { request: "audit source", sourcePath: dir },
+        { configurable: { thread_id: "test-e2e-src" } },
+      );
+
+      // Source genuinely reached state — this is the rule the auditor exists to
+      // satisfy, and nothing in the pipeline used to do it.
+      expect(result.sourceFiles.length).toBeGreaterThanOrEqual(1);
+      expect(result.sourceFiles[0]!.path).toBe("lib.rs");
+      expect(result.sourceFiles[0]!.content).toContain("withdraw");
+
+      // Real source read → no black-box demotion.
+      expect(result.mergedFindings[0]!.severity).toBe("high");
+      expect(result.mergedFindings[0]!.speculative).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("audit graph (end to end)", () => {
   it("runs all phases and produces a report with merged findings", async () => {
     const store = new InMemoryStore();
@@ -212,9 +291,11 @@ describe("audit graph (end to end)", () => {
     });
 
     const result = await graph.invoke(
-      // Source path that doesn't exist → static analyzer degrades to no findings;
-      // no program address → on-chain analyzer contributes nothing. Only the
-      // heuristic analyzer produces a finding, via the fake chat.
+      // Source path that doesn't exist → LOAD-SOURCE reads zero bytes and the
+      // static analyzer fails; no program address → on-chain contributes
+      // nothing. Only the heuristic analyzer produces a finding, via the fake
+      // chat — and because no code was actually read, that finding must be
+      // presented as speculation.
       { request: "audit source", sourcePath: "/does-not-exist-xyz" },
       { configurable: { thread_id: "test-e2e-1" } },
     );
@@ -222,17 +303,26 @@ describe("audit graph (end to end)", () => {
     expect(result.report).toContain("Executive Summary");
     expect(result.findings.length).toBeGreaterThanOrEqual(1);
     expect(result.mergedFindings.length).toBeGreaterThanOrEqual(1);
-    expect(result.mergedFindings[0]!.severity).toBe("high");
     expect(result.mergedFindings[0]!.source).toBe("heuristic");
     expect(result.mergedFindings[0]!.category).toBe("integer-overflow-underflow");
+
+    // No source was loaded, so the heuristic finding is speculative regardless
+    // of the severity the model claimed. This previously asserted "high": a
+    // path string that pointed at nothing was treated as proof the code had
+    // been read, so passing a bogus --source produced a *more* confident report
+    // than omitting the flag entirely.
+    expect(result.sourceFiles).toEqual([]);
+    expect(result.mergedFindings[0]!.severity).toBe("info");
+    expect(result.mergedFindings[0]!.speculative).toBe(true);
+
     expect(result.coverage.length).toBeGreaterThanOrEqual(1);
     expect(result.coverage).toContain("integer-overflow-underflow");
     expect(result.coverage).toContain("missing-signer-check");
-    // VERIFY critic pass ran: the finding survived, and its status/confidence
-    // are set from the verdict.
+    // VERIFY critic pass ran and the finding survived — but `confirmed` is
+    // refused for a heuristic finding, whose "evidence" the same model wrote a
+    // superstep earlier and which the critic has no artifact to check against.
     expect(result.verifiedFindings.length).toBeGreaterThanOrEqual(1);
-    expect(result.verifiedFindings[0]!.status).toBe("confirmed");
-    expect(result.verifiedFindings[0]!.confidence).toBe("high");
+    expect(result.verifiedFindings[0]!.status).toBe("suspected");
     // CUA is opt-in and unconfigured in the test env: the 4th analyzer runs
     // as part of the fan-out but contributes nothing.
     expect(result.findings.some((f) => f.source === "cua")).toBe(false);

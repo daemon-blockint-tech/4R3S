@@ -20,6 +20,7 @@ import type { GraphDeps } from "./deps.js";
 import { makeResetAccumulatorsNode } from "./nodes/reset-accumulators.js";
 import { makeIntakeNode } from "./nodes/intake.js";
 import { makeRecallNode } from "./nodes/recall.js";
+import { makeLoadSourceNode } from "./nodes/load-source.js";
 import { makeAnalyzeOnchainNode } from "./nodes/analyze-onchain.js";
 import { makeAnalyzeStaticNode } from "./nodes/analyze-static.js";
 import { makeAnalyzeHeuristicNode } from "./nodes/analyze-heuristic.js";
@@ -47,6 +48,7 @@ export function buildAuditGraph({
     .addNode("resetAccumulators", makeResetAccumulatorsNode())
     .addNode("intakePhase", makeIntakeNode(deps))
     .addNode("recallPhase", makeRecallNode(deps))
+    .addNode("loadSourcePhase", makeLoadSourceNode())
     .addNode("analyzeOnchain", makeAnalyzeOnchainNode(deps))
     .addNode("analyzeStatic", makeAnalyzeStaticNode())
     .addNode("analyzeHeuristic", makeAnalyzeHeuristicNode(deps))
@@ -59,11 +61,15 @@ export function buildAuditGraph({
     .addEdge(START, "resetAccumulators")
     .addEdge("resetAccumulators", "intakePhase")
     .addEdge("intakePhase", "recallPhase")
+    // Read the program source before fanning out. The analyzers are siblings in
+    // one superstep and cannot see each other's writes, so source has to be on
+    // state before any of them runs.
+    .addEdge("recallPhase", "loadSourcePhase")
     // Fan-out: parallel ANALYZE superstep.
-    .addEdge("recallPhase", "analyzeOnchain")
-    .addEdge("recallPhase", "analyzeStatic")
-    .addEdge("recallPhase", "analyzeHeuristic")
-    .addEdge("recallPhase", "analyzeCua")
+    .addEdge("loadSourcePhase", "analyzeOnchain")
+    .addEdge("loadSourcePhase", "analyzeStatic")
+    .addEdge("loadSourcePhase", "analyzeHeuristic")
+    .addEdge("loadSourcePhase", "analyzeCua")
     // Fan-in: merge waits for all analyzers.
     .addEdge("analyzeOnchain", "mergePhase")
     .addEdge("analyzeStatic", "mergePhase")
