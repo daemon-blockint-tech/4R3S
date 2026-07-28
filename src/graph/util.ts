@@ -7,7 +7,8 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { logger } from "../config/logger.js";
 import { messageText } from "../llm/message-text.js";
 import { withRetry } from "../llm/retry.js";
-import { isVulnId } from "../knowledge/solana-vulns.js";
+import { isVulnId, getVuln } from "../knowledge/solana-vulns.js";
+import { citesLoadedFile, type LoadedSource } from "../tools/source.js";
 import {
   type Finding,
   type Severity,
@@ -56,6 +57,55 @@ export function asData(value: string, max = 300): string {
 /** Evidence carries real code excerpts, so it gets a longer bound than labels. */
 const EVIDENCE_MAX = 2000;
 
+/** Words models reach for that aren't on our scale, mapped to the closest level. */
+const SEVERITY_SYNONYMS: Record<string, Severity> = {
+  severe: "critical",
+  crit: "critical",
+  blocker: "critical",
+  major: "high",
+  moderate: "medium",
+  med: "medium",
+  minor: "low",
+  informational: "info",
+  information: "info",
+  note: "info",
+  none: "info",
+};
+
+/**
+ * Resolve a model-supplied severity onto the scale.
+ *
+ * The previous behaviour — membership check, else `info` — failed open in the
+ * one direction an auditor must never fail: `"Critical — drains the vault"` and
+ * even `"high "` with a trailing space both collapsed to the *lowest* level,
+ * silently. `downgradeSpeculative` uses `info` as a deliberate sentinel, so the
+ * accident was indistinguishable from an intentional downgrade in both the logs
+ * and the report, and MERGE then sorted the finding last.
+ *
+ * Now: trim, take the leading word, try the scale, then synonyms. Anything left
+ * unresolved falls back to the catalog's `defaultSeverity` for the finding's
+ * category (never below `medium` when the category is unknown) and logs. Note
+ * the siblings in this same function already fail safe — `confidence` falls
+ * back to the middle value and `coerceVerdicts` drops an invalid status rather
+ * than defaulting it; only severity failed downward.
+ */
+export function resolveSeverity(raw: unknown, category: string): Severity {
+  const text = String(raw ?? "").trim().toLowerCase();
+  if (!text) return "info";
+
+  const leading = text.split(/[^a-z]+/).filter(Boolean)[0] ?? "";
+  if (VALID_SEVERITY.has(leading)) return leading as Severity;
+  const synonym = SEVERITY_SYNONYMS[leading];
+  if (synonym) return synonym;
+
+  const fallback = getVuln(category)?.defaultSeverity ?? "medium";
+  logger.warn(
+    { component: "graph", severity: text.slice(0, 40), category, fallback },
+    "Unrecognized severity from model; using catalog default rather than info",
+  );
+  return fallback;
+}
+
 /**
  * Coerce loosely-typed LLM output into `Finding[]`, forcing `source` and
  * validating severity. Accepts either a bare array or an object with a
@@ -78,17 +128,17 @@ export function coerceFindings(
   return arr
     .filter((f): f is Record<string, unknown> => Boolean(f) && typeof f === "object")
     .map((f) => {
-      const sev = String(f.severity ?? "info").toLowerCase();
       const rawCategory = String(f.category ?? "");
+      const category = isVulnId(rawCategory) ? rawCategory : "other";
       const conf = String(f.confidence ?? "").toLowerCase();
       return {
         vulnClass: asData(String(f.vulnClass ?? f.vuln_class ?? "unknown")),
         location: asData(String(f.location ?? "")),
-        severity: (VALID_SEVERITY.has(sev) ? sev : "info") as Severity,
+        severity: resolveSeverity(f.severity, category),
         evidence: asData(String(f.evidence ?? ""), EVIDENCE_MAX),
         remediation: asData(String(f.remediation ?? ""), EVIDENCE_MAX),
         source,
-        category: isVulnId(rawCategory) ? rawCategory : "other",
+        category,
         speculative: Boolean(f.speculative ?? false),
         confidence: (VALID_CONFIDENCE.has(conf as Confidence) ? conf : "medium") as Confidence,
       };
@@ -181,26 +231,65 @@ export function coerceVerdicts(raw: unknown, count: number): Verdict[] {
  * verdict is kept and marked `suspected` (never silently dropped). Returns the
  * surviving findings and the count dropped.
  */
+/**
+ * Whether `confirmed` can mean anything for this finding.
+ *
+ * VERIFY is handed each finding's own `evidence` string and nothing else, so
+ * for `heuristic` / `onchain` / `cua` it is rating the plausibility of prose the
+ * same model wrote a superstep earlier — self-certification. `confirmed` is
+ * therefore allowed only where something mechanical, outside the model, backs
+ * the finding:
+ *
+ *   - `static`, whose evidence is Semgrep's own output; or
+ *   - any finding whose `location` was checked against the files actually
+ *     loaded off disk (`citesLoadedFile`). That check is code, not opinion: it
+ *     fails a finding that points at a file nobody read.
+ *
+ * A finding already flagged speculative qualifies under neither.
+ *
+ * This matters beyond the label. REMEMBER persists only `confirmed`,
+ * non-speculative findings into durable memory that later audits recall as
+ * prior knowledge — so an unearned `confirmed` is how a fabrication becomes a
+ * fact the system believes about itself, while an over-strict rule would leave
+ * durable memory permanently empty on any host without Semgrep.
+ */
+function canBeConfirmed(f: Finding, source?: LoadedSource): boolean {
+  if (f.speculative) return false;
+  if (f.source === "static") return true;
+  return Boolean(source?.available) && citesLoadedFile(f.location, source!);
+}
+
 export function applyVerdicts(
   findings: Finding[],
   verdicts: Verdict[],
-): { kept: Finding[]; dropped: number } {
+  source?: LoadedSource,
+): { kept: Finding[]; dropped: number; clamped: number } {
   const byIndex = new Map(verdicts.map((v) => [v.index, v]));
   const kept: Finding[] = [];
   let dropped = 0;
+  let clamped = 0;
   findings.forEach((f, i) => {
     const v = byIndex.get(i);
     if (v?.status === "false-positive") {
       dropped += 1;
       return;
     }
+    // `confirmed` is the strongest label the system emits and REPORT prints it
+    // verbatim. Refuse it where the critic had no artifact to check it against:
+    // a demotion to `suspected` costs nothing, whereas a fabricated finding
+    // shipped as `confirmed` is the failure this pass exists to prevent.
+    let status = v?.status ?? "suspected";
+    if (status === "confirmed" && !canBeConfirmed(f, source)) {
+      status = "suspected";
+      clamped += 1;
+    }
     kept.push({
       ...f,
-      status: v?.status ?? "suspected",
+      status,
       confidence: v?.confidence ?? f.confidence,
     });
   });
-  return { kept, dropped };
+  return { kept, dropped, clamped };
 }
 
 /**

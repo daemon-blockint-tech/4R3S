@@ -34,14 +34,50 @@ describe("coerceFindings", () => {
     expect(out[0]!.confidence).toBe("low");
   });
 
-  it("defaults invalid severity to info and fills missing fields", () => {
+  it("fills missing fields and never fails an unknown severity open to info", () => {
     const out = coerceFindings([{ vulnClass: "x", severity: "bogus" }], "heuristic");
-    expect(out[0]!.severity).toBe("info");
+    // An unresolvable severity must NOT collapse to the lowest level: `info` is
+    // the sentinel `downgradeSpeculative` uses, so a mangled critical would be
+    // indistinguishable from a deliberate downgrade. Unknown category -> medium.
+    expect(out[0]!.severity).toBe("medium");
     expect(out[0]!.location).toBe("");
     expect(out[0]!.remediation).toBe("");
     expect(out[0]!.category).toBe("other");
     expect(out[0]!.speculative).toBe(false);
     expect(out[0]!.confidence).toBe("medium");
+  });
+
+  it("normalizes decorated, cased and padded severities instead of dropping them", () => {
+    const out = coerceFindings(
+      [
+        { vulnClass: "a", severity: "high " },
+        { vulnClass: "b", severity: "Critical — attacker can drain the vault" },
+        { vulnClass: "c", severity: "SEVERE" },
+        { vulnClass: "d", severity: "major" },
+        { vulnClass: "e", severity: "informational" },
+      ],
+      "heuristic",
+    );
+    expect(out.map((f) => f.severity)).toEqual([
+      "high",
+      "critical",
+      "critical",
+      "high",
+      "info",
+    ]);
+  });
+
+  it("falls back to the catalog default severity when the category is known", () => {
+    // missing-signer-check has defaultSeverity "high" — a safer floor than info.
+    const out = coerceFindings(
+      [{ vulnClass: "x", severity: "???", category: "missing-signer-check" }],
+      "heuristic",
+    );
+    expect(out[0]!.severity).toBe("high");
+  });
+
+  it("keeps an empty severity at info", () => {
+    expect(coerceFindings([{ vulnClass: "x" }], "heuristic")[0]!.severity).toBe("info");
   });
 
   it("accepts object-with-findings form and coerces category", () => {
@@ -165,15 +201,43 @@ describe("applyVerdicts", () => {
     "heuristic",
   );
 
-  it("drops false-positives and sets status/confidence on survivors", () => {
-    const { kept, dropped } = applyVerdicts(base, [
+  it("drops false-positives, and clamps `confirmed` on evidence VERIFY cannot check", () => {
+    const { kept, dropped, clamped } = applyVerdicts(base, [
       { index: 0, status: "confirmed", confidence: "high", reason: "" },
       { index: 1, status: "false-positive", confidence: "low", reason: "" },
     ]);
     expect(dropped).toBe(1);
     expect(kept).toHaveLength(1);
     expect(kept[0]!.vulnClass).toBe("a");
+    // VERIFY only ever sees a finding's own `evidence` string. For a heuristic
+    // finding that string was written by the same model a superstep earlier, so
+    // `confirmed` would be self-certification. Demoted, and counted.
+    expect(kept[0]!.status).toBe("suspected");
+    expect(clamped).toBe(1);
+  });
+
+  it("allows `confirmed` on a non-speculative static finding", () => {
+    const fromTool = coerceFindings(
+      [{ vulnClass: "t", severity: "high", category: "missing-signer-check" }],
+      "static",
+    );
+    const { kept, clamped } = applyVerdicts(fromTool, [
+      { index: 0, status: "confirmed", confidence: "high", reason: "" },
+    ]);
+    // Semgrep output is a real artifact, so the label can mean something.
     expect(kept[0]!.status).toBe("confirmed");
+    expect(clamped).toBe(0);
+  });
+
+  it("clamps `confirmed` on a static finding that was flagged speculative", () => {
+    const speculative = downgradeSpeculative(
+      coerceFindings([{ vulnClass: "t", severity: "high" }], "static"),
+    );
+    const { kept, clamped } = applyVerdicts(speculative, [
+      { index: 0, status: "confirmed", confidence: "high", reason: "" },
+    ]);
+    expect(kept[0]!.status).toBe("suspected");
+    expect(clamped).toBe(1);
   });
 
   it("keeps findings with no verdict, marking them suspected", () => {

@@ -241,10 +241,14 @@ describe("audit graph (end to end)", () => {
     expect(result.coverage.length).toBeGreaterThanOrEqual(1);
     expect(result.coverage).toContain("integer-overflow-underflow");
     expect(result.coverage).toContain("missing-signer-check");
-    // VERIFY critic pass ran: the finding survived, and its status/confidence
-    // are set from the verdict.
+    // VERIFY critic pass ran and the finding survived — but this is a black-box
+    // run, so nothing mechanical backs the finding: no source was loaded, so its
+    // citation could not be checked, and the critic sees only the `evidence`
+    // string the same model wrote a superstep earlier. `confirmed` would be
+    // self-certification, so it is clamped to `suspected` however confidently
+    // the model asserted it.
     expect(result.verifiedFindings.length).toBeGreaterThanOrEqual(1);
-    expect(result.verifiedFindings[0]!.status).toBe("confirmed");
+    expect(result.verifiedFindings[0]!.status).toBe("suspected");
     expect(result.verifiedFindings[0]!.confidence).toBe("high");
     // CUA is opt-in and unconfigured in the test env: the 4th analyzer runs
     // as part of the fan-out but contributes nothing.
