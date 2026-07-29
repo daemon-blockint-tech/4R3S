@@ -1,0 +1,17 @@
+{
+  "version": "0.0.0",
+  "name": "bump_seed_canonicalization_insecure",
+  "instructions": [
+    {
+      "name": "setValue",
+      "accounts": [
+        { "name": "data", "isMut": true, "isSigner": false }
+      ],
+      "args": [
+        { "name": "key", "type": "u64" },
+        { "name": "newValue", "type": "u64" },
+        { "name": "bump", "type": "u8" }
+      ]
+    }
+  ]
+}

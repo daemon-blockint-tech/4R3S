@@ -1,0 +1,14 @@
+{
+  "version": "0.0.0",
+  "name": "closing_accounts_insecure",
+  "instructions": [
+    {
+      "name": "close",
+      "accounts": [
+        { "name": "account", "isMut": true, "isSigner": false },
+        { "name": "destination", "isMut": true, "isSigner": false }
+      ],
+      "args": []
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "version": "0.0.0",
+  "name": "insecure",
+  "instructions": [
+    {
+      "name": "checkSysvarAddress",
+      "accounts": [
+        { "name": "rent", "isMut": false, "isSigner": false }
+      ],
+      "args": []
+    }
+  ]
+}

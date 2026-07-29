@@ -1,0 +1,13 @@
+{
+  "version": "0.0.0",
+  "name": "signer_authorization_insecure",
+  "instructions": [
+    {
+      "name": "logMessage",
+      "accounts": [
+        { "name": "authority", "isMut": false, "isSigner": false }
+      ],
+      "args": []
+    }
+  ]
+}

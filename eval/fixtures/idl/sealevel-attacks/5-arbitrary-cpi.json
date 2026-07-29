@@ -1,0 +1,18 @@
+{
+  "version": "0.0.0",
+  "name": "arbitrary_cpi_insecure",
+  "instructions": [
+    {
+      "name": "cpi",
+      "accounts": [
+        { "name": "source", "isMut": true, "isSigner": false },
+        { "name": "destination", "isMut": true, "isSigner": false },
+        { "name": "authority", "isMut": false, "isSigner": false },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ]
+    }
+  ]
+}

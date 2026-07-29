@@ -69,6 +69,36 @@ The other datasets in the SEC-5 brief are not ingested; `python eval/fetch_datas
 adding — it is Solana-specific and program-level, but `gated: manual` on the HF API,
 so it needs an approved account and an `HF_TOKEN`.
 
+### sealevel-attacks (EVAL-3)
+
+`fetch_sealevel_attacks.py` ingests `coral-xyz/sealevel-attacks` (11 Anchor
+programs, one vulnerability class each) pinned to revision `24555d04`. Unlike the
+HF dataset, the source is a git repo whose vulnerabilities are labeled by
+*directory*, so `eval/mappings/sealevel-attacks.json` is keyed by program
+directory, not by an in-text label. It writes the same `ground_truth.csv` /
+`corpus/` layout (appending to any existing `ground_truth.csv` rather than
+clobbering it, so corpora compose), plus one Anchor **IDL** per target under
+`idl/`, and a `manifest.sealevel-attacks.json`.
+
+```bash
+# default: fetch each lib.rs from GitHub raw at the pinned revision (no clone needed)
+python eval/fetch_sealevel_attacks.py
+
+# or read from a local clone
+python eval/fetch_sealevel_attacks.py --repo /path/to/sealevel-attacks
+```
+
+Two caveats, both recorded in the mapping's `notes`. **(1)** Only the `insecure`
+variant of each program is ingested; the `secure`/`recommended` fixes are not yet
+scored as clean targets (future work — would strengthen the precision signal).
+**(2)** The paired IDLs under `eval/fixtures/idl/sealevel-attacks/` are
+**hand-authored**, not `anchor build` output: these programs deliberately omit
+`#[account(mut)]`, so a literal build would emit `isMut:false` everywhere. The
+fixtures instead follow a stated deterministic rule (isSigner from `Signer<>` /
+`.is_signer` checks; isMut from state mutation in the instruction body) so they
+carry the account flags POC-1 needs for precondition generation. `fetch_sealevel_attacks.py`
+validates each fixture against the mapping before writing, so drift fails loudly.
+
 ## Input schema
 
 Both files may be CSV, JSON, or JSONL. Column names are shared between them.
