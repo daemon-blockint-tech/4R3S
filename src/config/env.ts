@@ -31,7 +31,7 @@ const schema = z.object({
     .string()
     .url()
     .default("https://openrouter.ai/api/v1"),
-  OPENROUTER_MODEL: z.string().default("anthropic/claude-3.5-sonnet"),
+  OPENROUTER_MODEL: z.string().default("anthropic/claude-sonnet-4.5"),
   OPENROUTER_REFERRER: z.string().default("ares-agent"),
   // Per-request deadline for LLM calls. Report synthesis is the slowest phase,
   // so this is generous — it exists to bound a hung socket, not to cut work off.
