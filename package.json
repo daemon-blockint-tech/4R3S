@@ -19,7 +19,8 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:migrate": "tsx src/scripts/migrate.ts",
-    "ingest:solsec": "tsx src/scripts/ingest-solsec.ts"
+    "ingest:solsec": "tsx src/scripts/ingest-solsec.ts",
+    "eval:predict": "tsx src/scripts/eval-predict.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.2.3",

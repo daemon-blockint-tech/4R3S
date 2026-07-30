@@ -125,11 +125,23 @@ def build_ground_truth(labeled: pd.DataFrame, dataset: str, revision: str) -> pd
 
 
 def write_corpus(labeled: pd.DataFrame, out_dir: Path) -> int:
+    """Write one .rs per target, plus index.json mapping file stem -> target_id.
+
+    The filename replaces `:` with `_` to stay filesystem-safe, which is lossy:
+    a runner that recovers the id from the filename produces `a_b_c` where the
+    ground truth says `a:b:c`, every row misses, and the score is 0.0 for a
+    system that detected everything. The index makes the mapping explicit
+    instead of something each consumer has to guess.
+    """
     corpus = out_dir / "corpus"
     corpus.mkdir(parents=True, exist_ok=True)
     written = labeled.drop_duplicates(subset=["target_id"])
+    index = {}
     for target_id, code in zip(written["target_id"], written["code"]):
-        (corpus / f"{target_id.replace(':', '_')}.rs").write_text(code)
+        stem = target_id.replace(":", "_")
+        (corpus / f"{stem}.rs").write_text(code)
+        index[stem] = target_id
+    (corpus / "index.json").write_text(json.dumps(index, indent=2, sort_keys=True))
     return len(written)
 
 
