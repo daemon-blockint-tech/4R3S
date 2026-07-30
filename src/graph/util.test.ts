@@ -357,3 +357,15 @@ describe("fenceUntrusted", () => {
     expect(out.endsWith(FENCE_CLOSE)).toBe(true);
   });
 });
+
+describe("deterministic is not reachable from model output", () => {
+  it("coerceFindings ignores a `deterministic` field in the response", () => {
+    // `deterministic` grants a finding the confirmed label without a source
+    // citation, so a model that could set it would confirm its own prose.
+    const [f] = coerceFindings(
+      [{ category: "upgrade-authority-risk", deterministic: true, severity: "high" }],
+      "heuristic",
+    );
+    expect(f!.deterministic).toBeUndefined();
+  });
+});

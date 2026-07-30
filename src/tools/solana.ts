@@ -16,6 +16,29 @@ import { timedFetch } from "../config/timeout.js";
 /** BPF Upgradeable Loader — programs owned by this are upgradeable. */
 const BPF_UPGRADEABLE_LOADER = "BPFLoaderUpgradeab1e11111111111111111111111";
 
+/** Accounts owned by the System Program are plain keypairs, not PDAs. */
+const SYSTEM_PROGRAM = "11111111111111111111111111111111";
+
+/**
+ * Who can replace the deployed program.
+ *
+ * The distinction the catalog's `upgrade-authority-risk` entry actually draws is
+ * "single key" vs "multisig/timelock or renounced", not "upgradeable or not" —
+ * nearly every live program is upgradeable, so flagging that alone is noise.
+ *
+ * `program-controlled` is deliberately not called "multisig": the owner tells us
+ * the authority is a PDA rather than a keypair, which is checkable, but not that
+ * the owning program enforces a threshold or a timelock. Claiming that would be
+ * asserting something we did not verify.
+ */
+export type AuthorityKind =
+  /** No upgrade authority: the program is immutable. */
+  | "renounced"
+  /** A plain keypair — one signature replaces the program. */
+  | "single-key"
+  /** Owned by some program, so a PDA. Which program, and what it enforces, is not checked here. */
+  | "program-controlled";
+
 export interface ProgramInfo {
   address: string;
   exists: boolean;
@@ -24,6 +47,10 @@ export interface ProgramInfo {
   loader?: "upgradeable" | "legacy" | "unknown";
   dataLen?: number;
   upgradeAuthority?: string | null;
+  /** How `upgradeAuthority` is held. Undefined when it could not be resolved. */
+  upgradeAuthorityKind?: AuthorityKind;
+  /** Owner of the upgrade-authority account, when it is `program-controlled`. */
+  upgradeAuthorityOwner?: string;
   programDataAddress?: string;
   error?: string;
 }
@@ -92,6 +119,24 @@ export async function loadProgram(address: string): Promise<ProgramInfo> {
           info.upgradeAuthority = hasAuthority
             ? new PublicKey(programData.data.subarray(13, 45)).toBase58()
             : null;
+
+          if (!hasAuthority) {
+            info.upgradeAuthorityKind = "renounced";
+          } else {
+            // One more read: a keypair authority is System-owned, a PDA is owned
+            // by the program that controls it. An authority that holds no
+            // lamports has no account at all, which still means a keypair.
+            const authority = await conn.getAccountInfo(
+              new PublicKey(info.upgradeAuthority!),
+            );
+            const owner = authority?.owner.toBase58();
+            if (!authority || owner === SYSTEM_PROGRAM) {
+              info.upgradeAuthorityKind = "single-key";
+            } else {
+              info.upgradeAuthorityKind = "program-controlled";
+              info.upgradeAuthorityOwner = owner;
+            }
+          }
         }
       } catch (err) {
         logger.debug(

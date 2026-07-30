@@ -120,3 +120,79 @@ describe("analyzeOnchain outcome reporting", () => {
     expect(report.detail).toContain("not valid JSON");
   });
 });
+
+describe("deterministic authority posture", () => {
+  const base: ProgramInfo = {
+    address: state.programAddress!,
+    exists: true,
+    executable: true,
+    owner: "BPFLoaderUpgradeab1e11111111111111111111111",
+    loader: "upgradeable",
+    dataLen: 36,
+    programDataAddress: "PData111111111111111111111111111111111111111",
+  };
+
+  it("flags a single-key upgrade authority as a confirmable, non-speculative finding", async () => {
+    loadProgram.mockResolvedValue({
+      ...base,
+      upgradeAuthority: "Auth11111111111111111111111111111111111111111",
+      upgradeAuthorityKind: "single-key",
+    });
+    const out = await makeAnalyzeOnchainNode(
+      deps(chatReturning('{"findings":[],"checked":[]}')),
+    )(state);
+
+    const f = out.findings!.find((x) => x.deterministic);
+    expect(f).toBeDefined();
+    expect(f!.category).toBe("upgrade-authority-risk");
+    expect(f!.speculative).toBe(false);
+    expect(f!.source).toBe("onchain");
+    // The catalog's distinction is single-key vs multisig/renounced, so the
+    // evidence has to name which one was observed.
+    expect(f!.evidence).toMatch(/System Program/);
+    expect(out.coverage).toContain("upgrade-authority-risk");
+  });
+
+  it("reports a renounced authority as no finding at all", async () => {
+    loadProgram.mockResolvedValue({
+      ...base,
+      upgradeAuthority: null,
+      upgradeAuthorityKind: "renounced",
+    });
+    const out = await makeAnalyzeOnchainNode(
+      deps(chatReturning('{"findings":[],"checked":[]}')),
+    )(state);
+    // Immutable is the safe state; flagging it is the noise that made the
+    // previous ruleset unusable.
+    expect(out.findings!.filter((f) => f.deterministic)).toEqual([]);
+  });
+
+  it("does not claim a program-controlled authority is a multisig", async () => {
+    loadProgram.mockResolvedValue({
+      ...base,
+      upgradeAuthority: "Auth11111111111111111111111111111111111111111",
+      upgradeAuthorityKind: "program-controlled",
+      upgradeAuthorityOwner: "Squads11111111111111111111111111111111111111",
+    });
+    const out = await makeAnalyzeOnchainNode(
+      deps(chatReturning('{"findings":[],"checked":[]}')),
+    )(state);
+
+    const f = out.findings!.find((x) => x.deterministic)!;
+    expect(f.severity).toBe("info");
+    expect(f.evidence).not.toMatch(/multisig/i);
+    expect(f.evidence).toMatch(/not checked here/i);
+  });
+
+  it("survives an unparseable model response", async () => {
+    loadProgram.mockResolvedValue({
+      ...base,
+      upgradeAuthority: "Auth11111111111111111111111111111111111111111",
+      upgradeAuthorityKind: "single-key",
+    });
+    const out = await makeAnalyzeOnchainNode(deps(chatReturning("not json")))(state);
+    // The one class this analyzer settles without a model must not depend on one.
+    expect(out.findings!.filter((f) => f.deterministic)).toHaveLength(1);
+    expect(out.analyzers?.[0]?.outcome).toBe("degraded");
+  });
+});
