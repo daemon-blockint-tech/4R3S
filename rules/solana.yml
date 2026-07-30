@@ -18,24 +18,14 @@
 #
 # Type-level rules use pattern-regex because semgrep's Rust parser rejects a bare
 # type as a pattern ("no pattern found"); expression rules use real patterns.
+# Removed: `unsafe-type-cast` (`$X as u64|u32|usize|i64`). Measured over 173 real
+# Solana programs it produced 73 of 110 total hits — 66% of everything this
+# ruleset emitted — with no confirmed true positive. The pattern cannot see the
+# source type, so it flags always-safe widening and the ubiquitous `as usize`
+# index idiom, while missing the narrowing casts that actually truncate
+# (`as u8`, `as u16`, `as u128`, `try_into().unwrap()`). Deciding a cast is
+# unsafe needs the source type, which is a typed-AST question, not a regex one.
 rules:
-  - id: unsafe-type-cast
-    languages: [rust]
-    severity: WARNING
-    message: >-
-      Narrowing `as` cast silently truncates or reinterprets bits. On a token
-      amount, price, or length this corrupts the value with no error. Use
-      `try_into()` and handle the failure, or bounds-check before casting.
-    metadata:
-      category: arithmetic
-      cwe: "CWE-681"
-    patterns:
-      - pattern-either:
-          - pattern: $X as u64
-          - pattern: $X as u32
-          - pattern: $X as usize
-          - pattern: $X as i64
-
   - id: anchor-constraint-gap
     languages: [rust]
     severity: WARNING

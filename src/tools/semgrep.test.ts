@@ -128,3 +128,88 @@ describe("a scan that did not complete is not a clean result", () => {
     }
   }, 20_000);
 });
+
+describe("scan-coverage regressions", () => {
+  const realPath = process.env.PATH;
+
+  afterEach(() => {
+    process.env.PATH = realPath;
+    // Restore the absent-binary default from vitest.config.ts so the rest of
+    // the suite stays hermetic on hosts that do have semgrep.
+    process.env.SEMGREP_BIN = "ares-semgrep-absent-in-tests";
+  });
+
+  it("treats a scan that opened no files as failed, never ok", async () => {
+    // Semgrep applies .gitignore by default, so an audited repo that ignores its
+    // own source path yielded scanned:0 with no error — which rendered as `ok`,
+    // and `ok` means "silence here is evidence". That published a clean audit of
+    // a program nobody scanned, and the audited party controls .gitignore.
+    const { src, cleanup } = shimSemgrep(
+      `#!/bin/sh\necho '{"results":[],"errors":[],"paths":{"scanned":[]}}'\n`,
+    );
+    try {
+      const res = await runSemgrep(src);
+      expect(res.available).toBe(false);
+      expect(res.reason).toBe("no-files-scanned");
+
+      const out = await makeAnalyzeStaticNode()({ sourcePath: src } as AresState);
+      expect(out.analyzers?.[0]?.outcome).toBe("failed");
+      expect(out.findings).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps findings when a warn-level parse error accompanies a completed scan", async () => {
+    // One warn-level PartialParsing on 1 of 173 real programs discarded all 110
+    // findings from the other 172. Warnings degrade coverage; they do not void
+    // the scan.
+    const json = JSON.stringify({
+      results: [
+        {
+          check_id: "rules.sysvar-spoofing",
+          path: "a.rs",
+          start: { line: 3 },
+          extra: { message: "spoofable sysvar", severity: "ERROR" },
+        },
+      ],
+      errors: [{ level: "warn", type: "PartialParsing", message: "could not parse b.rs" }],
+      paths: { scanned: ["a.rs", "b.rs"] },
+    });
+    // `echo` is a shell builtin; the shim puts only its own dir on PATH, so an
+    // external binary like `cat` would not resolve and the scan would look
+    // empty for the wrong reason.
+    const { src, cleanup } = shimSemgrep(`#!/bin/sh\necho '${json}'\n`);
+    try {
+      const res = await runSemgrep(src);
+      expect(res.available).toBe(true);
+      expect(res.findings).toHaveLength(1);
+      expect(res.partial).toMatch(/coverage is incomplete/i);
+
+      const out = await makeAnalyzeStaticNode()({ sourcePath: src } as AresState);
+      // Findings survive, but the analyzer must not claim full coverage.
+      expect(out.findings).toHaveLength(1);
+      expect(out.analyzers?.[0]?.outcome).toBe("degraded");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("still fails the scan on an error-level entry", async () => {
+    const json = JSON.stringify({
+      results: [],
+      errors: [{ level: "error", type: "RuleParseError", message: "bad rule" }],
+      paths: { scanned: ["a.rs"] },
+    });
+    const { src, cleanup } = shimSemgrep(`#!/bin/sh\necho '${json}'\n`);
+    try {
+      const res = await runSemgrep(src);
+      expect(res.available).toBe(false);
+      // Specifically scan-error, not the `unparseable` an empty stdout yields —
+      // otherwise this passes on a shim that never printed anything.
+      expect(res.reason).toBe("scan-error");
+    } finally {
+      cleanup();
+    }
+  });
+});

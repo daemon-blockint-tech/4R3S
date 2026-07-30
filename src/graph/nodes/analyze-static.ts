@@ -47,6 +47,10 @@ function outcomeFor(reason: SemgrepSkipReason | undefined): AnalyzerOutcome {
     case "spawn-error":
     case "scan-error":
     case "scan-timeout":
+    // Zero files opened: the scanner did not look, so its silence is not
+    // evidence of anything. Reporting this as `ok` rendered an unscanned
+    // program as a clean audit.
+    case "no-files-scanned":
       return "failed";
     default:
       return "degraded";
@@ -153,9 +157,21 @@ export function makeAnalyzeStaticNode() {
     const findings = result.findings.map(toFinding);
     const coverage = [...new Set(findings.map((f) => f.category))].filter((id) => id !== "other");
     logger.info(
-      { component: "node.analyze-static", findings: findings.length, coverage: coverage.length },
+      {
+        component: "node.analyze-static",
+        findings: findings.length,
+        coverage: coverage.length,
+        partial: result.partial,
+      },
       "Static analysis complete",
     );
-    return { findings, coverage, analyzers: status("ok") };
+    // A scan that completed but could not parse every file found real issues in
+    // the files it did read, so the findings stand — but the classes it never
+    // reached are unexamined, and `ok` would claim otherwise.
+    return {
+      findings,
+      coverage,
+      analyzers: result.partial ? status("degraded", result.partial) : status("ok"),
+    };
   };
 }

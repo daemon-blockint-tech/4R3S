@@ -46,16 +46,25 @@ export type SemgrepSkipReason =
   | "not-installed"
   | "unparseable"
   | "spawn-error"
-  /** Non-zero exit, or a rule/target error reported in the JSON `errors` array. */
+  /** Non-zero exit, or an error-level entry in the JSON `errors` array. */
   | "scan-error"
   /** Killed after SEMGREP_TIMEOUT_MS. */
-  | "scan-timeout";
+  | "scan-timeout"
+  /** The scan ran but covered no files, so its silence says nothing. */
+  | "no-files-scanned";
 
 export interface SemgrepResult {
   available: boolean;
   findings: SemgrepFinding[];
   note?: string;
   reason?: SemgrepSkipReason;
+  /**
+   * Set when the scan completed and its findings are usable, but coverage was
+   * incomplete — currently a warn-level parse failure on some files. Distinct
+   * from `reason`: the findings are real and must still be reported, while the
+   * analyzer degrades so the report says coverage was partial.
+   */
+  partial?: string;
 }
 
 interface SemgrepJson {
@@ -65,8 +74,14 @@ interface SemgrepJson {
     start: { line: number };
     extra: { message: string; severity: string };
   }>;
-  /** Rule-parse and target errors. Non-empty means the scan was not clean. */
-  errors?: Array<{ message?: string; type?: string }>;
+  /**
+   * Rule-parse and target errors. `level` matters: semgrep emits warn-level
+   * entries (e.g. PartialParsing on one file) alongside a scan that otherwise
+   * completed and found real issues.
+   */
+  errors?: Array<{ message?: string; type?: unknown; level?: string }>;
+  /** Files semgrep actually opened. Empty means it inspected nothing. */
+  paths?: { scanned?: string[] };
 }
 
 /**
@@ -128,6 +143,12 @@ export async function runSemgrep(
           // Rules come from a committed file, so there is no reason to phone
           // home; SECURITY.md promises no outbound calls in the offline config.
           "--metrics=off",
+          // Semgrep applies .gitignore semantics by default, so a target whose
+          // source path the audited repository ignores is silently skipped: the
+          // scan examines zero files and reports no findings, which this
+          // analyzer used to render as `ok` — a clean audit of code nobody
+          // scanned. The audited party controls that file.
+          "--no-git-ignore",
           "--config",
           config,
           sourcePath,
@@ -221,18 +242,47 @@ export async function runSemgrep(
         // A rule that failed to parse yields `results: []` alongside a populated
         // `errors[]`. Silently dropping that reports "scanned, found nothing"
         // for rules that never ran.
+        //
+        // Level is load-bearing. Treating every entry as fatal discards a whole
+        // scan over one warn-level PartialParsing on one file: measured against
+        // 173 real programs, a single warn threw away all 110 findings from the
+        // other 172. Only error-level entries mean the scan did not complete.
         const errors = parsed.errors ?? [];
-        if (errors.length > 0) {
-          const first = errors[0]?.message ?? errors[0]?.type ?? "unknown error";
+        const fatal = errors.filter((e) => (e.level ?? "error") === "error");
+        if (fatal.length > 0) {
+          const first = fatal[0]?.message ?? String(fatal[0]?.type ?? "unknown error");
           logger.warn(
-            { component: "semgrep", errors: errors.length, first },
+            { component: "semgrep", errors: fatal.length, first },
             "Semgrep reported rule/target errors",
           );
           finish({
             available: false,
             findings: [],
-            note: `semgrep reported ${errors.length} error(s): ${String(first).slice(0, 200)}`,
+            note: `semgrep reported ${fatal.length} error(s): ${String(first).slice(0, 200)}`,
             reason: "scan-error",
+          });
+          return;
+        }
+
+        // Zero files opened is not "scanned and found nothing" — it is "did not
+        // look". The dominant cause was .gitignore filtering (now disabled
+        // above); a path holding no scannable source reaches here too. Either
+        // way the analyzer must not claim its silence is evidence.
+        // Only when the field is present and empty. An absent `paths` means the
+        // scanner did not tell us what it opened, which is not the same as
+        // telling us it opened nothing — inventing a failure there would fail
+        // every genuinely clean scan from a build that omits the field.
+        const scanned = parsed.paths?.scanned;
+        if (scanned && scanned.length === 0) {
+          logger.warn(
+            { component: "semgrep", path: sourcePath },
+            "Semgrep scanned no files; its silence carries no assurance",
+          );
+          finish({
+            available: false,
+            findings: [],
+            note: `semgrep scanned 0 files under ${sourcePath}`,
+            reason: "no-files-scanned",
           });
           return;
         }
@@ -244,7 +294,17 @@ export async function runSemgrep(
           severity: r.extra?.severity ?? "INFO",
           message: r.extra?.message ?? "",
         }));
-        finish({ available: true, findings });
+        const partial =
+          errors.length > 0
+            ? `${errors.length} file(s) could not be fully parsed; coverage is incomplete`
+            : undefined;
+        if (partial) {
+          logger.warn(
+            { component: "semgrep", warnings: errors.length, scanned: scanned?.length },
+            "Semgrep completed with parse warnings; findings kept, coverage partial",
+          );
+        }
+        finish({ available: true, findings, partial });
       } catch (err) {
         logger.warn(
           { component: "semgrep", err: String(err) },
