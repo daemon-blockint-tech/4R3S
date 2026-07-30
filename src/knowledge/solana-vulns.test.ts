@@ -106,8 +106,8 @@ describe("rules/solana.yml ↔ catalog contract", () => {
   it("parsed at least the committed rules", () => {
     // Guards against a broken path or regex passing vacuously — the failure the
     // ruleset itself was written to prevent.
-    expect(ruleIds).toContain("unsafe-type-cast");
-    expect(ruleIds.length).toBeGreaterThanOrEqual(7);
+    expect(ruleIds).toContain("type-cosplay");
+    expect(ruleIds.length).toBeGreaterThanOrEqual(4);
   });
 
   it("every rule id is a catalog id", () => {

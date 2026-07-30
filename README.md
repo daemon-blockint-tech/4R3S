@@ -194,6 +194,80 @@ builds a 152-label ground truth set from `FraChiacc99/solana-vuln-rust`,
 job fails a `release` event while `eval/predictions/ares-latest.csv` is absent.
 The table above is updated from that job's output, not by hand.
 
+### What *has* been measured: static-ruleset output on audited production code
+
+This is **not** an accuracy figure and does not belong in the table above. Recall
+was not measured at all — nobody established which real vulnerabilities are
+present in these programs — and precision was not computed either: no finding
+here has been adjudicated true or false positive. What it measures is how much
+output `rules/solana.yml` produces when pointed at Solana programs that have
+already passed professional audit, where most output is therefore expected to be
+false. This is the static layer alone — the LLM heuristic analyzer, the on-chain
+analyzer and VERIFY were not run — and the commits in the table below are each
+repo's HEAD on the measurement date, not the commits the published audits
+covered, so some of the scanned code post-dates its audit.
+
+Over **917 files from 10 audited programs, the committed ruleset emits 22
+findings (24.0 per 1k files)**: 21 `non-canonical-bump`, 1
+`account-close-revival`.
+
+| Program | Commit | Files | Findings |
+|---|---|---:|---:|
+| [drift-labs/protocol-v2](https://github.com/drift-labs/protocol-v2) | `13e8e9b` | 187 | 0 |
+| [blockworks-foundation/mango-v4](https://github.com/blockworks-foundation/mango-v4) | `ee671d2` | 200 | 0 |
+| [marinade-finance/liquid-staking-program](https://github.com/marinade-finance/liquid-staking-program) | `b8fe3f8` | 53 | 6 |
+| [Ellipsis-Labs/phoenix-v1](https://github.com/Ellipsis-Labs/phoenix-v1) | `5a34f7f` | 45 | 1 |
+| [Squads-Protocol/v4](https://github.com/Squads-Protocol/v4) | `c34015c` | 41 | 4 |
+| [mrgnlabs/marginfi-v2](https://github.com/mrgnlabs/marginfi-v2) | `2cc4e06` | 158 | 1 |
+| [metaplex-foundation/mpl-token-metadata](https://github.com/metaplex-foundation/mpl-token-metadata) | `349e061` | 114 | 0 |
+| [solendprotocol/solana-program-library](https://github.com/solendprotocol/solana-program-library) | `d04ce00` | 24 | 10 |
+| [solana-program/token](https://github.com/solana-program/token) | `cd5cdc8` | 7 | 0 |
+| [wormhole-foundation/wormhole](https://github.com/wormhole-foundation/wormhole) | `49f4295` | 88 | 0 |
+
+Reproduce a row with the same invocation `src/tools/semgrep.ts` issues, pointed
+at that repo's program subtree — the first of `programs/`, `program/`,
+`solana/programs/`, `solana/` that contains `.rs` files, else the checkout root.
+`Files` is the count of `.rs` files semgrep opened under that subtree, and it is
+the denominator of every per-1k rate here:
+
+```bash
+semgrep --json --quiet --metrics=off --no-git-ignore \
+  --config rules/solana.yml <program-checkout>/<subtree>
+```
+
+**Measurement is why the ruleset shrank from 7 rules to 4.** Run over 805 files
+from 8 of these programs — before the solend and wormhole clones finished — the
+then-6-rule set emitted 386 findings, 479.5 per 1k files, on code that had
+already been audited. The two runs cover different corpora, so the drop from
+479.5 to 24.0 per 1k is not a like-for-like before/after on fixed code: solend
+alone supplies 10 of the 22 findings that remain, and it was not in the earlier
+corpus. Read it as the order-of-magnitude effect of dropping two rules. Three
+rules have been removed in total, each recorded with its reasoning in
+`rules/solana.yml`:
+
+- `anchor-constraint-gap` produced 370 of those 386 (96% of all output).
+  Classified by regex over the four lines above each hit, not by manual review:
+  50.0% already carried the `#[account(...)]` constraint the rule's own message
+  told them to add, 31.4% carried the `/// CHECK:` justification Anchor refuses
+  to compile without, and the remaining 18.6% carried neither marker in that
+  window and were not inspected — whether they are validated in the handler
+  body, where a regex cannot look, is unverified.
+- `sysvar-spoofing` was wrong rather than noisy: `Sysvar::from_account_info`
+  validates the account key itself, so the call it flagged cannot be spoofed.
+- `unsafe-type-cast` was removed before that run, on separate evidence: 73 of 110
+  hits, 66% of output over the 173-target eval corpus, with no confirmed true
+  positive; it cannot see the source type, so it flags safe widening.
+
+What remains is honest but weak, and the residue says the same thing the removals
+did: 21 of the 22 are `non-canonical-bump`, and reading 12 of those 21 by hand
+shows the legitimate stored-canonical-bump re-derivation pattern, a test stub and
+a CLI tool; the other 9 were not examined. Separating that from an
+attacker-supplied bump requires knowing where the bump came from. Every rule that
+fired with volume failed the same way — it matched an idiom and could not see the
+adjacent context (`#[account]`, the bump's origin, the handler body) that decides
+the answer. That is the case for building the deterministic engine in `core/`,
+not for more patterns.
+
 ## Vulnerability knowledge & reporting
 
 The analyzers work through a structured Solana vulnerability catalog
