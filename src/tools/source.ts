@@ -12,7 +12,7 @@
  * "no source to read" apart from "could not read the source".
  */
 import { readFile, readdir, stat } from "node:fs/promises";
-import { join, relative, extname, sep } from "node:path";
+import { basename, join, relative, extname, sep } from "node:path";
 
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
@@ -98,6 +98,47 @@ async function walk(root: string, dir: string, out: string[]): Promise<void> {
   }
 }
 
+/** Load a single `.rs` or Anchor IDL file named directly as the source path. */
+async function loadSingleFile(
+  filePath: string,
+  budgetChars: number,
+): Promise<LoadedSource> {
+  const ext = extname(filePath);
+  const isIdl = ext === ".json" && /idl/i.test(filePath);
+  if (ext !== ".rs" && !isIdl) {
+    return {
+      available: false,
+      files: [],
+      discovered: [],
+      truncated: false,
+      note: `not a Rust or IDL source file: ${filePath}`,
+      reason: "no-rust-files",
+    };
+  }
+  let content: string;
+  try {
+    content = await readFile(filePath, "utf8");
+  } catch {
+    return {
+      available: false,
+      files: [],
+      discovered: [],
+      truncated: false,
+      note: `could not read ${filePath}`,
+      reason: "unreadable",
+    };
+  }
+  const rel = basename(filePath);
+  const truncated = content.length > budgetChars;
+  if (truncated) content = content.slice(0, budgetChars);
+  return {
+    available: true,
+    files: [{ path: rel, lines: content.split("\n").length, content }],
+    discovered: [rel],
+    truncated,
+  };
+}
+
 /**
  * Load auditable source under `sourcePath`.
  *
@@ -122,8 +163,9 @@ export async function loadSource(
     };
   }
 
+  let rootStat;
   try {
-    await stat(sourcePath);
+    rootStat = await stat(sourcePath);
   } catch {
     return {
       available: false,
@@ -133,6 +175,15 @@ export async function loadSource(
       note: `source path not found: ${sourcePath}`,
       reason: "path-missing",
     };
+  }
+
+  // A single file named directly, not a tree: `--source program.rs` and the
+  // eval corpus (one `.rs` per target) both land here. walk() readdir's its
+  // argument, so a file path would discover nothing and the audit would
+  // silently drop to black-box — the exact failure the source loader exists to
+  // prevent.
+  if (rootStat.isFile()) {
+    return loadSingleFile(sourcePath, budgetChars);
   }
 
   const discovered: string[] = [];
