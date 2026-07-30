@@ -499,6 +499,23 @@ export const VULN_CATALOG: VulnEntry[] = [
       "https://blog.trailofbits.com/2023/04/11/solana-common-pitfalls/",
     ],
   },
+  {
+    id: "instruction-introspection",
+    title: "Improper Instruction Introspection",
+    category: "logic",
+    defaultSeverity: "medium",
+    cwe: "CWE-841",
+    description:
+      "The program reads sibling instructions from the instructions sysvar to correlate them (e.g. checking a paired transfer), but uses an absolute index or an unchecked loader, so an attacker can reorder, reuse, or spoof the introspected instruction and bypass the correlation.",
+    detectionHints:
+      "Look for `load_instruction_at` (the unchecked variant) instead of `load_instruction_at_checked`, absolute instruction indexes rather than relative (`get_instruction_relative`), or introspection that does not validate the sibling's program id and accounts.",
+    remediation:
+      "Use the checked loaders (`load_instruction_at_checked`, `load_current_index_checked`) with relative indexing, and validate the introspected instruction's program id, accounts, and data before trusting the correlation.",
+    references: [
+      "https://docs.rs/solana-program/latest/solana_program/sysvar/instructions/",
+      "https://github.com/coral-xyz/sealevel-attacks",
+    ],
+  },
 ];
 
 /** Set of all valid catalog ids for fast lookup. */

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { describe, it, expect } from "vitest";
 
 import {
@@ -85,5 +88,31 @@ describe("formatChecklistForPrompt", () => {
     const lines = checklist.split("\n");
     expect(lines.length).toBe(VULN_CATALOG.length);
     expect(lines[0]).toMatch(/^1\./);
+  });
+});
+
+describe("rules/solana.yml ↔ catalog contract", () => {
+  // The Semgrep ruleset names every rule after a catalog id so analyze-static's
+  // mapCategory hits the exact-match branch; a typo'd id silently falls through
+  // to the fuzzy fallback and mislabels the finding's class. This enforces the
+  // invariant the ruleset header only asserts in a comment.
+  const rulesetPath = fileURLToPath(
+    new URL("../../rules/solana.yml", import.meta.url),
+  );
+  const ruleIds = [
+    ...readFileSync(rulesetPath, "utf8").matchAll(/^\s*-\s*id:\s*(\S+)\s*$/gm),
+  ].map((m) => m[1]);
+
+  it("parsed at least the committed rules", () => {
+    // Guards against a broken path or regex passing vacuously — the failure the
+    // ruleset itself was written to prevent.
+    expect(ruleIds).toContain("unsafe-type-cast");
+    expect(ruleIds.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("every rule id is a catalog id", () => {
+    for (const id of ruleIds) {
+      expect(isVulnId(id), `rule "${id}" is not a VULN_CATALOG id`).toBe(true);
+    }
   });
 });

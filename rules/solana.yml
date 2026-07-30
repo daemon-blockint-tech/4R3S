@@ -59,3 +59,59 @@ rules:
       category: access-control
       cwe: "CWE-843"
     pattern-regex: '\btry_from_slice\s*\(\s*&?\s*\w+\.data\.borrow'
+
+  - id: non-canonical-bump
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `create_program_address` accepts any bump and derives a valid-but-arbitrary
+      PDA, so an attacker can pass a non-canonical bump to reach a different
+      address than the one you meant to gate on. Use `find_program_address` for
+      the canonical bump, or verify the supplied bump equals the canonical one.
+    metadata:
+      category: pda
+      cwe: "CWE-345"
+    pattern-regex: '\bcreate_program_address\s*\('
+
+  - id: account-close-revival
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Manually zeroing an account's lamports closes it, but leaving the data and
+      discriminator intact lets the same account be revived within the
+      transaction and reused. Prefer Anchor's `close = <recipient>`; if closing
+      by hand, also zero the data and assign the closed-account discriminator.
+    metadata:
+      category: lifecycle
+      cwe: "CWE-672"
+    pattern-regex: '(?:try_borrow_mut_lamports\s*\(\s*\)\s*\?|lamports\s*\(\s*\)\s*\.\s*borrow_mut\s*\(\s*\))\s*=\s*0'
+
+  - id: sysvar-spoofing
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Reading a sysvar from a passed `AccountInfo` via `from_account_info` trusts
+      an account the caller supplies, which can be spoofed. Read sysvars through
+      the syscall instead — `Clock::get()`, `Rent::get()` — which cannot be
+      faked, or constrain the account to the real sysvar address.
+    metadata:
+      category: access-control
+      cwe: "CWE-290"
+    pattern-regex: '\b(?:Clock|Rent|EpochSchedule|SlotHashes|StakeHistory|Fees|EpochRewards)::from_account_info\s*\('
+
+  - id: instruction-introspection
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `load_instruction_at` reads a sibling instruction by absolute index without
+      verifying the runtime bounds/correlation the checked variant enforces, so a
+      caller can reorder or spoof the introspected instruction. Use
+      `load_instruction_at_checked` (with a relative index) and validate the
+      sibling's program id and accounts before trusting it.
+    metadata:
+      category: logic
+      cwe: "CWE-841"
+    # `load_instruction_at(` cannot match `load_instruction_at_checked(` — the
+    # `(` must follow `at` directly — so the correct API is excluded for free
+    # without a lookahead (unsupported by Semgrep's re2 engine).
+    pattern-regex: '\bload_instruction_at\s*\('
