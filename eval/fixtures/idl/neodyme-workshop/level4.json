@@ -1,0 +1,42 @@
+{
+  "version": "0.0.0",
+  "name": "level4",
+  "instructions": [
+    {
+      "name": "initialize",
+      "accounts": [
+        { "name": "wallet", "isMut": true, "isSigner": false },
+        { "name": "authority", "isMut": false, "isSigner": false },
+        { "name": "owner", "isMut": true, "isSigner": true },
+        { "name": "mint", "isMut": true, "isSigner": false },
+        { "name": "rent", "isMut": false, "isSigner": false },
+        { "name": "splTokenProgram", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "deposit",
+      "accounts": [
+        { "name": "wallet", "isMut": true, "isSigner": false },
+        { "name": "source", "isMut": true, "isSigner": false },
+        { "name": "sourceAuthority", "isMut": false, "isSigner": true },
+        { "name": "mint", "isMut": false, "isSigner": false },
+        { "name": "splTokenProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    },
+    {
+      "name": "withdraw",
+      "accounts": [
+        { "name": "wallet", "isMut": true, "isSigner": false },
+        { "name": "authority", "isMut": false, "isSigner": false },
+        { "name": "owner", "isMut": false, "isSigner": true },
+        { "name": "destination", "isMut": true, "isSigner": false },
+        { "name": "mint", "isMut": false, "isSigner": false },
+        { "name": "splTokenProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    }
+  ]
+}

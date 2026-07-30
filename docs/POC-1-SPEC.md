@@ -11,14 +11,26 @@ crate rule, `core/README.md`) — from an Anchor IDL instruction fragment to a
 safe, redacted **PoC instruction object**. Lives in the planned `core/poc` crate
 (does not exist yet; scaffolded by ENG-1).
 
-Grounded against the 11 real fixtures produced for EVAL-3:
+Grounded against the 11 real Anchor fixtures produced for EVAL-3:
 `eval/mappings/sealevel-attacks.json` + `eval/fixtures/idl/sealevel-attacks/*.json`.
 Every rule below was checked against all 11, not just the worked examples shown.
 
-## Input: Anchor IDL instruction fragment
+> **Note on non-Anchor sources.** EVAL-3 also ingests the Neodyme workshop
+> (`eval/mappings/neodyme-workshop.json`), which is **native Solana** (raw
+> `solana_program` + Borsh), **not Anchor** — there is no generated IDL. Its
+> IDL-equivalent fixtures are hand-authored from the programs' builder functions
+> and follow the *same* `{name, accounts[isMut/isSigner], args[type]}` shape this
+> spec consumes, so the mapping rules below apply unchanged. The one semantic
+> caveat: for native programs the declared interface can diverge from what the
+> processor enforces, and that divergence is sometimes the vulnerability itself
+> (e.g. an account declared as a signer that is never actually checked). POC-1
+> should treat the IDL as the *declared* interface, not proof of enforcement.
 
-One instruction from an Anchor IDL (`instructions[]` array element), plus the
-IDL's `name` (program name) and a `provenance` triple supplied by the caller
+## Input: IDL instruction fragment
+
+One instruction from an IDL (`instructions[]` array element) — an Anchor IDL, or
+the native-program IDL-equivalent described in the note above — plus the IDL's
+`name` (program name) and a `provenance` triple supplied by the caller
 (source path / idl version / commit) since the IDL file itself doesn't carry that.
 
 ```json

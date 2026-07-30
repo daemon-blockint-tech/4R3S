@@ -99,6 +99,36 @@ fixtures instead follow a stated deterministic rule (isSigner from `Signer<>` /
 carry the account flags POC-1 needs for precondition generation. `fetch_sealevel_attacks.py`
 validates each fixture against the mapping before writing, so drift fails loudly.
 
+### neodyme-workshop (EVAL-3)
+
+`fetch_neodyme_workshop.py` ingests `neodyme-labs/neodyme-breakpoint-workshop`
+(4 progressive challenge programs, `level1`..`level4`) pinned to revision
+`d71ff2df`, mapped in `eval/mappings/neodyme-workshop.json`. One documented bug
+per level: missing signer check (level1), integer overflow/underflow (level2),
+type/account confusion (level3), arbitrary CPI (level4). Same
+`ground_truth.csv` / `corpus/` / `idl/` layout, appending to compose with the
+other sources; the level docs also ship real PoC exploit code (`pocs/`), useful
+as an answer key when POC-1/POC-2 land.
+
+```bash
+python eval/fetch_neodyme_workshop.py                 # GitHub raw at pinned revision
+python eval/fetch_neodyme_workshop.py --repo /path/to/neodyme-breakpoint-workshop
+```
+
+Two things to know, both in the mapping's `notes`. **(1)** These are **native**
+Solana programs (raw `solana_program` + Borsh), **not Anchor** — there is no
+generated IDL. The paired IDL-equivalents under `eval/fixtures/idl/neodyme-workshop/`
+are hand-authored from the program's *advertised interface*: instructions from
+the `WalletInstruction`/`TipInstruction` enum, accounts + flags from the builder
+functions' `AccountMeta` list (`new`→isMut, `new_readonly`→readonly, signer bool
+→isSigner). **(2)** For native programs the declared interface can diverge from
+what the processor enforces, and that divergence *is* the bug in some levels
+(level1 declares `authority` as a signer but never checks `is_signer`). The
+divergence is carried by the mapping's `category` + `location`, not the IDL
+shape — same discipline as the sealevel-attacks corpus. Each corpus entry is
+`lib.rs` + `processor.rs` concatenated with file markers, since the bug spans
+both.
+
 ## Input schema
 
 Both files may be CSV, JSON, or JSONL. Column names are shared between them.
