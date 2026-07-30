@@ -12,7 +12,7 @@
  * run is dozens of paid LLM audits, and a crash at target 150 must not discard
  * the first 149. Re-running overwrites from scratch — there is no resume.
  */
-import { appendFile, mkdir, readdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -82,6 +82,30 @@ export function toCsv(rows: PredictionRow[]): string {
   return [CSV_HEADER, ...rows.map(rowToCsvLine)].join("\n") + "\n";
 }
 
+/**
+ * Recover each corpus file's ground-truth `target_id` from the index
+ * `fetch_datasets.py` writes alongside the `.rs` files.
+ *
+ * The filename is a lossy encoding of the id (`:` becomes `_` to stay
+ * filesystem-safe), so deriving the id from the basename yields `a_b_c` where
+ * the ground truth says `a:b:c` — every row misses, and a full corpus run
+ * reports F1 0.0 for a system that detected correctly. Missing index is fatal
+ * rather than a fallback to the basename, because that fallback is exactly the
+ * silent-zero failure.
+ */
+async function loadTargetIndex(corpusDir: string): Promise<Record<string, string>> {
+  const indexPath = join(corpusDir, "index.json");
+  try {
+    return JSON.parse(await readFile(indexPath, "utf8")) as Record<string, string>;
+  } catch {
+    throw new Error(
+      `${indexPath} not found or unreadable. Re-run \`python eval/fetch_datasets.py\` ` +
+        `to write it; without it a corpus filename cannot be mapped back to the ` +
+        `ground-truth target_id and every prediction would miss.`,
+    );
+  }
+}
+
 interface Cli {
   corpus: string;
   out: string;
@@ -115,10 +139,20 @@ async function main(): Promise<void> {
       `corpus directory not found: ${cli.corpus}. Run \`python eval/fetch_datasets.py\` first.`,
     );
   }
+  const targetIndex = await loadTargetIndex(cli.corpus);
   let targets = entries
     .filter((name) => extname(name) === ".rs")
     .sort()
-    .map((name) => ({ id: basename(name, ".rs"), path: join(cli.corpus, name) }));
+    .map((name) => {
+      const stem = basename(name, ".rs");
+      const id = targetIndex[stem];
+      if (!id) {
+        throw new Error(
+          `corpus file ${name} has no entry in index.json; re-run \`python eval/fetch_datasets.py\``,
+        );
+      }
+      return { id, path: join(cli.corpus, name) };
+    });
   if (targets.length === 0) {
     throw new Error(`no .rs files under ${cli.corpus}`);
   }
