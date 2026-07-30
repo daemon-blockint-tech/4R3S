@@ -283,6 +283,10 @@ export function coerceVerdicts(raw: unknown, count: number): Verdict[] {
 function canBeConfirmed(f: Finding, source?: LoadedSource): boolean {
   if (f.speculative) return false;
   if (f.source === "static") return true;
+  // Decoded from RPC bytes by code, not authored by a model, so confirming it is
+  // not self-certification. `coerceFindings` never sets this, so no model output
+  // can reach it.
+  if (f.deterministic) return true;
   return Boolean(source?.available) && citesLoadedFile(f.location, source!);
 }
 

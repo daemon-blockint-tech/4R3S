@@ -46,6 +46,13 @@ export interface Finding {
   confidence: Confidence;
   /** VERIFY verdict. Undefined on freshly-produced (unverified) findings. */
   status?: FindingStatus;
+  /**
+   * Derived by code from tool output, with no model in the path — an on-chain
+   * account field decoded from RPC bytes, not a model's reading of it. VERIFY
+   * may confirm these, because re-deriving them does not mean asking the model
+   * whether it believes itself. Never set from LLM output.
+   */
+  deterministic?: boolean;
 }
 
 /** The analyzers that can contribute findings. */
