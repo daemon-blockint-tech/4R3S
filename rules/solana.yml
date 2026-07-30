@@ -26,18 +26,20 @@
 # (`as u8`, `as u16`, `as u128`, `try_into().unwrap()`). Deciding a cast is
 # unsafe needs the source type, which is a typed-AST question, not a regex one.
 rules:
-  - id: anchor-constraint-gap
-    languages: [rust]
-    severity: WARNING
-    message: >-
-      `UncheckedAccount` opts out of Anchor's type and ownership checking. Add an
-      `#[account(address = ...)]` constraint, or use a typed `Account<'info, T>`
-      / `Program<'info, T>` so the discriminator and owner are enforced.
-    metadata:
-      category: framework
-      cwe: "CWE-284"
-    pattern-regex: '\bUncheckedAccount\s*<'
-
+# Removed: `anchor-constraint-gap` (`\bUncheckedAccount\s*<`). Measured over 805
+# files of professionally audited production programs (Squads v4, Drift v2,
+# Mango v4, marginfi, Phoenix, Marinade, SPL Token, Metaplex) it produced 370 of
+# 386 total hits — 96% of everything this ruleset emitted. Triaged:
+#   50.0% already carry the `#[account(...)]` constraint the rule's own message
+#         told them to add, so the rule flagged code that had applied its fix;
+#   31.4% carry the `/// CHECK:` justification Anchor refuses to compile
+#         without, i.e. every legitimate use by construction;
+#   18.6% are unconstrained at the declaration and validated in the handler
+#         body — which is where the answer lives and where a regex cannot look.
+# `UncheckedAccount` is an Anchor idiom, not a defect. Deciding whether one is
+# safe means reading the adjacent `#[account]` attribute, following the `address`
+# constraint, and checking every path that reads the account: a typed-AST and
+# graph question, the same wall `unsafe-type-cast` hit.
   - id: type-cosplay
     languages: [rust]
     severity: WARNING
@@ -76,18 +78,18 @@ rules:
       cwe: "CWE-672"
     pattern-regex: '(?:try_borrow_mut_lamports\s*\(\s*\)\s*\?|lamports\s*\(\s*\)\s*\.\s*borrow_mut\s*\(\s*\))\s*=\s*0'
 
-  - id: sysvar-spoofing
-    languages: [rust]
-    severity: ERROR
-    message: >-
-      Reading a sysvar from a passed `AccountInfo` via `from_account_info` trusts
-      an account the caller supplies, which can be spoofed. Read sysvars through
-      the syscall instead — `Clock::get()`, `Rent::get()` — which cannot be
-      faked, or constrain the account to the real sysvar address.
-    metadata:
-      category: access-control
-      cwe: "CWE-290"
-    pattern-regex: '\b(?:Clock|Rent|EpochSchedule|SlotHashes|StakeHistory|Fees|EpochRewards)::from_account_info\s*\('
+# Removed: `sysvar-spoofing` (`<Sysvar>::from_account_info\s*\(`). This rule was
+# factually wrong, not merely noisy. `Sysvar::from_account_info` validates the
+# account key itself — solana-program/src/sysvar/mod.rs:190:
+#     fn from_account_info(account_info: &AccountInfo) -> Result<Self, _> {
+#         if !Self::check_id(account_info.unsigned_key()) {
+#             return Err(ProgramError::InvalidArgument);
+#         }
+# so the flagged call cannot be spoofed, and the trait exposes no `_unchecked`
+# variant to target instead. All 7 hits over 917 files of audited production
+# code (SPL Token, Solend) were the safe, idiomatic native-Rust call. Real sysvar
+# spoofing is hand-rolled deserialization of an unvalidated account's data — a
+# structural question, not this call site.
 
   - id: instruction-introspection
     languages: [rust]

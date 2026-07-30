@@ -38,6 +38,9 @@ function status(outcome: AnalyzerOutcome, detail?: string): AnalyzerReport[] {
  * `default`, which is `degraded` and too weak for them: a scanner that exited
  * non-zero, reported rule errors, or was killed on its deadline did not inspect
  * the source at all, so its silence carries no assurance whatsoever.
+ *
+ * `no-files-scanned` joins them: a scan that opened zero files did not look, so
+ * reporting it as `ok` published an unscanned program as a clean audit.
  */
 function outcomeFor(reason: SemgrepSkipReason | undefined): AnalyzerOutcome {
   switch (reason) {
@@ -47,9 +50,6 @@ function outcomeFor(reason: SemgrepSkipReason | undefined): AnalyzerOutcome {
     case "spawn-error":
     case "scan-error":
     case "scan-timeout":
-    // Zero files opened: the scanner did not look, so its silence is not
-    // evidence of anything. Reporting this as `ok` rendered an unscanned
-    // program as a clean audit.
     case "no-files-scanned":
       return "failed";
     default:
