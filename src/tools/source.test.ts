@@ -92,3 +92,28 @@ describe("citesLoadedFile", () => {
     expect(citesLoadedFile(join("target", "debug", "gen.rs") + ":1", res)).toBe(false);
   });
 });
+
+describe("loadSource with a single file", () => {
+  it("loads a `.rs` file named directly, so it is not treated as black-box", async () => {
+    const res = await loadSource(join(root, "src", "instructions", "withdraw.rs"));
+    expect(res.available).toBe(true);
+    expect(res.files).toHaveLength(1);
+    expect(res.files[0]!.path).toBe("withdraw.rs");
+    expect(res.files[0]!.content).toContain("as u64");
+    expect(citesLoadedFile("withdraw.rs:2", res)).toBe(true);
+  });
+
+  it("loads a single IDL json but rejects a non-source file", async () => {
+    expect((await loadSource(join(root, "idl.json"))).available).toBe(true);
+    const notSource = await loadSource(join(root, "package.json"));
+    expect(notSource.available).toBe(false);
+    expect(notSource.reason).toBe("no-rust-files");
+  });
+
+  it("truncates a single file that exceeds the budget", async () => {
+    const res = await loadSource(join(root, "src", "state.rs"), 10);
+    expect(res.available).toBe(true);
+    expect(res.truncated).toBe(true);
+    expect(res.files[0]!.content.length).toBe(10);
+  });
+});
