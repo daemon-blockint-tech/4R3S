@@ -1,0 +1,15 @@
+{
+  "version": "0.0.0",
+  "name": "wormhole_repro_insecure",
+  "instructions": [
+    {
+      "name": "verifySignatures",
+      "accounts": [
+        { "name": "guardianSet", "isMut": false, "isSigner": false },
+        { "name": "instructionsSysvar", "isMut": false, "isSigner": false },
+        { "name": "signatureSet", "isMut": true, "isSigner": false }
+      ],
+      "args": []
+    }
+  ]
+}

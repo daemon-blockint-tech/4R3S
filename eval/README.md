@@ -129,6 +129,39 @@ shape — same discipline as the sealevel-attacks corpus. Each corpus entry is
 `lib.rs` + `processor.rs` concatenated with file markers, since the bug spans
 both.
 
+### incident-repros (EVAL-3)
+
+**Read this before quoting anything from this source.** Unlike the other two
+EVAL-3 sources, these three targets are **hand-authored, stylized
+illustrations** of real Solana incidents (Wormhole bridge, Feb 2022, ~$326M;
+Cashio, Mar 2022, ~$52M; Mango Markets, Oct 2022, ~$116M) — not extracted from
+any upstream repo, and not a replay of the actual historical exploit. Reproducing
+the real hacks against real historical bridge/oracle/protocol state is
+infeasible; `datasets/README.md`'s own scope note ("simplified") is what
+authorizes this treatment. Each snippet under
+`eval/fixtures/rs/incident-repros/` is a short, non-compiling, commented
+fragment demonstrating one structural pattern inspired by the incident's
+publicly documented root cause — same discipline the `solana-vuln-rust`
+dataset already uses for its ingested snippets.
+
+`eval/build_incident_repros.py` reads these committed fixtures directly (there
+is nothing to fetch — no `--repo` flag, unlike the other two scripts) and
+writes the same `ground_truth.csv` / `corpus/` / `idl/` layout, appending to
+compose with the other sources:
+
+```bash
+python eval/build_incident_repros.py
+```
+
+Mapped categories: Wormhole → `sysvar-spoofing` (an **acknowledged stretch** —
+no catalog id is an exact fit for "forged signature verification"; adding one
+is future work). Cashio → `account-data-matching` (direct fit). Mango →
+`oracle-price-manipulation` (direct fit). Full reasoning for each in
+`eval/mappings/incident-repros.json`'s `notes`. The paired IDL fixtures are
+likewise **invented** — they don't correspond to any real deployed program
+interface for these protocols, included only for schema uniformity across
+EVAL-3 sources.
+
 ## Input schema
 
 Both files may be CSV, JSON, or JSONL. Column names are shared between them.

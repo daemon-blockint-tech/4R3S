@@ -1,0 +1,25 @@
+{
+  "version": "0.0.0",
+  "name": "mango_repro_insecure",
+  "instructions": [
+    {
+      "name": "recordTradePrice",
+      "accounts": [
+        { "name": "market", "isMut": true, "isSigner": false }
+      ],
+      "args": [
+        { "name": "price", "type": "u64" }
+      ]
+    },
+    {
+      "name": "borrowAgainstCollateral",
+      "accounts": [
+        { "name": "perpMarket", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "positionSize", "type": "u64" },
+        { "name": "borrowAmount", "type": "u64" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.0",
+  "name": "cashio_repro_insecure",
+  "instructions": [
+    {
+      "name": "mintEcash",
+      "accounts": [
+        { "name": "bank", "isMut": false, "isSigner": false },
+        { "name": "crateToken", "isMut": false, "isSigner": false },
+        { "name": "userTokenAccount", "isMut": true, "isSigner": false }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ]
+    }
+  ]
+}
