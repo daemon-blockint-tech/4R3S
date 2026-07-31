@@ -1,0 +1,54 @@
+{
+  "dataset": "neodyme-labs/neodyme-breakpoint-workshop",
+  "revision": "d71ff2dff7a73b407242e9a994a550f5930ce1fd",
+  "source_kind": "git",
+  "repo_url": "https://github.com/neodyme-labs/neodyme-breakpoint-workshop",
+  "framework": "native-solana",
+  "framework_note": "NATIVE Solana programs (raw solana_program + Borsh) — NOT Anchor. There is no generated Anchor IDL; the paired IDL-equivalents are hand-authored from each program's builder functions. Contrast eval/mappings/sealevel-attacks.json, which IS Anchor. See the derivation rule in `notes`.",
+  "notes": [
+    "Source is a git repo of 4 progressive challenge programs (level1..level4). Vulnerabilities are documented per level in docs/level<N>-bug.md / -solution.md; this mapping records the one documented bug per level as ground truth, keyed by level directory.",
+    "These are NATIVE Solana programs (raw solana_program + Borsh), NOT Anchor. There is no generated Anchor IDL. The paired IDL-equivalent under eval/fixtures/idl/neodyme-workshop/ is hand-authored from the program's advertised interface: the instruction set comes from the WalletInstruction/TipInstruction enum, and each instruction's account list + flags come from the canonical builder function's AccountMeta list (lib.rs).",
+    "Native IDL flag rule: isMut = AccountMeta::new (writable) vs AccountMeta::new_readonly; isSigner = the builder's signer bool. This is the DECLARED interface, the direct analog of an Anchor IDL. For native programs the declared interface can DIVERGE from what the processor actually enforces, and that divergence IS the vulnerability in some levels (see level1). The divergence is recorded per-program in `location` + these notes, exactly as sealevel-attacks records its bugs via the category label rather than the IDL shape.",
+    "level1: withdraw's builder declares `authority` as a signer (AccountMeta::new(authority, true)) but processor.rs never checks `authority_info.is_signer` — a missing signer check. The PoC (docs/level1-solution.md) forges an unsigned authority. location = level1.withdraw.authority.",
+    "level2: signer check is fixed; the bug is unchecked lamport arithmetic in withdraw (`-= amount` / `+= amount`), an integer overflow/underflow. location = level2.withdraw.amount.",
+    "level3: type/account confusion — a `Vault` account can be deserialized as a `TipPool` in withdraw because there is no type discriminator; overlapping fields let an attacker drain the vault. location = level3.withdraw.pool.",
+    "level4: arbitrary CPI — withdraw invokes whatever program is passed as the SPL-Token program account without verifying it is the real spl_token program, allowing an attacker-controlled program to be invoked with the vault's signed authority. location = level4.withdraw.splTokenProgram.",
+    "severity is the VULN_CATALOG defaultSeverity of the mapped class (src/knowledge/solana-vulns.ts), same convention as the other eval mappings.",
+    "corpus entry per target is lib.rs + processor.rs concatenated with file markers (the bug spans both: interface in lib.rs, logic in processor.rs). Like the sealevel-attacks corpus, these snippets are for audit input and are not expected to compile standalone.",
+    "target_id is `neodyme-workshop:<level>`. A content digest of the concatenated source is recorded in source_ref for provenance."
+  ],
+  "programs": {
+    "level1": {
+      "category": "missing-signer-check",
+      "severity": "high",
+      "program_name": "level1",
+      "instruction": "withdraw",
+      "location": "level1.withdraw.authority",
+      "idl": "level1.json"
+    },
+    "level2": {
+      "category": "integer-overflow-underflow",
+      "severity": "high",
+      "program_name": "level2",
+      "instruction": "withdraw",
+      "location": "level2.withdraw.amount",
+      "idl": "level2.json"
+    },
+    "level3": {
+      "category": "type-cosplay",
+      "severity": "high",
+      "program_name": "level3",
+      "instruction": "withdraw",
+      "location": "level3.withdraw.pool",
+      "idl": "level3.json"
+    },
+    "level4": {
+      "category": "arbitrary-cpi",
+      "severity": "critical",
+      "program_name": "level4",
+      "instruction": "withdraw",
+      "location": "level4.withdraw.splTokenProgram",
+      "idl": "level4.json"
+    }
+  }
+}

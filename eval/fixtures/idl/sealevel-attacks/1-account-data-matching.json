@@ -1,0 +1,14 @@
+{
+  "version": "0.0.0",
+  "name": "account_data_matching_insecure",
+  "instructions": [
+    {
+      "name": "logMessage",
+      "accounts": [
+        { "name": "token", "isMut": false, "isSigner": false },
+        { "name": "authority", "isMut": false, "isSigner": true }
+      ],
+      "args": []
+    }
+  ]
+}

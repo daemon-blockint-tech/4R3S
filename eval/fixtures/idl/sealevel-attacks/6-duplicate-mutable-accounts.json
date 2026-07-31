@@ -1,0 +1,17 @@
+{
+  "version": "0.0.0",
+  "name": "duplicate_mutable_accounts_insecure",
+  "instructions": [
+    {
+      "name": "update",
+      "accounts": [
+        { "name": "userA", "isMut": true, "isSigner": false },
+        { "name": "userB", "isMut": true, "isSigner": false }
+      ],
+      "args": [
+        { "name": "a", "type": "u64" },
+        { "name": "b", "type": "u64" }
+      ]
+    }
+  ]
+}

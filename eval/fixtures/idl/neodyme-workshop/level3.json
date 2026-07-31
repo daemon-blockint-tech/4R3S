@@ -1,0 +1,49 @@
+{
+  "version": "0.0.0",
+  "name": "level3",
+  "instructions": [
+    {
+      "name": "initialize",
+      "accounts": [
+        { "name": "vault", "isMut": true, "isSigner": false },
+        { "name": "initializer", "isMut": true, "isSigner": true },
+        { "name": "rent", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "seed", "type": "u8" },
+        { "name": "fee", "type": "f64" },
+        { "name": "feeRecipient", "type": "publicKey" }
+      ]
+    },
+    {
+      "name": "createPool",
+      "accounts": [
+        { "name": "vault", "isMut": true, "isSigner": false },
+        { "name": "withdrawAuthority", "isMut": false, "isSigner": true },
+        { "name": "pool", "isMut": true, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "tip",
+      "accounts": [
+        { "name": "vault", "isMut": true, "isSigner": false },
+        { "name": "pool", "isMut": true, "isSigner": false },
+        { "name": "source", "isMut": true, "isSigner": true },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    },
+    {
+      "name": "withdraw",
+      "accounts": [
+        { "name": "vault", "isMut": true, "isSigner": false },
+        { "name": "pool", "isMut": true, "isSigner": false },
+        { "name": "withdrawAuthority", "isMut": true, "isSigner": true },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    }
+  ]
+}

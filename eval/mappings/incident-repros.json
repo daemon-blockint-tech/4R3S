@@ -1,0 +1,49 @@
+{
+  "dataset": "ares-incident-repros",
+  "source_kind": "authored",
+  "revision": null,
+  "repo_url": null,
+  "notes": [
+    "UNLIKE sealevel-attacks/neodyme-workshop, there is no upstream repo to fetch from here. These three targets are STYLIZED, DIDACTIC reproductions authored for this repo, not extracted or replayed exploit code -- replaying the real historical hacks against actual bridge/oracle/protocol state is infeasible. datasets/README.md's own scope note ('simplified') is the authorizing source for this choice. Do not read these as reproducing the real incidents; they illustrate one structural pattern each, inspired by the publicly documented root cause.",
+    "Each snippet (eval/fixtures/rs/incident-repros/*.rs) is a short (~15-30 line), commented, standalone Rust fragment. It is NOT expected to compile and does NOT replay the actual historical transaction, on-chain state, or exploit payload -- same discipline as the solana-vuln-rust dataset already ingested by eval/fetch_datasets.py, whose ground truth is also short illustrative fragments rather than full buildable programs.",
+    "wormhole-2022: mapped to sysvar-spoofing (high) -- an ACKNOWLEDGED STRETCH, not an exact fit. The real bug was a deprecated verify_signatures code path that failed to confirm the accompanying secp256k1-program instruction it referenced was genuine (program_id + recovered guardian pubkeys never checked), letting a forged guardian-signature set through. VULN_CATALOG has no 'signature verification bypass' class; sysvar-spoofing's shape (trusting a runtime-provided fact from a raw, unvalidated AccountInfo rather than a checked accessor) is the nearest analog available today. Adding a dedicated catalog entry for this class is future work, out of scope here.",
+    "cashio-2022: mapped to account-data-matching (medium) -- a direct fit. The real bug was the mint instruction accepting fake/uninitialized 'bank'/'crate' collateral-chain accounts without verifying they were the correct, linked, expected-type accounts, letting an attacker mint arbitrary tokens against fabricated collateral.",
+    "mango-2022: mapped to oracle-price-manipulation (high) -- a direct fit. The real bug was self-trading to inflate the MNGO perp price on Mango's own internal oracle with no staleness/confidence/TWAP safeguard, then borrowing against the inflated collateral value.",
+    "Each incident maps to exactly ONE primary VULN_CATALOG category, matching the one-label-per-unit precedent of the other two mappings, even though real incidents typically chain several contributing factors (e.g. Mango also involved thin liquidity and no borrow limits). Contributing factors are recorded in these notes only, not as extra ground-truth rows -- a scope decision, not an oversight.",
+    "source_ref carries no commit hash (nothing was fetched) -- it instead names the incident and approximate date generically, plus a content digest of the committed snippet, so provenance is still verifiable and stable without asserting a specific external citation URL that was not independently verified at authoring time.",
+    "IDL fixtures under eval/fixtures/idl/incident-repros/ are, like the snippets themselves, INVENTED to describe the illustrative instruction's account list -- they do NOT correspond to any real deployed program interface for Wormhole/Cashio/Mango. Their actual on-chain interfaces are far larger and are not reproduced here. Included anyway for near-zero marginal cost and to keep eval/data/idl/ uniform across all EVAL-3 sources for future POC-1 use.",
+    "Scale mismatch is invisible in ground_truth.csv: a $326M bridge hack and an 11-line sealevel-attacks toy program produce identically-shaped one-row-per-target entries. severity reflects VULN_CATALOG's defaultSeverity for the mapped class, not real-world financial impact -- do not read row count or severity here as a measure of relative importance."
+  ],
+  "programs": {
+    "wormhole-2022": {
+      "category": "sysvar-spoofing",
+      "severity": "high",
+      "program_name": "wormhole_repro_insecure",
+      "instruction": "verify_signatures",
+      "location": "VerifySignatures.instructions_sysvar",
+      "rs": "wormhole-2022.rs",
+      "idl": "wormhole-2022.json",
+      "incident_label": "Wormhole bridge exploit, Feb 2022, ~$326M"
+    },
+    "cashio-2022": {
+      "category": "account-data-matching",
+      "severity": "medium",
+      "program_name": "cashio_repro_insecure",
+      "instruction": "mint_ecash",
+      "location": "MintEcash.bank,MintEcash.crate_token",
+      "rs": "cashio-2022.rs",
+      "idl": "cashio-2022.json",
+      "incident_label": "Cashio protocol exploit, Mar 2022, ~$52M"
+    },
+    "mango-2022": {
+      "category": "oracle-price-manipulation",
+      "severity": "high",
+      "program_name": "mango_repro_insecure",
+      "instruction": "borrow_against_collateral",
+      "location": "RecordTradePrice.market,BorrowAgainstCollateral.perp_market",
+      "rs": "mango-2022.rs",
+      "idl": "mango-2022.json",
+      "incident_label": "Mango Markets exploit, Oct 2022, ~$116M"
+    }
+  }
+}

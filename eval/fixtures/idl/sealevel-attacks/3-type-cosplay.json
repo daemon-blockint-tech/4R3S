@@ -1,0 +1,14 @@
+{
+  "version": "0.0.0",
+  "name": "type_cosplay_insecure",
+  "instructions": [
+    {
+      "name": "updateUser",
+      "accounts": [
+        { "name": "user", "isMut": false, "isSigner": false },
+        { "name": "authority", "isMut": false, "isSigner": true }
+      ],
+      "args": []
+    }
+  ]
+}

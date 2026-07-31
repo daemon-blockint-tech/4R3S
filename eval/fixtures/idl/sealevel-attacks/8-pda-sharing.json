@@ -1,0 +1,17 @@
+{
+  "version": "0.0.0",
+  "name": "pda_sharing_insecure",
+  "instructions": [
+    {
+      "name": "withdrawTokens",
+      "accounts": [
+        { "name": "pool", "isMut": false, "isSigner": false },
+        { "name": "vault", "isMut": true, "isSigner": false },
+        { "name": "withdrawDestination", "isMut": true, "isSigner": false },
+        { "name": "authority", "isMut": false, "isSigner": true },
+        { "name": "tokenProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": []
+    }
+  ]
+}

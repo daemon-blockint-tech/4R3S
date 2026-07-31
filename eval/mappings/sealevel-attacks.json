@@ -1,0 +1,106 @@
+{
+  "dataset": "coral-xyz/sealevel-attacks",
+  "revision": "24555d044802db4022112a94d6d70e74291a4b6d",
+  "source_kind": "git",
+  "repo_url": "https://github.com/coral-xyz/sealevel-attacks",
+  "insecure_variant": "insecure",
+  "notes": [
+    "Source is a git repo, not a parquet dataset, so this mapping is keyed by program directory (programs/<dir>/insecure/src/lib.rs), not by an in-text label. Each directory demonstrates exactly one vulnerability class in isolation; the repo README states the programs are 'purposefully not complete'.",
+    "Only the `insecure` variant of each program is ingested as ground truth. The `secure`/`recommended` variants are the fixed versions and contribute no ground-truth rows (they would be clean targets). They are intentionally not written to the corpus here; scoring them as clean is future work (would strengthen the precision signal).",
+    "severity is the VULN_CATALOG defaultSeverity of the mapped class (src/knowledge/solana-vulns.ts), matching how eval/mappings/solana-vuln-rust.json sources severity. It is not a claim about these specific isolated snippets.",
+    "The paired Anchor IDL under `idl` is HAND-AUTHORED (eval/fixtures/idl/sealevel-attacks/), NOT the output of `anchor build`. Reason: these programs omit `#[account(mut)]` constraints (they are deliberately incomplete), so a literal build would emit isMut:false for every account, which is useless for downstream PoC precondition generation (POC-1).",
+    "IDL flag derivation rule (deterministic, from source): isSigner = true iff the account is typed `Signer<'info>` OR the instruction body checks `.is_signer`. isMut = true iff the instruction body mutates that account's data or lamports (writes state, transfers tokens, or zeroes/credits lamports). Instruction and account names are camelCased to match Anchor IDL conventions; arg types are the raw Rust types.",
+    "The insecure program's own missing flag IS often the vulnerability: e.g. 0-signer-authorization's `authority` is isSigner:false precisely because the program fails to require a signature. The IDL records the program as-written, so these flags are faithful to the vulnerable source.",
+    "target_id is `sealevel-attacks:<program-dir>` — stable and human-readable (each program is its own directory, so there is no row-reordering hazard). A content digest of the source is recorded in source_ref for provenance."
+  ],
+  "programs": {
+    "0-signer-authorization": {
+      "category": "missing-signer-check",
+      "severity": "high",
+      "program_name": "signer_authorization_insecure",
+      "instruction": "log_message",
+      "location": "LogMessage.authority",
+      "idl": "0-signer-authorization.json"
+    },
+    "1-account-data-matching": {
+      "category": "account-data-matching",
+      "severity": "medium",
+      "program_name": "account_data_matching_insecure",
+      "instruction": "log_message",
+      "location": "LogMessage.token",
+      "idl": "1-account-data-matching.json"
+    },
+    "2-owner-checks": {
+      "category": "missing-owner-check",
+      "severity": "high",
+      "program_name": "owner_checks_insecure",
+      "instruction": "log_message",
+      "location": "LogMessage.token",
+      "idl": "2-owner-checks.json"
+    },
+    "3-type-cosplay": {
+      "category": "type-cosplay",
+      "severity": "high",
+      "program_name": "type_cosplay_insecure",
+      "instruction": "update_user",
+      "location": "UpdateUser.user",
+      "idl": "3-type-cosplay.json"
+    },
+    "4-initialization": {
+      "category": "account-reinitialization",
+      "severity": "high",
+      "program_name": "initialization_insecure",
+      "instruction": "initialize",
+      "location": "Initialize.user",
+      "idl": "4-initialization.json"
+    },
+    "5-arbitrary-cpi": {
+      "category": "arbitrary-cpi",
+      "severity": "critical",
+      "program_name": "arbitrary_cpi_insecure",
+      "instruction": "cpi",
+      "location": "Cpi.token_program",
+      "idl": "5-arbitrary-cpi.json"
+    },
+    "6-duplicate-mutable-accounts": {
+      "category": "duplicate-mutable-account",
+      "severity": "high",
+      "program_name": "duplicate_mutable_accounts_insecure",
+      "instruction": "update",
+      "location": "Update.user_a,Update.user_b",
+      "idl": "6-duplicate-mutable-accounts.json"
+    },
+    "7-bump-seed-canonicalization": {
+      "category": "non-canonical-bump",
+      "severity": "medium",
+      "program_name": "bump_seed_canonicalization_insecure",
+      "instruction": "set_value",
+      "location": "BumpSeed.data",
+      "idl": "7-bump-seed-canonicalization.json"
+    },
+    "8-pda-sharing": {
+      "category": "pda-seed-collision",
+      "severity": "high",
+      "program_name": "pda_sharing_insecure",
+      "instruction": "withdraw_tokens",
+      "location": "WithdrawTokens.pool",
+      "idl": "8-pda-sharing.json"
+    },
+    "9-closing-accounts": {
+      "category": "account-close-revival",
+      "severity": "critical",
+      "program_name": "closing_accounts_insecure",
+      "instruction": "close",
+      "location": "Close.account",
+      "idl": "9-closing-accounts.json"
+    },
+    "10-sysvar-address-checking": {
+      "category": "sysvar-spoofing",
+      "severity": "high",
+      "program_name": "insecure",
+      "instruction": "check_sysvar_address",
+      "location": "CheckSysvarAddress.rent",
+      "idl": "10-sysvar-address-checking.json"
+    }
+  }
+}

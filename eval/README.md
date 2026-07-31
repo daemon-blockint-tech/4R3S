@@ -69,6 +69,99 @@ The other datasets in the SEC-5 brief are not ingested; `python eval/fetch_datas
 adding — it is Solana-specific and program-level, but `gated: manual` on the HF API,
 so it needs an approved account and an `HF_TOKEN`.
 
+### sealevel-attacks (EVAL-3)
+
+`fetch_sealevel_attacks.py` ingests `coral-xyz/sealevel-attacks` (11 Anchor
+programs, one vulnerability class each) pinned to revision `24555d04`. Unlike the
+HF dataset, the source is a git repo whose vulnerabilities are labeled by
+*directory*, so `eval/mappings/sealevel-attacks.json` is keyed by program
+directory, not by an in-text label. It writes the same `ground_truth.csv` /
+`corpus/` layout (appending to any existing `ground_truth.csv` rather than
+clobbering it, so corpora compose), plus one Anchor **IDL** per target under
+`idl/`, and a `manifest.sealevel-attacks.json`.
+
+```bash
+# default: fetch each lib.rs from GitHub raw at the pinned revision (no clone needed)
+python eval/fetch_sealevel_attacks.py
+
+# or read from a local clone
+python eval/fetch_sealevel_attacks.py --repo /path/to/sealevel-attacks
+```
+
+Two caveats, both recorded in the mapping's `notes`. **(1)** Only the `insecure`
+variant of each program is ingested; the `secure`/`recommended` fixes are not yet
+scored as clean targets (future work — would strengthen the precision signal).
+**(2)** The paired IDLs under `eval/fixtures/idl/sealevel-attacks/` are
+**hand-authored**, not `anchor build` output: these programs deliberately omit
+`#[account(mut)]`, so a literal build would emit `isMut:false` everywhere. The
+fixtures instead follow a stated deterministic rule (isSigner from `Signer<>` /
+`.is_signer` checks; isMut from state mutation in the instruction body) so they
+carry the account flags POC-1 needs for precondition generation. `fetch_sealevel_attacks.py`
+validates each fixture against the mapping before writing, so drift fails loudly.
+
+### neodyme-workshop (EVAL-3)
+
+`fetch_neodyme_workshop.py` ingests `neodyme-labs/neodyme-breakpoint-workshop`
+(4 progressive challenge programs, `level1`..`level4`) pinned to revision
+`d71ff2df`, mapped in `eval/mappings/neodyme-workshop.json`. One documented bug
+per level: missing signer check (level1), integer overflow/underflow (level2),
+type/account confusion (level3), arbitrary CPI (level4). Same
+`ground_truth.csv` / `corpus/` / `idl/` layout, appending to compose with the
+other sources; the level docs also ship real PoC exploit code (`pocs/`), useful
+as an answer key when POC-1/POC-2 land.
+
+```bash
+python eval/fetch_neodyme_workshop.py                 # GitHub raw at pinned revision
+python eval/fetch_neodyme_workshop.py --repo /path/to/neodyme-breakpoint-workshop
+```
+
+Two things to know, both in the mapping's `notes`. **(1)** These are **native**
+Solana programs (raw `solana_program` + Borsh), **not Anchor** — there is no
+generated IDL. The paired IDL-equivalents under `eval/fixtures/idl/neodyme-workshop/`
+are hand-authored from the program's *advertised interface*: instructions from
+the `WalletInstruction`/`TipInstruction` enum, accounts + flags from the builder
+functions' `AccountMeta` list (`new`→isMut, `new_readonly`→readonly, signer bool
+→isSigner). **(2)** For native programs the declared interface can diverge from
+what the processor enforces, and that divergence *is* the bug in some levels
+(level1 declares `authority` as a signer but never checks `is_signer`). The
+divergence is carried by the mapping's `category` + `location`, not the IDL
+shape — same discipline as the sealevel-attacks corpus. Each corpus entry is
+`lib.rs` + `processor.rs` concatenated with file markers, since the bug spans
+both.
+
+### incident-repros (EVAL-3)
+
+**Read this before quoting anything from this source.** Unlike the other two
+EVAL-3 sources, these three targets are **hand-authored, stylized
+illustrations** of real Solana incidents (Wormhole bridge, Feb 2022, ~$326M;
+Cashio, Mar 2022, ~$52M; Mango Markets, Oct 2022, ~$116M) — not extracted from
+any upstream repo, and not a replay of the actual historical exploit. Reproducing
+the real hacks against real historical bridge/oracle/protocol state is
+infeasible; `datasets/README.md`'s own scope note ("simplified") is what
+authorizes this treatment. Each snippet under
+`eval/fixtures/rs/incident-repros/` is a short, non-compiling, commented
+fragment demonstrating one structural pattern inspired by the incident's
+publicly documented root cause — same discipline the `solana-vuln-rust`
+dataset already uses for its ingested snippets.
+
+`eval/build_incident_repros.py` reads these committed fixtures directly (there
+is nothing to fetch — no `--repo` flag, unlike the other two scripts) and
+writes the same `ground_truth.csv` / `corpus/` / `idl/` layout, appending to
+compose with the other sources:
+
+```bash
+python eval/build_incident_repros.py
+```
+
+Mapped categories: Wormhole → `sysvar-spoofing` (an **acknowledged stretch** —
+no catalog id is an exact fit for "forged signature verification"; adding one
+is future work). Cashio → `account-data-matching` (direct fit). Mango →
+`oracle-price-manipulation` (direct fit). Full reasoning for each in
+`eval/mappings/incident-repros.json`'s `notes`. The paired IDL fixtures are
+likewise **invented** — they don't correspond to any real deployed program
+interface for these protocols, included only for schema uniformity across
+EVAL-3 sources.
+
 ## Input schema
 
 Both files may be CSV, JSON, or JSONL. Column names are shared between them.
