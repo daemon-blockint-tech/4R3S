@@ -103,8 +103,15 @@ def test_missing_code_block_is_rejected():
 def test_corpus_files_are_written_per_target(tmp_path):
     labeled = prepared([VULN_ROW, CLEAN_ROW])
     assert write_corpus(labeled, tmp_path) == 2
-    files = sorted(p.name for p in (tmp_path / "corpus").iterdir())
-    assert all(name.startswith("solana-vuln-rust_train_") and name.endswith(".rs") for name in files)
-    assert "let x = a - b;" in (tmp_path / "corpus" / files[0]).read_text() or "let x = a - b;" in (
-        tmp_path / "corpus" / files[1]
+    corpus = tmp_path / "corpus"
+    rs_files = sorted(p.name for p in corpus.iterdir() if p.suffix == ".rs")
+    assert all(name.startswith("solana-vuln-rust_train_") and name.endswith(".rs") for name in rs_files)
+    assert "let x = a - b;" in (corpus / rs_files[0]).read_text() or "let x = a - b;" in (
+        corpus / rs_files[1]
     ).read_text()
+    # index.json restores each file stem to its ground-truth target_id (the ':'
+    # the filename had to drop). The eval runner scores against these ids, so a
+    # missing or mismatched index silently zeroes every prediction.
+    index = json.loads((corpus / "index.json").read_text())
+    assert sorted(stem + ".rs" for stem in index) == rs_files
+    assert all(index[name[:-3]].replace(":", "_") == name[:-3] for name in rs_files)
