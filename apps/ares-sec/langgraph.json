@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./src/graphs/ares-agent.ts:graph"
+  },
+  "env": "./.env"
+}
