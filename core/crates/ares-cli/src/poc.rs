@@ -1,3 +1,4 @@
+use crate::idl::IdlInstruction;
 use ares_core::{Finding, VulnerabilityCategory};
 use chrono::Utc;
 
@@ -8,10 +9,24 @@ use chrono::Utc;
 pub struct PocGenerator;
 
 impl PocGenerator {
-    pub fn generate(finding: &Finding, program_name: &str) -> String {
+    /// Generate a proof-of-concept harness for a finding.
+    ///
+    /// When `instruction` (the target's IDL instruction for this finding) and/or
+    /// `program_id` are supplied, the placeholder instruction data (`&[]`) and
+    /// random program id are replaced with the real Anchor discriminator + args
+    /// and the deployed program id (POC-1 wiring). A leading `// ARES-WIRING:`
+    /// marker records how complete that wiring is for the downstream fork
+    /// validator (POC-2): `wired` (data + program id), `partial` (data only, or
+    /// incompletely-encoded args), or `unwired` (no IDL match — placeholder).
+    pub fn generate(
+        finding: &Finding,
+        program_name: &str,
+        instruction: Option<&IdlInstruction>,
+        program_id: Option<&str>,
+    ) -> String {
         let id = &finding.id;
 
-        match &finding.category {
+        let harness = match &finding.category {
             VulnerabilityCategory::SignerAuthorization => {
                 Self::generate_signer_poc(id, program_name)
             }
@@ -26,7 +41,50 @@ impl PocGenerator {
                 Self::generate_invariant_poc(id, program_name, finding)
             }
             _ => Self::generate_generic_poc(id, program_name),
+        };
+
+        Self::wire_instruction_data(harness, instruction, program_id)
+    }
+
+    /// Replace the placeholder instruction data and program id in a generated
+    /// harness with real values, and prepend the `// ARES-WIRING:` marker.
+    ///
+    /// Every category builder emits the exact placeholder
+    /// `Instruction::new_with_bytes(program_id, &[], ...)`, so a single string
+    /// replacement wires all of them without touching the attack-specific
+    /// account setup that each builder deliberately constructs.
+    fn wire_instruction_data(
+        harness: String,
+        instruction: Option<&IdlInstruction>,
+        program_id: Option<&str>,
+    ) -> String {
+        let (data_expr, data_complete) = match instruction {
+            Some(ix) => {
+                let (bytes, complete) = crate::idl::instruction_data(ix);
+                (crate::idl::byte_slice_literal(&bytes), complete)
+            }
+            None => ("&[]".to_string(), false),
+        };
+
+        let mut wired = harness.replace(
+            "Instruction::new_with_bytes(program_id, &[], ",
+            &format!("Instruction::new_with_bytes(program_id, {}, ", data_expr),
+        );
+
+        if let Some(pid) = program_id {
+            wired = wired.replace(
+                "Pubkey::new_unique()",
+                &format!("\"{}\".parse::<Pubkey>().unwrap()", pid),
+            );
         }
+
+        let state = match (instruction.is_some(), data_complete, program_id.is_some()) {
+            (true, true, true) => "wired",
+            (true, _, _) => "partial",
+            (false, _, _) => "unwired",
+        };
+
+        format!("// ARES-WIRING: {}\n{}", state, wired)
     }
 
     fn header(id: &str, program_name: &str, category: &VulnerabilityCategory) -> String {
@@ -40,7 +98,7 @@ impl PocGenerator {
     }
 
     fn imports() -> &'static str {
-        "use solana_program_test::*;\nuse solana_sdk::{{\n    account::Account,\n    instruction::{{AccountMeta, Instruction}},\n    pubkey::Pubkey,\n    signature::{{Keypair, Signer}},\n    system_program,\n    transaction::Transaction,\n}};\n"
+        "use solana_program_test::*;\nuse solana_sdk::{\n    account::Account,\n    instruction::{AccountMeta, Instruction},\n    pubkey::Pubkey,\n    signature::{Keypair, Signer},\n    system_program,\n    transaction::Transaction,\n};\n"
     }
 
     fn test_boilerplate(test_name: &str, body: &str) -> String {
@@ -368,4 +426,92 @@ fn sanitize_id(id: &str) -> String {
 
 fn program_name_placeholder() -> &'static str {
     "target_program"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::idl::IdlArg;
+    use ares_core::{CodeLocation, Severity};
+
+    fn sample_finding() -> Finding {
+        Finding {
+            id: "ARES-1".to_string(),
+            title: "t".to_string(),
+            description: "d".to_string(),
+            severity: Severity::High,
+            category: VulnerabilityCategory::SignerAuthorization,
+            location: CodeLocation::default(),
+            proof_of_concept: None,
+            recommendation: "r".to_string(),
+            references: vec![],
+            confidence: 0.9,
+            validation: None,
+        }
+    }
+
+    fn instruction(name: &str, args: Vec<IdlArg>) -> IdlInstruction {
+        IdlInstruction {
+            name: name.to_string(),
+            accounts: vec![],
+            args,
+        }
+    }
+
+    #[test]
+    fn imports_use_single_braces() {
+        // Regression: imports() is a plain &str, so it must already contain valid
+        // Rust (single braces), not the format!-style `{{` it shipped with.
+        let imports = PocGenerator::imports();
+        assert!(imports.contains("use solana_sdk::{\n"));
+        assert!(!imports.contains("{{"));
+    }
+
+    #[test]
+    fn unwired_when_no_instruction() {
+        let code = PocGenerator::generate(&sample_finding(), "prog", None, None);
+        assert!(code.starts_with("// ARES-WIRING: unwired\n"));
+        // Placeholder instruction data is left in place.
+        assert!(code.contains("Instruction::new_with_bytes(program_id, &[], "));
+    }
+
+    #[test]
+    fn wires_real_instruction_data() {
+        let ix = instruction("log_message", vec![]);
+        let code = PocGenerator::generate(&sample_finding(), "prog", Some(&ix), None);
+        // The placeholder is gone and real discriminator bytes are embedded.
+        assert!(!code.contains("Instruction::new_with_bytes(program_id, &[], "));
+        assert!(code.contains("Instruction::new_with_bytes(program_id, &[0x"));
+        // Program id still unknown, so this is partial, not fully wired.
+        assert!(code.starts_with("// ARES-WIRING: partial\n"));
+    }
+
+    #[test]
+    fn partial_when_arg_type_unencodable() {
+        let ix = instruction(
+            "x",
+            vec![IdlArg {
+                name: "cfg".to_string(),
+                ty: serde_json::json!({ "defined": "Config" }),
+            }],
+        );
+        let code = PocGenerator::generate(&sample_finding(), "prog", Some(&ix), Some("prog"));
+        // Instruction matched and program id present, but an arg could not be
+        // encoded, so the data is incomplete -> partial, never "wired".
+        assert!(code.starts_with("// ARES-WIRING: partial\n"));
+    }
+
+    #[test]
+    fn wires_program_id_when_present() {
+        let ix = instruction("log_message", vec![]);
+        let code = PocGenerator::generate(
+            &sample_finding(),
+            "prog",
+            Some(&ix),
+            Some("So11111111111111111111111111111111111111112"),
+        );
+        assert!(code.contains(".parse::<Pubkey>().unwrap()"));
+        assert!(!code.contains("Pubkey::new_unique()"));
+        assert!(code.starts_with("// ARES-WIRING: wired\n"));
+    }
 }

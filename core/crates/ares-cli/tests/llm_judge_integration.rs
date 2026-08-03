@@ -27,6 +27,7 @@ async fn test_llm_judge_disabled_passthrough() {
             recommendation: "Fix it".to_string(),
             references: vec![],
             confidence: 0.90,
+            validation: None,
         },
         ares_core::Finding {
             id: "TEST-002".to_string(),
@@ -39,6 +40,7 @@ async fn test_llm_judge_disabled_passthrough() {
             recommendation: "Fix it too".to_string(),
             references: vec![],
             confidence: 0.85,
+            validation: None,
         },
     ];
 
@@ -105,6 +107,7 @@ async fn test_llm_judge_budget_truncation() {
             recommendation: "fix".to_string(),
             references: vec![],
             confidence: 0.50,
+            validation: None,
         },
         // High confidence — should be evaluated
         ares_core::Finding {
@@ -118,6 +121,7 @@ async fn test_llm_judge_budget_truncation() {
             recommendation: "fix".to_string(),
             references: vec![],
             confidence: 0.95,
+            validation: None,
         },
         // Medium-high confidence — should be evaluated
         ares_core::Finding {
@@ -131,6 +135,7 @@ async fn test_llm_judge_budget_truncation() {
             recommendation: "fix".to_string(),
             references: vec![],
             confidence: 0.80,
+            validation: None,
         },
         // Medium confidence — should be skipped (after top 2)
         ares_core::Finding {
@@ -144,6 +149,7 @@ async fn test_llm_judge_budget_truncation() {
             recommendation: "fix".to_string(),
             references: vec![],
             confidence: 0.70,
+            validation: None,
         },
     ];
 
@@ -280,6 +286,7 @@ async fn test_llm_judge_enabled_stub() {
         recommendation: "Add signer check".to_string(),
         references: vec![],
         confidence: 0.90,
+        validation: None,
     }];
 
     let results = judge.validate(findings).await;
@@ -338,6 +345,7 @@ async fn test_llm_judge_enabled_missing_key_fallback() {
         recommendation: "Add API key".to_string(),
         references: vec![],
         confidence: 0.90,
+        validation: None,
     }];
 
     let results = judge.validate(findings).await;

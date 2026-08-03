@@ -1,4 +1,5 @@
 pub mod benchmark;
+pub mod confirm;
 pub mod dashboard;
 pub mod doctor;
 pub mod fuzz;

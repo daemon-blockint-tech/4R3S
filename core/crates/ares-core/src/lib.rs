@@ -188,6 +188,38 @@ pub struct Finding {
     pub recommendation: String,
     pub references: Vec<String>,
     pub confidence: f64, // 0.0 - 1.0
+    /// Fork-confirmation outcome from `ares confirm` (POC-2). `None` until a
+    /// confirmation pass has run against this finding's `proof_of_concept`.
+    /// `#[serde(default)]` so reports written before this field existed still
+    /// deserialize.
+    #[serde(default)]
+    pub validation: Option<ValidationOutcome>,
+}
+
+/// Outcome of fork-validating a finding's generated PoC (POC-2): did executing
+/// the PoC harness against a sandboxed fork prove the finding, refute it, or
+/// fail to reach a trustworthy conclusion?
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ValidationOutcome {
+    /// The PoC harness ran and the transaction succeeded: the exploit works.
+    Confirmed,
+    /// The PoC harness ran and the transaction failed: the finding did not reproduce.
+    Refuted,
+    /// The PoC could not be run to a trustworthy conclusion (no IDL match at
+    /// generation time, or a build/execution error unrelated to the finding).
+    Inconclusive,
+}
+
+impl fmt::Display for ValidationOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Confirmed => "confirmed",
+            Self::Refuted => "refuted",
+            Self::Inconclusive => "inconclusive",
+        };
+        write!(f, "{}", s)
+    }
 }
 
 /// Represents a suppressed finding.
@@ -483,6 +515,7 @@ mod tests {
             recommendation: "Fix".to_string(),
             references: vec![],
             confidence: 0.8,
+            validation: None,
         };
         assert_eq!(finding.id, "F-001");
         assert_eq!(finding.category, VulnerabilityCategory::OwnershipCheck);
@@ -567,6 +600,7 @@ mod tests {
             recommendation: "Fix".to_string(),
             references: vec!["ref1".to_string()],
             confidence: 0.95,
+            validation: Some(ValidationOutcome::Confirmed),
         };
         let json = serde_json::to_string_pretty(&finding).unwrap();
         let back: Finding = serde_json::from_str(&json).unwrap();
@@ -574,5 +608,39 @@ mod tests {
         assert_eq!(finding.category, back.category);
         assert_eq!(finding.severity, back.severity);
         assert_eq!(finding.references, back.references);
+        assert_eq!(finding.validation, back.validation);
+    }
+
+    #[test]
+    fn test_finding_validation_defaults_to_none_when_absent_from_json() {
+        // Backward compatibility: reports written before this field existed
+        // (no "validation" key at all) must still deserialize.
+        let json = r#"{
+            "id": "F-002",
+            "title": "t",
+            "description": "d",
+            "severity": "High",
+            "category": "generic",
+            "location": { "file": "", "line_start": null, "line_end": null,
+                "column_start": null, "column_end": null, "function": null, "commit": null },
+            "proof_of_concept": null,
+            "recommendation": "r",
+            "references": [],
+            "confidence": 0.5
+        }"#;
+        let finding: Finding = serde_json::from_str(json).unwrap();
+        assert_eq!(finding.validation, None);
+    }
+
+    #[test]
+    fn test_validation_outcome_display_and_serde() {
+        assert_eq!(ValidationOutcome::Confirmed.to_string(), "confirmed");
+        assert_eq!(ValidationOutcome::Refuted.to_string(), "refuted");
+        assert_eq!(ValidationOutcome::Inconclusive.to_string(), "inconclusive");
+
+        let json = serde_json::to_string(&ValidationOutcome::Refuted).unwrap();
+        assert_eq!(json, "\"refuted\"");
+        let back: ValidationOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ValidationOutcome::Refuted);
     }
 }

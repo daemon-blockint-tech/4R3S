@@ -245,6 +245,7 @@ mod tests {
                 recommendation: "Add signer check".to_string(),
                 references: vec![],
                 confidence: 0.9,
+                validation: None,
             }],
             suppressed_findings: vec![],
             metadata: ReportMetadata {
