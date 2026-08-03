@@ -126,6 +126,25 @@ enum Commands {
         rpc_url: Option<String>,
     },
 
+    /// Fork-run every finding's PoC in a scan report and mark confirmed/refuted
+    Confirm {
+        /// Scan output directory (or a direct ares-report-*.json path)
+        #[arg(value_name = "PATH")]
+        scan_output: PathBuf,
+
+        /// Fork mainnet state for realistic conditions
+        #[arg(long)]
+        fork_mainnet: bool,
+
+        /// Specific slot to fork from
+        #[arg(long)]
+        fork_slot: Option<u64>,
+
+        /// Override mainnet RPC URL for fork (e.g. Helius, QuickNode)
+        #[arg(long)]
+        rpc_url: Option<String>,
+    },
+
     /// Report generation and export
     Report {
         /// Scan output directory to generate report from
@@ -316,6 +335,25 @@ async fn main() -> Result<()> {
             );
             ares_v3::commands::validate::execute(
                 &poc_path,
+                fork_mainnet,
+                fork_slot,
+                &config,
+                rpc_url,
+            )
+            .await?;
+        }
+        Some(Commands::Confirm {
+            scan_output,
+            fork_mainnet,
+            fork_slot,
+            rpc_url,
+        }) => {
+            info!(
+                "Confirming findings in {:?} | fork_mainnet={} slot={:?} rpc={:?}",
+                scan_output, fork_mainnet, fork_slot, rpc_url
+            );
+            ares_v3::commands::confirm::execute(
+                &scan_output,
                 fork_mainnet,
                 fork_slot,
                 &config,

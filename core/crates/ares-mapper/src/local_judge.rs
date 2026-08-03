@@ -131,6 +131,7 @@ mod tests {
             recommendation: "Fix".to_string(),
             references: vec![],
             confidence: 0.8,
+            validation: None,
         }
     }
 

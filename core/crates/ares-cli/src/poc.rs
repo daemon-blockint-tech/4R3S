@@ -446,6 +446,7 @@ mod tests {
             recommendation: "r".to_string(),
             references: vec![],
             confidence: 0.9,
+            validation: None,
         }
     }
 

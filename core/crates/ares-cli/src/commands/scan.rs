@@ -122,6 +122,7 @@ pub async fn execute(
             recommendation: "Review account validation across instruction boundaries. Ensure state transitions are re-validated.".to_string(),
             references: vec![],
             confidence: cf.confidence,
+            validation: None,
         });
     }
 
@@ -160,6 +161,7 @@ pub async fn execute(
                             .to_string(),
                         references: vec![],
                         confidence: 0.85,
+                        validation: None,
                     });
                 }
                 for violation in &fuzz_result.invariant_violations {
@@ -175,6 +177,7 @@ pub async fn execute(
                             .to_string(),
                         references: vec![],
                         confidence: 0.90,
+                        validation: None,
                     });
                 }
             } else {
