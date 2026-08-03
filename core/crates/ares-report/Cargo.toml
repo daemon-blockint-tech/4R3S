@@ -1,0 +1,20 @@
+[package]
+name = "ares-report"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Report generation for ARES V3 — Markdown, PDF, and JSON output"
+
+[dependencies]
+ares-core = { workspace = true }
+
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = "0.4"
+printpdf = "0.3.4"
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -1,0 +1,164 @@
+{
+  "protocols": [
+    {
+      "name": "type-cosplay-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["type-cosplay"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: try_from_slice without discriminator check"
+    },
+    {
+      "name": "ownership-check-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["ownership-check"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: UncheckedAccount without owner validation"
+    },
+    {
+      "name": "signer-auth-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["signer-authorization"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: missing Signer constraint on privileged instruction"
+    },
+    {
+      "name": "arbitrary-cpi-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["arbitrary-cpi"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: invoke() without program_id validation"
+    },
+    {
+      "name": "init-frontrunning-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["initialization-frontrunning"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: init without payer/system_program constraint pairing"
+    },
+    {
+      "name": "reentrancy-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["reentrancy-risk"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: same account in write + CPI pass"
+    },
+    {
+      "name": "dup-mutable-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["duplicate-mutable-accounts"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: two mutable references to same account"
+    },
+    {
+      "name": "arithmetic-overflow-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["arithmetic-overflow"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: unchecked arithmetic on user-controlled values"
+    },
+    {
+      "name": "close-account-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["close-account"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: missing lamport reclaim validation on closed accounts"
+    },
+    {
+      "name": "account-reload-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["account-reloading"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: state reload without re-validation"
+    },
+    {
+      "name": "pda-privileges-stub",
+      "source": "stub",
+      "real_repo_path": "",
+      "expected_categories": ["pda-privileges"],
+      "expected_critical_high": 1,
+      "notes": "Deterministic stub: weak PDA seeds or PDA used as authority without constraints"
+    },
+    {
+      "name": "axelar",
+      "source": "real",
+      "real_repo_path": "axelar",
+      "expected_categories": ["arbitrary-cpi", "ownership-check", "signer-authorization"],
+      "expected_critical_high": 7,
+      "notes": "Axelar ITS: real production code with known audit findings"
+    },
+    {
+      "name": "dexalot",
+      "source": "real",
+      "real_repo_path": "dexalot",
+      "expected_categories": ["ownership-check", "arbitrary-cpi"],
+      "expected_critical_high": 5,
+      "notes": "Dexalot: real production code with known audit findings"
+    },
+    {
+      "name": "bert-staking",
+      "source": "real",
+      "real_repo_path": "bert-staking",
+      "expected_categories": ["signer-authorization"],
+      "expected_critical_high": 2,
+      "notes": "Bert Staking: real production code with known audit findings"
+    },
+    {
+      "name": "pump-science",
+      "source": "real",
+      "real_repo_path": "pump-science",
+      "expected_categories": ["initialization-frontrunning", "ownership-check"],
+      "expected_critical_high": 4,
+      "notes": "Pump Science: real production code with known audit findings"
+    },
+    {
+      "name": "metadao",
+      "source": "real",
+      "real_repo_path": "metadao",
+      "expected_categories": ["initialization-frontrunning", "re-initialization"],
+      "expected_critical_high": 4,
+      "notes": "MetaDAO: real production code with known audit findings"
+    },
+    {
+      "name": "wormhole",
+      "source": "real",
+      "real_repo_path": "wormhole",
+      "expected_categories": ["account-data-matching", "ownership-check"],
+      "expected_critical_high": 5,
+      "notes": "Wormhole: real production code with known audit findings"
+    },
+    {
+      "name": "mango-v4",
+      "source": "real",
+      "real_repo_path": "mango-v4",
+      "expected_categories": ["account-data-matching", "duplicate-mutable-accounts"],
+      "expected_critical_high": 5,
+      "notes": "Mango v4: real production code with known audit findings"
+    },
+    {
+      "name": "solend",
+      "source": "real",
+      "real_repo_path": "solend",
+      "expected_categories": ["ownership-check", "signer-authorization"],
+      "expected_critical_high": 4,
+      "notes": "Solend: real production code with known audit findings"
+    },
+    {
+      "name": "drift-v2",
+      "source": "real",
+      "real_repo_path": "drift-v2",
+      "expected_categories": ["account-data-matching", "ownership-check"],
+      "expected_critical_high": 3,
+      "notes": "Drift v2: real production code with known audit findings"
+    }
+  ]
+}

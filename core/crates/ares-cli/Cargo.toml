@@ -1,0 +1,53 @@
+[package]
+name = "ares-v3"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "ARES V3 CLI — Autonomous Solana Security Auditor"
+
+[[bin]]
+name = "ares"
+path = "src/main.rs"
+
+[dependencies]
+ares-core = { workspace = true }
+ares-trident = { workspace = true }
+ares-mapper = { workspace = true }
+ares-policy = { workspace = true }
+ares-orchestrator = { workspace = true }
+ares-report = { workspace = true }
+
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tui-textarea = { workspace = true }
+syntect = { workspace = true }
+dialoguer = { workspace = true }
+textwrap = { workspace = true }
+regex = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+config = { workspace = true }
+chrono = "0.4"
+which = { workspace = true }
+walkdir = { workspace = true }
+printpdf = "0.3.4"
+
+reqwest = { workspace = true }
+tracing-appender = "0.2.5"
+
+[features]
+default = []
+llm-judge = []
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

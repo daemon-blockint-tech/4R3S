@@ -1,0 +1,34 @@
+# cargo-deny policy for the ARES-v3 engine workspace (core/).
+# Modernized for cargo-deny 0.18 (the old `[advisories] vulnerability`/
+# `unmaintained = "warn"` and `[licenses] unlicensed` fields were removed and
+# broke `check licenses bans sources`). Advisories are handled by the separate
+# `Security Audit` (cargo-audit) job in core-ci.yml.
+#
+# GOLDEN RULE 1: the allow-list bans strong copyleft by omission — GPL/AGPL are
+# not listed, so they are rejected. LGPL/permissive would be added explicitly.
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "0BSD",
+    "MPL-2.0",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# A large engine workspace will legitimately carry duplicate transitive
+# versions; surface them as warnings rather than failing the gate.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

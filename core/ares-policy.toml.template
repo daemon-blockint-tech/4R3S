@@ -1,0 +1,131 @@
+# ARES V3 Security Policy (IronCurtain-style)
+# Inspired by https://ironcurtain.dev/ and https://provos.org/
+# 
+# Principles:
+# 1. Least privilege: agent may only access resources explicitly permitted by policy.
+# 2. No destruction: delete operations outside the sandbox are never permitted.
+# 3. Human oversight: operations outside the sandbox require explicit human approval.
+# 4. Defensive use only: exploit generation is restricted to user's own programs.
+# 5. Audit everything: all agent actions are logged for security review.
+
+[constitution]
+name = "ARES V3 Security Constitution"
+version = "1.0"
+principles = [
+    "Least privilege: agent may only access resources explicitly permitted by policy.",
+    "No destruction: delete operations outside the sandbox are never permitted.",
+    "Human oversight: operations outside the sandbox require explicit human approval.",
+    "Defensive use only: exploit generation is restricted to user's own programs.",
+    "Audit everything: all agent actions are logged for security review.",
+]
+
+[[capabilities]]
+action = "fs.read"
+level = "allow"
+requires_approval = false
+description = "Read files within project directory"
+
+[[capabilities]]
+action = "fs.write"
+level = "sandbox_only"
+requires_approval = false
+description = "Write files only in sandbox output directory (ares-output/)"
+
+[[capabilities]]
+action = "fs.delete"
+level = "sandbox_only"
+requires_approval = true
+description = "Delete files only within sandbox — requires explicit approval"
+
+[[capabilities]]
+action = "git.status"
+level = "allow"
+requires_approval = false
+description = "Read-only git operations (status, diff, log, branch -l)"
+
+[[capabilities]]
+action = "git.commit"
+level = "escalate"
+requires_approval = true
+description = "Commit changes to local repository — requires explicit approval"
+
+[[capabilities]]
+action = "git.push"
+level = "deny"
+requires_approval = true
+description = "Push to remote repository — NEVER ALLOWED without explicit human approval"
+
+[[capabilities]]
+action = "git.reset"
+level = "deny"
+requires_approval = true
+description = "Reset, rebase, merge, history rewrite — NEVER ALLOWED"
+
+[[capabilities]]
+action = "network.fetch"
+level = "allow"
+requires_approval = false
+description = "Fetch web content from allowed domains (docs, API references)"
+
+[[capabilities]]
+action = "network.scan_remote"
+level = "deny"
+requires_approval = true
+description = "Scan third-party contracts on public network — DENIED (offensive use)"
+
+[[capabilities]]
+action = "solana.local_test"
+level = "allow"
+requires_approval = false
+description = "Run tests on local solana-test-validator"
+
+[[capabilities]]
+action = "solana.mainnet_fork"
+level = "escalate"
+requires_approval = true
+description = "Fork mainnet for simulation — REQUIRES APPROVAL (uses real state)"
+
+[[capabilities]]
+action = "solana.mainnet_deploy"
+level = "deny"
+requires_approval = true
+description = "Deploy to mainnet — NEVER ALLOWED for audit agent"
+
+[[capabilities]]
+action = "exploit.local_poc"
+level = "allow"
+requires_approval = false
+description = "Generate and run PoC in sandboxed local environment"
+
+[[capabilities]]
+action = "exploit.mainnet_execute"
+level = "deny"
+requires_approval = true
+description = "Execute exploit on mainnet — NEVER ALLOWED (offensive use)"
+
+[[capabilities]]
+action = "exploit.third_party_scan"
+level = "deny"
+requires_approval = true
+description = "Scan contracts not owned by user — DENIED (unauthorized offensive use)"
+
+[sandbox_boundary]
+allowed_read_paths = [".", "./dataset"]
+allowed_write_paths = ["./ares-output"]
+allowed_exec_paths = []
+blocked_paths = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.config/solana/id.json",
+    "/etc",
+    "/proc",
+    "/sys",
+]
+allow_network = true
+allow_git_remote = false
+allow_mainnet_interaction = false
+
+[audit]
+log_all_actions = true
+log_file = "./ares-output/audit.log"
+retention_days = 90

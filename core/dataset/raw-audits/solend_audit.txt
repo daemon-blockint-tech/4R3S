@@ -1,0 +1,1305 @@
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Solend Crypto & Digital Asset 
+Assessment 
+ 
+Findings and Recommendations Report Presented to: 
+Solana Foundation 
+ 
+ 
+September 28, 2021 
+Version: 1.0 
+ 
+ 
+ 
+Presented by: 
+ 
+Kudelski Security, Inc. 
+5090 North 40th Street, Suite 450 
+Phoenix, Arizona 85018 
+ 
+ 
+FOR PUBLIC RELEASE 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 2 of 40 
+TABLE OF CONTENTS 
+TABLE OF CONTENTS .......................................................................................................................... 2 
+LIST OF FIGURES .................................................................................................................................. 3 
+LIST OF TABLES .................................................................................................................................... 3 
+EXECUTIVE SUMMARY ......................................................................................................................... 4 
+Overview ............................................................................................................................................ 4 
+Key Findings ....................................................................................................................................... 4 
+Scope and Rules Of Engagement ...................................................................................................... 5 
+TECHNICAL ANALYSIS & FINDINGS .................................................................................................... 6 
+Findings .............................................................................................................................................. 7 
+Technical analysis .............................................................................................................................. 8 
+Conclusion ........................................................................................................................................ 16 
+Technical Findings ........................................................................................................................... 17 
+Missing check for reserve account owner opens for free FlashLoans ............................................. 17 
+Loss of precision causing miscalculation of interest rate ................................................................. 21 
+Structs implementing bytemuck::Pod contains non-Pod fields ........................................................ 23 
+Pyth product parsing may cause index-out-of-bounds ..................................................................... 26 
+Disabled lint checks may introduce bad code practices ................................................................... 29 
+Oracle (Pyth) program id stored in LendingMarket is not validated ................................................. 30 
+SPL Token program id stored in LendingMarket is superfluous ...................................................... 32 
+METHODOLOGY .................................................................................................................................. 35 
+Kickoff ............................................................................................................................................... 35 
+Ramp-up ........................................................................................................................................... 35 
+Review .............................................................................................................................................. 35 
+Code Safety ...................................................................................................................................... 36 
+Cryptography .................................................................................................................................... 36 
+Technical Specification Matching ..................................................................................................... 36 
+Reporting .......................................................................................................................................... 37 
+Verify ................................................................................................................................................ 37 
+Additional Note ................................................................................................................................. 37 
+The Classification of identified problems and vulnerabilities ............................................................ 38 
+Critical – vulnerability that will lead to loss of protected assets ........................................................ 38 
+High - A vulnerability that can lead to loss of protected assets ........................................................ 38 
+Medium - a vulnerability that hampers the uptime of the system or can lead to other problems ..... 38 
+Low - Problems that have a security impact but does not directly impact the protected assets ...... 38 
+Informational ..................................................................................................................................... 38 
+Tools 39 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 3 of 40 
+RustSec.org ...................................................................................................................................... 39 
+KUDELSKI SECURITY CONTACTS ..................................................................................................... 40 
+ 
+LIST OF FIGURES 
+Figure 1: Findings by Severity ...................................................................................................................... 6 
+Figure 2: Account reference graph for BorrowObligationLiquidity ................................................................ 8 
+Figure 3: Account reference graph for DepositObligationCollateral ............................................................. 8 
+Figure 4: Account reference graph for DepositReserveLiquidity .................................................................. 9 
+Figure 5: Account reference graph for InitLendingMarket ............................................................................ 9 
+Figure 6: Account reference graph for InitObligation .................................................................................. 10 
+Figure 7: Account reference graph for InitReseve ...................................................................................... 10 
+Figure 8: Account reference graph for LiquidateObligation ........................................................................ 11 
+Figure 9: Account reference graph for RedeemReserveCollateral ............................................................ 12 
+Figure 10: Account reference graph for RefreshObligation ........................................................................ 13 
+Figure 11: Account reference graph for RefreshReserve ........................................................................... 13 
+Figure 12: Account reference graph for RepayObligationLiquidity ............................................................. 14 
+Figure 13: Account reference graph for SetLendingMarketOwner ............................................................. 14 
+Figure 14: Account reference graph for WithdrawObligationCollateral ...................................................... 15 
+Figure 15: Account reference graph for FlashLoan .................................................................................... 17 
+Figure 16: Methodology Flow ..................................................................................................................... 35 
+LIST OF TABLES 
+Table 1: Scope ............................................................................................................................................. 5 
+Table 2: Findings Overview .......................................................................................................................... 7 
+ 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 4 of 40 
+EXECUTIVE SUMMARY 
+Overview 
+Solana Foundation engaged Kudelski Security to perform an Solend Crypto & Digital Asset Assessment.  
+ 
+The assessment was conducted remotely by the Kudelski Security Team. Testing took place on July 12-
+August 3, 2021, and focused on the following objectives:  
+• 
+Provide the customer with an assessment of their overall security posture and any risks that were 
+discovered within the environment during the engagement.  
+• 
+To provide a professional opinion on the maturity, adequacy, and efficiency of the security 
+measures that are in place.  
+• 
+To identify potential issues and include improvement recommendations based on the result of our 
+tests.  
+ 
+On September 23, 2021 a rereview was done to verify that all findings had been mitigated. 
+ 
+This report summarizes the engagement, tests performed, and findings. It also contains detailed 
+descriptions of the discovered vulnerabilities, steps the Kudelski Security Teams took to identify and 
+validate each issue, as well as any applicable recommendations for remediation.  
+Key Findings 
+The following are the major themes and issues identified during the testing period. These, along with 
+other items, within the findings section, were prioritized and resolved prior to the issuance of this report.  
+ 
+• 
+KS-SOLEND-F-00 – Missing check for reserve account owner opens for free FlashLoans 
+• 
+KS-SOLEND-F-01 – Loss of precision causing miscalculation of interest rate 
+• 
+KS-SOLEND-F-02 – Structs implementing bytemuck::Pod contains non-Pod fields 
+• 
+KS-SOLEND-F-03 – Pyth product parsing may cause index-out-of-bounds 
+ 
+During the test, the following positive observations were noted regarding the scope of the engagement:  
+ 
+• 
+The code was very well documented and had a really high production standard 
+• 
+The development team was very good at explaining and engaging in discussions 
+ 
+Based on the call graphs and the formal verification we can conclude that the reviewed code implements 
+the documented functionality.  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 5 of 40 
+Scope and Rules Of Engagement 
+Kudelski performed an Solend Crypto & Digital Asset Assessment for Solana Foundation. The following 
+table documents the targets in scope for the engagement. No additional systems or resources were in 
+scope for this assessment.  
+ 
+The source code was supplied through public repository at https://github.com/solana-labs/solana-
+program-library/tree/master/token-lending with the commit hash 
+ba0c0e007f99857894f238638b60cacb41281114. 
+ 
+Files included in the code review 
+program/src/processor.rs 
+The main program file 
+program/src/entrypoint.rs 
+Program entrypoint definitions 
+program/src/instruction.rs 
+Instruction types 
+program/src/state/reserve.rs 
+Lending market reserve 
+program/src/state/obligation.rs 
+Obligations definition and utils 
+program/src/state/lending_market.rs 
+The lending market 
+program/src/state/last-update.rs 
+Utils for slots and updates 
+program/src/math/common.rs 
+Common math utilities definitions 
+program/src/math/decimal.rs 
+Decimal utilities and definitions 
+program/src/math/mod.rs 
+Include file for math 
+program/src/math/rate.rs 
+Utilities for ratios and percentages 
+ 
+Table 1: Scope 
+The source code used to verify if the findings were fixed was supplied through the public repository at 
+https://github.com/solendprotocol/solana-program-library/tree/master/token-lending with the commit hash 
+b6993d4b57dc91c2fd770e91cd91c01b008859ad. 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 6 of 40 
+TECHNICAL ANALYSIS & FINDINGS 
+During the Solend Crypto & Digital Asset Assessment, we discovered 2 findings that had a HIGH severity 
+rating, as well as 1 MEDIUM 
+ 
+The following chart displays the findings by severity. 
+ 
+ 
+Figure 1: Findings by Severity 
+ 
+ 
+ 
+0
+1
+2
+3
+4
+Info
+Low
+Medium
+High
+Critical
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 7 of 40 
+Findings 
+The Findings section provides detailed information on each of the findings, including methods of 
+discovery, explanation of severity determination, recommendations, and applicable references.  
+ 
+The following table provides an overview of the findings. 
+ 
+ 
+# 
+Severity 
+ 
+STATUS 
+Description 
+KS-SOLEND-F-00 
+High 
+RESOLVED 
+Missing check for reserve account owner opens for free F
+KS-SOLEND-F-01 
+High 
+RISK ACCEPTED 
+Loss of precision causing miscalculation of interest rate 
+KS-SOLEND-F-02 
+Medium 
+OPEN 
+Structs implementing bytemuck::Pod contains non-Pod fie
+KS-SOLEND-F-03 
+Low 
+OPEN 
+Pyth product parsing may cause index-out-of-bounds 
+KS-SOLEND-F-04 
+Informational 
+----------------- 
+Low test coverage creates a risk for maintenance 
+KS-SOLEND-F-05 
+Informational 
+----------------- 
+Disabled lint checks may introduce bad code practices 
+KS-SOLEND-F-06 
+Informational 
+----------------- 
+Oracle (Pyth) program id stored in LendingMarket is not va
+KS-SOLEND-F-07 
+Informational 
+----------------- 
+SPL Token program id stored in LendingMarket is superflu
+Table 2: Findings Overview 
+ 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 8 of 40 
+Technical analysis 
+Based on the source code the following call graphs was made to verify the validity of the code as well as 
+comfirmating that the intended functionality was implemented correctly and to the extent that the state of 
+the repository allowed. 
+ 
+Figure 2: Account reference graph for BorrowObligationLiquidity 
+ 
+Figure 3: Account reference graph for DepositObligationCollateral 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 9 of 40 
+ 
+ 
+Figure 4: Account reference graph for DepositReserveLiquidity 
+ 
+ 
+Figure 5: Account reference graph for InitLendingMarket 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 10 of 40 
+ 
+Figure 6: Account reference graph for InitObligation 
+ 
+ 
+Figure 7: Account reference graph for InitReseve 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 11 of 40 
+ 
+Figure 8: Account reference graph for LiquidateObligation 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 12 of 40 
+ 
+Figure 9: Account reference graph for RedeemReserveCollateral 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 13 of 40 
+ 
+Figure 10: Account reference graph for RefreshObligation 
+ 
+Figure 11: Account reference graph for RefreshReserve 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 14 of 40 
+ 
+Figure 12: Account reference graph for RepayObligationLiquidity 
+ 
+Figure 13: Account reference graph for SetLendingMarketOwner 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 15 of 40 
+ 
+Figure 14: Account reference graph for WithdrawObligationCollateral 
+ 
+A number of further investigations were made which conluded that they did not pose a risk to the 
+application. There were 
+• 
+Authorization for LiquidateObligation is soundly validated 
+• 
+Authorization for RepayObligationLiquidity is soundly validated 
+• 
+Authorization for BorrowObligationLiquidity is soundly validated 
+• 
+Authorization for WithdrawObligationCollateral is soundly validated 
+• 
+Authorization for DepositObligationCollateral is soundly validated 
+• 
+Authorization for InitObligation is soundly validated 
+• 
+Authorization for RedeemReserveCollateral is soundly validated 
+• 
+Authorization for DepositReserveLiquidity is soundly validated 
+• 
+Authorization for RefreshReserve is soundly validated 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 16 of 40 
+• 
+Authorization for InitReserve is soundly validated 
+• 
+Authorization for SetLendingMarketOwner is soundly validated 
+• 
+Dependency tokio 1.5.0 is vulnerable according to the RustSec Advisory Database 
+Conclusion 
+Based on the call graphs and the formal verification we can conclude that the code implements the 
+documented functionality to the extent of the code reviewed.  
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 17 of 40 
+Technical Findings 
+Missing check for reserve account owner opens for free FlashLoans 
+Finding ID: KS-SOLEND-F-00 
+Severity: [High] 
+Status: [Remediated] 
+ 
+Description 
+As shown in Figure 15 below, the processing of the FlashLoan instruction does not verify ownership of 
+the reserve account. 
+ 
+Figure 15: Account reference graph for FlashLoan 
+ 
+As data is written to the reserve account, it seems that the implementation relies on an implicit ownership 
+verification done by the runtime policies. Unfortunately, the two writes done to the reserve account 
+"cancel out" each other resulting in the same state before and after the processing of the FlashLoan 
+instruction. 
+ 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 18 of 40 
+Proof of Issue 
+Reserve account data is modified by the following two calls. First, reserve.liquidity.borrow is called to 
+subtract the borrowed amount from the reserve's available amount. 
+File name: processor.rs 
+Line number: 1638 
+ 
+ReserveLiquidity::borrow is implemented as follows: 
+File name: reserve.rs 
+Line number: 414 
+ 
+ 
+In short, borrow updates reserve.liquidity as follows: 
+• 
+reserve.liquidity.available_amount -= flash_loan_amount 
+• 
+reserve.liquidity.borrowed_amount_wads += flash_loan_amount 
+ 
+Next, reserve.liquidity.repay is called to add the borrowed amount to the reserve's available amount again 
+after the repay. 
+File name: processor.rs 
+Line number: 1668 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 19 of 40 
+ReserveLiquidity::repay is implemented as follows: 
+File name: reserve.rs 
+Line number: 431 
+ 
+ 
+In short, repay updates reserve.liquidity as follows: 
+• 
+reserve.liquidity.available_amount += flash_loan_amount 
+• 
+reserve.liquidity.borrowed_amount_wads -= flash_loan_amount 
+ 
+Summing up reserve.liquidity.borrow and reserve.liquidity.repay we get: 
+• 
+reserve.liquidity.available_amount -= flash_loan_amount 
+• 
+reserve.liquidity.available_amount += flash_loan_amount 
+• 
+reserve.liquidity.borrowed_amount_wads += flash_loan_amount 
+• 
+reserve.liquidity.borrowed_amount_wads -= flash_loan_amount 
+ 
+Which leaves reserve.liquidity.available_amount and reserve.liquidity.borrowed_amount_wads at their 
+initial values. 
+Because, the reserve account is not passed as input to the cross program invocation on line 1658 the 
+runtime policies will not verify the reserve account until the spl-token-lending program has finished 
+processing the FlashLoan instruction. And because the data of the reserve account has not changed the 
+runtime policy will not require the spl-token-lending program to be owner of the reserve account. 
+ 
+Severity and Impact Summary 
+Because the ownership of the reserve account is not check it is possible to pass any account. This allows 
+an attacker to fabricate his own reserve account with other configurations than intended by the actual 
+lending market owner. 
+For example, an attack could clone the data of another reserve account and modify the fee. Doing this will 
+allow the attacker to take flash loans for free. 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 20 of 40 
+Recommendation 
+Implement an explicit check for ownership of the reserve account to ensure that the program ownership is 
+always verified. 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 21 of 40 
+ 
+Loss of precision causing miscalculation of interest rate 
+Finding ID: KS-SOLEND-F-01 
+Severity: [High] 
+Status: [RISK ACCEPTED] 
+ 
+Description 
+In calculations involving integer division unintended loss of precision may occur if the remainder is not 
+zero and further operations is performed afterwards. 
+This occurs in the calculation of the constant SLOTS_PER_YEAR  
+Proof of Issue 
+Filename: state/mod.rs 
+Beginning Line Number: 33 
+ 
+The constants used to calculate the value of SLOTS_PER_YEAR are defined in 
+solana_program::clock as follows 
+ 
+Thus the implementation evaluates SLOTS_PER_YEAR as follows 
+ 
+The loss of precision lies in the evaluation of 160 / 64 which will result in the integer value 2 
+and not the decimal number 2.5. 
+SLOTS_PER_YEAR is used as follow 
+ 
+The call from processor::process_instruction line 60 is in the match statement for 
+processing the RefreshReserve instruction which accrues the interest on a reserve. 
+With the current implementation the calculated interest will be 20% lower than expected. 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 22 of 40 
+ 
+ 
+Severity and Impact Summary 
+The SLOTS_PER_YEAR constant is used to calculate interest rates. As the constant is exposed to a 
+serious loss of precision all calculated interests will be off by 20%! 
+This is a programming error with immediate consequences to all interest calculations if put into 
+production. 
+Recommendation  
+Fix the calculation of the SLOTS_PER_YEAR constant to apply multiplication before division to 
+avoid loss of precision. 
+Furthermore, it is highly recommended to implement unit tests to validate the output of functions 
+with critical responsibilities such as the calculation of interests. 
+The desired implementation should be the following 
+ 
+which evaluates to 
+ 
+ 
+References 
+• 
+N/A 
+ 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 23 of 40 
+Structs implementing bytemuck::Pod contains non-Pod fields 
+Finding ID: KS-SOLEND-F-02 
+Severity: [Medium] 
+Status: [Open] 
+ 
+Description 
+The trait bytemock::Pod is applied to the types Price and Product.  
+ 
+Proof of Issue 
+Filename: pyth.rs 
+Beginning Line Number: 103 
+ 
+Filename: pyth.rs 
+Beginning Line Number: 120 
+ 
+The documentation for bytemuck::Pod specifies 5 safety requirements: 
+• 
+The type must be inhabited (eg: no Infallible). 
+• 
+The type must allow any bit pattern (eg: no bool or char, which have illegal bit patterns). 
+• 
+The type must not contain any padding bytes, either in the middle or on the end (eg: no 
+#[repr(C)] struct Foo(u8, u16), which has padding in the middle, and also no 
+#[repr(C)] struct Foo(u16, u8), which has padding on the end). 
+• 
+The type needs to have all fields also be Pod. 
+• 
+The type needs to be repr(C) or repr(transparent). In the case of repr(C), the packed 
+and align repr modifiers can be used as long as all other rules end up being followed. 
+Let's have a look at the implementation of the Price struct 
+Filename: pyth.rs 
+Beginning Line Number: 72 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 24 of 40 
+ 
+According to the documentation "the type needs to have all fields also be Pod." 
+The primitive integer types are supported out-of-the-box by the Pod trait. But the custom types 
+AccKey, PriceInfo, PriceType, and [PriceComp; 32] are not! 
+The same goes for the Product struct 
+Filename: pyth.rs 
+Beginning Line Number: 106  
+ 
+Here the AccKey type is not a Pod! 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 25 of 40 
+Severity and Impact Summary 
+Not following the safety requirements when using unsafe code may result in memory corruption and 
+unexpected behavior of the program. 
+Recommendation  
+• 
+The types AccKey, PriceInfo, PriceType, and PriceComp needs to be Pods for Price 
+and Product to be implemented safely. 
+• 
+The types PriceStatus and CorpAction needs to be Pods for PriceInfo, PriceComp 
+and Price to be implemented safely. 
+Furthermore, bytemock_derive should be used when implementing the Pod and Zeroable traits 
+as the derive macro checks the field types. This is highly recommended as the Pod and Zeroable 
+traits involve unsafe code! 
+Example: 
+ 
+  
+References 
+• 
+https://docs.rs/bytemuck/1.5.1/bytemuck/trait.Pod.html  
+• 
+https://docs.rs/bytemuck_derive/1.0.1/bytemuck_derive/derive.Pod.html 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 26 of 40 
+Pyth product parsing may cause index-out-of-bounds 
+Finding ID: KS-SOLEND-F-03 
+Severity: [Low] 
+Status: [Open] 
+ 
+Description 
+The function for extracting the quote_currency entry of the key/value pairs in 
+pyth::Product::attr may cause index-out-of-bounds. 
+ 
+Proof of Issue 
+Filename: processor.rs 
+Beginning Line Number: 1734 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 27 of 40 
+The values from the pyth_product.attr array itself is used as indices to array without validating if it is 
+out of bounds. Unexpected data will cause index-out-of-bounce resulting in panic 
+ 
+Consider that the attr is an array containing only bytes of 230 
+ 
+ 
+A call to processor::get_pyth_product_quote_currency will then go like this 
+The first iteration of the while loop will go like this 
+ 
+ 
+Then the second iteration of the while loop will go like this 
+ 
+ 
+ 
+As pyth_product.attr has length 464 indexing into 683 will cause panic due to array-out-of-bounds. 
+ 
+ 
+Severity and Impact Summary 
+The values from the pyth_product.attr array itself is used as indices to array without validating if it is 
+out of bounds. Unexpected data will cause index-out-of-bounce resulting in panic 
+ 
+Recommendation  
+Check array indexes or use std::slice::get to avoid panic due to array-out-of-bounds.  
+ 
+References 
+• 
+https://doc.rust-lang.org/std/primitive.slice.html#method.get  
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 28 of 40 
+ 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 29 of 40 
+Disabled lint checks may introduce bad code practices 
+Finding ID: KS-SOLEND-F-04 
+Severity: [Informational] 
+Status: [Open] 
+ 
+Description 
+Lint checks were disabled in the code.  
+ 
+Proof of Issue 
+The following lint checks are disabled in the code: 
+• 
+clippy::assign_op_pattern 
+• 
+clippy::manual_range_contains 
+• 
+clippy::ptr_offset_with_cast 
+• 
+clippy::reversed_empty_ranges 
+• 
+clippy::too_many_arguments 
+• 
+clippy::wrong_self_convention 
+As clippy's lint checks warn about bad code practices, ignoring the warnings allows bad practices 
+in the code. 
+As an example the clippy::reversed_empty_ranges lint check verifies the following 
+Checks for range expressions x..y where both x and y are constant and x is greater or 
+equal to y. 
+ 
+Severity and Impact Summary 
+ 
+Disabling the clippy::reversed_empty_ranges lint check will allow such range expressions in the 
+code which will not warn on reversed range such as 3..0 which will cause panic at runtime! 
+ 
+Recommendation  
+Do not disable lint checks unless you have a really good reason and always document that reason in the 
+code where the check is disabled. 
+ 
+References 
+• 
+Clippy Lints: reversed_empty_ranges 
+https://rust-lang.github.io/rust-clippy/master/index.html#reversed_empty_ranges  
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 30 of 40 
+Oracle (Pyth) program id stored in LendingMarket is not validated 
+Finding ID: KS-SOLEND-F-05 
+Severity: [Informational] 
+Status: [Open] 
+ 
+Description 
+The LendingMarket struct contains ids for the Oracle (Pyth) program (oracle_program_id)  
+Proof of Issue 
+Filename: state/lending_market.rs 
+Beginning Line Number: 11 
+ 
+ 
+The oracle_program_id is written to the LendingMarket during processing of the 
+InitLendingMarket instruction. No instructions allows it to be changed after initialization. 
+The oracle_program_id is used to validate the price and product accounts in the InitReserve 
+instruction. The price account from is used again in the RefreshReserve instruction to update 
+the current market price which again is used in calculations for the RefreshObligation and the 
+BorrowObligationLiquidity instruction. 
+ 
+Severity and Impact Summary 
+As the oracle_program_id is not validated, it is possible to initialize a lending market with an 
+oracle_program_id referring to a program controlled by the someone else. 
+Off course, this would create a lending market which is untrustworthy. But how can the end-user 
+verify that? 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 31 of 40 
+Misbehaving lending markets may have no direct consequence for the spl-token-lending 
+program as this is a configuration issue and not an implementation issue. But the result may 
+backfire resulting in mistrust for the whole spl-token-lending and all of its lending markets. 
+Recommendation  
+If it is possible at all, the oracle_program_id should be validated against a whitelist of trusted Oracle 
+(Pyth) programs. If implemented it should be considered how to handle lending markets based on Oracle 
+programs that have been removed from the whitelist. 
+ 
+References 
+• 
+N/A 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 32 of 40 
+SPL Token program id stored in LendingMarket is superfluous 
+Finding ID: KS-SOLEND-F-06 
+Severity: [Informational] 
+Status: [Open] 
+ 
+Description 
+The LendingMarket struct contains ids for the SPL Token program (token_program_id).  
+Proof of Issue 
+Filename: state/lending_market.rs 
+Beginning Line Number: 11 
+ 
+The token_program_id is written to the LendingMarket during processing of the 
+InitLendingMarket instruction. No instructions allows it to be changed after initialization. 
+The token_program_id is used to validate the SPL Token program account given as input to the 
+following instructions: 
+• 
+InitReserve 
+• 
+DepositReserveLiquidity 
+• 
+RedeemReserveCollateral 
+• 
+InitObligation 
+• 
+DepositObligationCollateral 
+• 
+WithdrawObligationCollateral 
+• 
+BorrowObligationLiquidity 
+• 
+RepayObligationLiquidity 
+• 
+LiquidateObligation 
+• 
+FlashLoan 
+In the processing of the InitReserve instruction the token_program_id account input is 
+validated against the SPL Token program id from the lending market 
+Filename: processor.rs 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 33 of 40 
+Beginning Line Number: 252 
+ 
+Furthermore, the owner of the reserve liquidity mint is also validated against the SPL Token program id 
+from the lending market 
+Filename: processor.rs 
+Beginning Line Number: 252 
+ 
+But then the function spl_token_init_account is called 
+Filename: processor.rs 
+Beginning Line Number: 348 
+ 
+The spl_token_init_account inline function creates an instruction by calling the constructor function 
+spl_token::instruction::initialize_account. Here, token_program_id account key is 
+passed as token_program argument to initialize_account 
+Filename: processor.rs 
+Beginning Line Number: 1828 
+ 
+The spl_token::instruction::initialize_account function (in the spl-token crate) calls the 
+spl_token::check_program_account function 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 34 of 40 
+Filename: token/program/src/instruction.rs 
+Beginning Line Number: 645 
+ 
+Finally, the spl_token::check_program_account function validated that the key of the 
+token_program_id account given as input to the InitReserve instruction is spl_token::id() 
+Filename: token/program/src/lib.rs 
+Beginning Line Number: 30 
+ 
+The validations done during the instruction processing are sane and must take place one way or 
+the other. But storing the SPL Token program id as part of the lending market account is 
+superfluous as the call from the processing of the InitReserve instruction to 
+spl_token::instruction::initialize_account requires the program id to be 
+spl_token::id(). 
+So even though LendingMarket::token_program_id can be refer to another program than the 
+official SPL Token program, it will not be possible to initialize a reserve for such a lending 
+market... 
+ 
+Severity and Impact Summary 
+LendingMarket::token_program_id can be refer to another program than the official SPL 
+Token program, it will not be possible to initialize a reserve for such a lending market. 
+Recommendation  
+To simplify the code and the instruction arguments it is recommended to remove the 
+token_program_id from the LendingMarket struct and update all validations to check against the 
+spl_token::ID constant instead. 
+References 
+• 
+N/A 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 35 of 40 
+METHODOLOGY 
+Kudelski Security uses the following high-level methodology when approaching engagements. They are 
+broken up into the following phases.  
+ 
+Figure 16: Methodology Flow 
+Kickoff 
+The project is kicked all of the sales process has concluded. We typically set up a kickoff meeting where 
+project stakeholders are gathered to discuss the project as well as the responsibilities of participants. 
+During this meeting we verify the scope of the engagement and discuss the project activities. It’s an 
+opportunity for both sides to ask questions and get to know each other. By the end of the kickoff there is 
+an understanding of the following:  
+• 
+Designated points of contact 
+• 
+Communication methods and frequency 
+• 
+Shared documentation 
+• 
+Code and/or any other artifacts necessary for project success 
+• 
+Follow-up meeting schedule, such as a technical walkthrough 
+• 
+Understanding of timeline and duration 
+Ramp-up 
+Ramp-up consists of the activities necessary to gain proficiency on the particular project. This can include 
+the steps needed for familiarity with the codebase or technological innovation utilized. This may include, 
+but is not limited to: 
+• 
+Reviewing previous work in the area including academic papers 
+• 
+Reviewing programming language constructs for specific languages 
+• 
+Researching common flaws and recent technological advancements  
+Review 
+The review phase is where a majority of the work on the engagement is completed. This is the phase 
+where we analyze the project for flaws and issues that impact the security posture. Depending on the 
+project this may include an analysis of the architecture, a review of the code, and a specification matching 
+to match the architecture to the implemented code.  
+In this code audit, we performed the following tasks: 
+Kickoff
+Ramp-up
+Review
+Report
+Verify
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 36 of 40 
+1. Security analysis and architecture review of the original protocol 
+2. Review of the code written for the project 
+3. Compliance of the code with the provided technical documentation 
+The review for this project was performed using manual methods and utilizing the experience of the 
+reviewer. No dynamic testing was performed, only the use of custom built scripts and tools were used to 
+assist the reviewer during the testing. We discuss our methodology in more detail in the following 
+sections.  
+Code Safety 
+We analyzed the provided code, checking for issues related to the following categories: 
+• 
+General code safety and susceptibility to known issues 
+• 
+Poor coding practices and unsafe behavior 
+• 
+Leakage of secrets or other sensitive data through memory mismanagement  
+• 
+Susceptibility to misuse and system errors 
+• 
+Error management and logging 
+This list is general list and not comprehensive, meant only to give an understanding of the issues we are 
+looking for.  
+Cryptography 
+We analyzed the cryptographic primitives and components as well as their implementation. We checked 
+in particular:  
+• 
+Matching of the proper cryptographic primitives to the desired cryptographic functionality needed 
+• 
+Security level of cryptographic primitives and their respective parameters (key lengths, etc.) 
+• 
+Safety of the randomness generation in general as well as in the case of failure 
+• 
+Safety of key management 
+• 
+Assessment of proper security definitions and compliance to use cases 
+• 
+Checking for known vulnerabilities in the primitives used 
+Technical Specification Matching 
+We analyzed the provided documentation and checked that the code matches the specification. We 
+checked for things such as:  
+• 
+Proper implementation of the documented protocol phases 
+• 
+Proper error handling 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 37 of 40 
+• 
+Adherence to the protocol logical description  
+Reporting 
+Kudelski Security delivers a preliminary report in PDF format that contains an executive summary, 
+technical details, and observations about the project. 
+The executive summary contains an overview of the engagement including the number of findings as well 
+as a statement about our general risk assessment of the project as a whole. We may conclude that the 
+overall risk is low, but depending on what was assessed we may conclude that more scrutiny of the 
+project is needed. 
+We not only report security issues identified but also informational findings for improvement categorized 
+into several buckets: 
+• 
+Critical 
+• 
+High 
+• 
+Medium 
+• 
+Low 
+• 
+Informational 
+The technical details are aimed more at developers, describing the issues, the severity ranking and 
+recommendations for mitigation. 
+As we perform the audit, we may identify issues that aren’t security related, but are general best practices 
+and steps, that can be taken to lower the attack surface of the project. We will call those out as we 
+encounter them and as time permits. 
+As an optional step, we can agree on the creation of a public report that can be shared and distributed 
+with a larger audience.   
+Verify 
+After the preliminary findings have been delivered, this could be in the form of the approved 
+communication channel or delivery of the draft report, we will verify any fixes withing a window of time 
+specified in the project. After the fixes have been verified, we will change the status of the finding in the 
+report from open to remediated.  
+The output of this phase will be a final report with any mitigated findings noted.  
+Additional Note 
+It is important to note that, although we did our best in our analysis, no code audit or assessment is a 
+guarantee of the absence of flaws. Our effort was constrained by resource and time limits along with the 
+scope of the agreement.  
+While assessment the severity of the findings, we considered the impact, ease of exploitability, and the 
+probability of attack. These is a solid baseline for severity determination.  
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 38 of 40 
+The Classification of identified problems and vulnerabilities 
+There are four severity levels of an identified security vulnerability.  
+Critical – vulnerability that will lead to loss of protected assets 
+• 
+This is a vulnerability that would lead to immediate loss of protected assets 
+• 
+The complexity to exploit is low 
+• 
+The probablillty of exploit is high 
+ 
+High - A vulnerability that can lead to loss of protected assets 
+• 
+All discrepancies found where there is a security claim made in the documentation that can not 
+be found in the code 
+• 
+All mismatches from the stated and actual functionality 
+• 
+Unprotected key material 
+• 
+Weak encryption of keys 
+• 
+Badly generated key materials 
+• 
+Tx signatures not verified 
+• 
+Spending of funds through logic errors 
+• 
+Calculation errors overflows and underflows 
+ 
+Medium - a vulnerability that hampers the uptime of the system or can 
+lead to other problems 
+• 
+Insecure calls to third party libraries 
+• 
+Use of untested or nonstandard or non-peer-revied crypto functions 
+• 
+Program crashes leaves core dumps or write sensitive data to log files 
+ 
+Low - Problems that have a security impact but does not directly 
+impact the protected assets 
+• 
+Overly complex functions 
+• 
+Unchecked return values from 3rd party libraries that could alter the execution flow  
+ 
+Informational 
+• 
+General recommendations 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 39 of 40 
+TOOLS 
+The following tools were used during this portion of the test. A link for more information about the tool is 
+provided as well. 
+ 
+Tools used during the code review and assessment 
+• 
+Rust – cargo tools 
+• 
+IDE modules for Rust and analysis of source code 
+• 
+Cargo audit which uses https://rustsec.org/advisories/ to find vulnerabilities cargo. 
+ 
+RustSec.org 
+About RustSec 
+The RustSec Advisory Database is a repository of security advisories filed against Rust crates published 
+and maintained by the Rust Secure Code Working Group. 
+ 
+The RustSec Tool-set used in projects and CI/CD pipelines 
+‘cargo-audit’ - audit Cargo.lock files for crates with security vulnerabilities. 
+‘cargo-deny’ - audit `Cargo.lock` files for crates with security vulnerabilities, limit the usage of 
+particular dependencies, their licenses, sources to download from, detect multiple versions of 
+same packages in the dependency tree and more. 
+ 
+ 
+ 
+ 
+Solana Foundation  
+Solend Crypto & Digital Asset Assessment  
+ 
+ 
+ 
+© 2020 Kudelski Security, Inc. Confidential and Proprietary. All Rights Reserved.              Version 1.0  |  9/28/2021 
+ 
+Page 40 of 40 
+KUDELSKI SECURITY CONTACTS 
+NAME 
+POSITION 
+CONTACT INFORMATION 
+Scott 
+Carlson 
+Head of Blockchain 
+Center of Excellence 
+Scottj.carlson@kudelskisecurity.com 
+ 

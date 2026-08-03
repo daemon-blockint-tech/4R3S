@@ -1,0 +1,70 @@
+name: Core CI
+
+# Renamed from "CI" on import (ENG-1: pulled ARES-v3 in as core/) to avoid
+# colliding with the existing TypeScript ci.yml. Scoped to only trigger on
+# changes under core/, so unrelated TS-only commits don't spin up a Rust
+# toolchain for nothing.
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ "core/**" ]
+  pull_request:
+    branches: [ "main" ]
+    paths: [ "core/**" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: core
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Run tests
+        run: cargo test --workspace
+
+  lint:
+    name: Lint and Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-features -- -D warnings
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # rustsec/audit-check@v2 takes `working-directory`, not `file`; the
+          # Cargo.lock now lives in core/.
+          working-directory: core
+          # Accepted on the ENG-1 import, tracked for follow-up dep bumps: all
+          # four are DoS-class (Availability) advisories in parsing libs, and
+          # the engine is not yet wired into the audit pipeline. Clear by
+          # bumping lopdf>=0.42, quick-xml>=0.41, crossbeam-epoch>=0.9.20.
+          ignore: RUSTSEC-2026-0187,RUSTSEC-2026-0194,RUSTSEC-2026-0195,RUSTSEC-2026-0204

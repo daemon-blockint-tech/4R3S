@@ -1,0 +1,23 @@
+[package]
+name = "ares-orchestrator"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Agent orchestrator for ARES V3 — programmatic security scanning API"
+
+[dependencies]
+ares-core = { workspace = true }
+ares-mapper = { workspace = true }
+ares-policy = { workspace = true }
+ares-trident = { workspace = true }
+
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

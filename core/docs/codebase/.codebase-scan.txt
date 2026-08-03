@@ -1,0 +1,257 @@
+
+=== DIRECTORY TREE (max depth 3, source files only) ===
+ARES-V3_Overview.md
+benchmark.md
+dataset
+dataset\cve-and-cwe-dataset-1999-2025
+dataset\cve-and-cwe-dataset-1999-2025\.DS_Store
+dataset\cve-and-cwe-dataset-1999-2025\.gitattributes
+dataset\cve-and-cwe-dataset-1999-2025\CVE_CWE_2025.csv
+dataset\cve-and-cwe-dataset-1999-2025\README.md
+dataset\pyteal-rust-context
+dataset\pyteal-rust-context\.DS_Store
+dataset\pyteal-rust-context\.gitattributes
+dataset\pyteal-rust-context\data
+dataset\pyteal-rust-context\data\train-00000-of-00001.parquet
+dataset\pyteal-rust-context\README.md
+dataset\PyTeal-Rust-vulnerable
+dataset\PyTeal-Rust-vulnerable\.DS_Store
+dataset\PyTeal-Rust-vulnerable\.gitattributes
+dataset\PyTeal-Rust-vulnerable\data
+dataset\PyTeal-Rust-vulnerable\data\train-00000-of-00001.parquet
+dataset\PyTeal-Rust-vulnerable\README.md
+dataset\solana-codegen-new
+dataset\solana-codegen-new\.DS_Store
+dataset\solana-codegen-new\.gitattributes
+dataset\solana-codegen-new\data
+dataset\solana-codegen-new\data\train-00000-of-00001.parquet
+dataset\solana-codegen-new\README.md
+dataset\solana-common-attack-vectors
+dataset\solana-common-attack-vectors\.DS_Store
+dataset\solana-common-attack-vectors\account-data-matching
+dataset\solana-common-attack-vectors\account-data-matching\.DS_Store
+dataset\solana-common-attack-vectors\account-data-matching\.gitignore
+dataset\solana-common-attack-vectors\account-data-matching\.prettierignore
+dataset\solana-common-attack-vectors\account-data-matching\Anchor.toml
+dataset\solana-common-attack-vectors\account-data-matching\Cargo.lock
+dataset\solana-common-attack-vectors\account-data-matching\Cargo.toml
+dataset\solana-common-attack-vectors\account-data-matching\migrations
+dataset\solana-common-attack-vectors\account-data-matching\package.json
+dataset\solana-common-attack-vectors\account-data-matching\programs
+dataset\solana-common-attack-vectors\account-data-matching\tests
+dataset\solana-common-attack-vectors\account-data-matching\tsconfig.json
+dataset\solana-common-attack-vectors\account-data-matching\yarn.lock
+dataset\solana-common-attack-vectors\account-reloading
+dataset\solana-common-attack-vectors\account-reloading\.DS_Store
+dataset\solana-common-attack-vectors\account-reloading\.gitignore
+dataset\solana-common-attack-vectors\account-reloading\.prettierignore
+dataset\solana-common-attack-vectors\account-reloading\Anchor.toml
+dataset\solana-common-attack-vectors\account-reloading\Cargo.lock
+dataset\solana-common-attack-vectors\account-reloading\Cargo.toml
+dataset\solana-common-attack-vectors\account-reloading\migrations
+dataset\solana-common-attack-vectors\account-reloading\package.json
+dataset\solana-common-attack-vectors\account-reloading\programs
+dataset\solana-common-attack-vectors\account-reloading\tests
+dataset\solana-common-attack-vectors\account-reloading\tsconfig.json
+dataset\solana-common-attack-vectors\account-reloading\yarn.lock
+dataset\solana-common-attack-vectors\arbitrary-cpi
+dataset\solana-common-attack-vectors\arbitrary-cpi\.DS_Store
+dataset\solana-common-attack-vectors\arbitrary-cpi\.gitignore
+dataset\solana-common-attack-vectors\arbitrary-cpi\.prettierignore
+dataset\solana-common-attack-vectors\arbitrary-cpi\Anchor.toml
+dataset\solana-common-attack-vectors\arbitrary-cpi\Cargo.lock
+dataset\solana-common-attack-vectors\arbitrary-cpi\Cargo.toml
+dataset\solana-common-attack-vectors\arbitrary-cpi\migrations
+dataset\solana-common-attack-vectors\arbitrary-cpi\package.json
+dataset\solana-common-attack-vectors\arbitrary-cpi\programs
+dataset\solana-common-attack-vectors\arbitrary-cpi\tests
+dataset\solana-common-attack-vectors\arbitrary-cpi\tsconfig.json
+dataset\solana-common-attack-vectors\arbitrary-cpi\yarn.lock
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\.DS_Store
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\.gitignore
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\.prettierignore
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\Anchor.toml
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\Cargo.lock
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\Cargo.toml
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\migrations
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\package.json
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\programs
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\tests
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\tsconfig.json
+dataset\solana-common-attack-vectors\duplicate-mutable-accounts\yarn.lock
+dataset\solana-common-attack-vectors\initialization-frontrunning
+dataset\solana-common-attack-vectors\initialization-frontrunning\.DS_Store
+dataset\solana-common-attack-vectors\initialization-frontrunning\.gitignore
+dataset\solana-common-attack-vectors\initialization-frontrunning\.prettierignore
+dataset\solana-common-attack-vectors\initialization-frontrunning\Anchor.toml
+dataset\solana-common-attack-vectors\initialization-frontrunning\Cargo.lock
+dataset\solana-common-attack-vectors\initialization-frontrunning\Cargo.toml
+dataset\solana-common-attack-vectors\initialization-frontrunning\migrations
+dataset\solana-common-attack-vectors\initialization-frontrunning\package.json
+dataset\solana-common-attack-vectors\initialization-frontrunning\programs
+dataset\solana-common-attack-vectors\initialization-frontrunning\tests
+dataset\solana-common-attack-vectors\initialization-frontrunning\tsconfig.json
+dataset\solana-common-attack-vectors\initialization-frontrunning\yarn.lock
+dataset\solana-common-attack-vectors\ownership-check
+dataset\solana-common-attack-vectors\ownership-check\.DS_Store
+dataset\solana-common-attack-vectors\ownership-check\.gitignore
+dataset\solana-common-attack-vectors\ownership-check\.prettierignore
+dataset\solana-common-attack-vectors\ownership-check\Anchor.toml
+dataset\solana-common-attack-vectors\ownership-check\Cargo.lock
+dataset\solana-common-attack-vectors\ownership-check\Cargo.toml
+dataset\solana-common-attack-vectors\ownership-check\migrations
+dataset\solana-common-attack-vectors\ownership-check\package.json
+dataset\solana-common-attack-vectors\ownership-check\programs
+dataset\solana-common-attack-vectors\ownership-check\tests
+dataset\solana-common-attack-vectors\ownership-check\tsconfig.json
+dataset\solana-common-attack-vectors\ownership-check\yarn.lock
+dataset\solana-common-attack-vectors\pda-privileges
+dataset\solana-common-attack-vectors\pda-privileges\.DS_Store
+dataset\solana-common-attack-vectors\pda-privileges\.gitignore
+dataset\solana-common-attack-vectors\pda-privileges\.prettierignore
+dataset\solana-common-attack-vectors\pda-privileges\Anchor.toml
+dataset\solana-common-attack-vectors\pda-privileges\Cargo.lock
+dataset\solana-common-attack-vectors\pda-privileges\Cargo.toml
+dataset\solana-common-attack-vectors\pda-privileges\migrations
+dataset\solana-common-attack-vectors\pda-privileges\package.json
+dataset\solana-common-attack-vectors\pda-privileges\programs
+dataset\solana-common-attack-vectors\pda-privileges\tests
+dataset\solana-common-attack-vectors\pda-privileges\tsconfig.json
+dataset\solana-common-attack-vectors\pda-privileges\yarn.lock
+dataset\solana-common-attack-vectors\re-initialization
+dataset\solana-common-attack-vectors\re-initialization\.DS_Store
+dataset\solana-common-attack-vectors\re-initialization\.gitignore
+dataset\solana-common-attack-vectors\re-initialization\.prettierignore
+dataset\solana-common-attack-vectors\re-initialization\Anchor.toml
+dataset\solana-common-attack-vectors\re-initialization\Cargo.lock
+dataset\solana-common-attack-vectors\re-initialization\Cargo.toml
+dataset\solana-common-attack-vectors\re-initialization\migrations
+dataset\solana-common-attack-vectors\re-initialization\package.json
+dataset\solana-common-attack-vectors\re-initialization\programs
+dataset\solana-common-attack-vectors\re-initialization\tests
+dataset\solana-common-attack-vectors\re-initialization\tsconfig.json
+dataset\solana-common-attack-vectors\re-initialization\yarn.lock
+dataset\solana-common-attack-vectors\README.md
+dataset\solana-common-attack-vectors\revival-attack
+dataset\solana-common-attack-vectors\revival-attack\.DS_Store
+dataset\solana-common-attack-vectors\revival-attack\.gitignore
+dataset\solana-common-attack-vectors\revival-attack\.prettierignore
+dataset\solana-common-attack-vectors\revival-attack\Anchor.toml
+dataset\solana-common-attack-vectors\revival-attack\Cargo.lock
+dataset\solana-common-attack-vectors\revival-attack\Cargo.toml
+dataset\solana-common-attack-vectors\revival-attack\migrations
+dataset\solana-common-attack-vectors\revival-attack\package.json
+dataset\solana-common-attack-vectors\revival-attack\programs
+dataset\solana-common-attack-vectors\revival-attack\tests
+dataset\solana-common-attack-vectors\revival-attack\tsconfig.json
+dataset\solana-common-attack-vectors\revival-attack\yarn.lock
+dataset\solana-common-attack-vectors\signer-authorization
+dataset\solana-common-attack-vectors\signer-authorization\.DS_Store
+dataset\solana-common-attack-vectors\signer-authorization\.gitignore
+dataset\solana-common-attack-vectors\signer-authorization\.prettierignore
+dataset\solana-common-attack-vectors\signer-authorization\Anchor.toml
+dataset\solana-common-attack-vectors\signer-authorization\Cargo.lock
+dataset\solana-common-attack-vectors\signer-authorization\Cargo.toml
+dataset\solana-common-attack-vectors\signer-authorization\migrations
+dataset\solana-common-attack-vectors\signer-authorization\package.json
+dataset\solana-common-attack-vectors\signer-authorization\programs
+dataset\solana-common-attack-vectors\signer-authorization\tests
+dataset\solana-common-attack-vectors\signer-authorization\tsconfig.json
+dataset\solana-common-attack-vectors\signer-authorization\yarn.lock
+dataset\solana-common-attack-vectors\type-cosplay
+dataset\solana-common-attack-vectors\type-cosplay\.DS_Store
+dataset\solana-common-attack-vectors\type-cosplay\.gitignore
+dataset\solana-common-attack-vectors\type-cosplay\.prettierignore
+dataset\solana-common-attack-vectors\type-cosplay\Anchor.toml
+dataset\solana-common-attack-vectors\type-cosplay\Cargo.lock
+dataset\solana-common-attack-vectors\type-cosplay\Cargo.toml
+dataset\solana-common-attack-vectors\type-cosplay\migrations
+dataset\solana-common-attack-vectors\type-cosplay\package.json
+dataset\solana-common-attack-vectors\type-cosplay\programs
+dataset\solana-common-attack-vectors\type-cosplay\tests
+dataset\solana-common-attack-vectors\type-cosplay\tsconfig.json
+dataset\solana-common-attack-vectors\type-cosplay\yarn.lock
+dataset\solana-train-context
+dataset\solana-train-context\.DS_Store
+dataset\solana-train-context\.gitattributes
+dataset\solana-train-context\data
+dataset\solana-train-context\data\train-00000-of-00001.parquet
+dataset\solana-train-context\README.md
+dataset\solana-vulnerability-humanverified
+dataset\solana-vulnerability-humanverified\.DS_Store
+dataset\solana-vulnerability-humanverified\.gitattributes
+dataset\solana-vulnerability-humanverified\README.md
+dataset\solana-vulnerability-humanverified\solana vulnerability.csv
+dataset\Solana_vulnerability_audit_dataset
+dataset\Solana_vulnerability_audit_dataset\.DS_Store
+dataset\Solana_vulnerability_audit_dataset\.gitattributes
+dataset\Solana_vulnerability_audit_dataset\README.md
+dataset\Solana_vulnerability_audit_dataset\train.csv
+dataset\Solana_vulnerability_audit_dataset_V2
+dataset\Solana_vulnerability_audit_dataset_V2\.DS_Store
+dataset\Solana_vulnerability_audit_dataset_V2\.gitattributes
+dataset\Solana_vulnerability_audit_dataset_V2\README.md
+dataset\Solana_vulnerability_audit_dataset_V2\Solana.json
+docs
+docs\codebase
+docs\codebase\.codebase-scan.txt
+
+=== STACK DETECTION (manifest files) ===
+No recognized manifest files found in project root.
+
+=== ENTRY POINTS ===
+No common entry points found. Check 'main' or 'scripts.start' in manifest files above.
+
+=== LINTING AND FORMATTING CONFIG ===
+No linting or formatting config files found in project root.
+
+=== ENVIRONMENT VARIABLE TEMPLATES ===
+No .env.example or .env.template found. Identify required environment variables by searching the code and config for environment variable reads.
+
+=== TODO / FIXME / HACK (production code only, test dirs excluded) ===
+dataset\Solana_vulnerability_audit_dataset_V2\Solana.json:781: "code": "use solana_program::{\n    account_info::{next_account_info, AccountInfo},\n    entrypoint::ProgramResult,\n    pubkey::Pubkey,\n    msg,\n};\n\npub fn process_instruction(\n    program_id: &Pubkey,\n    accounts: &[AccountInfo],\n    instruction_data: &[u8],\n) -> ProgramResult {\n    let account_info_iter = &mut accounts.iter();\n    let signer_account = next_account_info(account_info_iter)?;\n\n    if !signer_account.is_signer {\n        return Err(ProgramError::MissingRequiredSignature);\n    }\n\n    let signature = signer_account.try_borrow_data()?;\n    msg!(\"Received signature: {:?}\", signature);\n\n    // TODO: Implement signature verification\n    // ...\n\n    Ok(())\n}",
+
+=== GIT RECENT COMMITS (last 20) ===
+No commits found.
+
+=== HIGH-CHURN FILES (last 90 days, top 20) ===
+None found.
+
+=== MONOREPO SIGNALS ===
+No monorepo signals detected.
+
+=== CODE METRICS ===
+Total files scanned: 150
+Total lines of code: 4505
+
+Files by language:
+  Other: 114
+  TypeScript: 22
+  Rust: 14
+
+Top 10 largest files:
+dataset\cve-and-cwe-dataset-1999-2025\CVE_CWE_2025.csv: 100195.1KB
+dataset\solana-codegen-new\data\train-00000-of-00001.parquet: 25664.9KB
+dataset\solana-vulnerability-humanverified\solana vulnerability.csv: 3089.6KB
+dataset\Solana_vulnerability_audit_dataset_V2\Solana.json: 613.0KB
+dataset\pyteal-rust-context\data\train-00000-of-00001.parquet: 198.5KB
+dataset\PyTeal-Rust-vulnerable\data\train-00000-of-00001.parquet: 187.6KB
+dataset\Solana_vulnerability_audit_dataset\train.csv: 150.8KB
+dataset\solana-train-context\data\train-00000-of-00001.parquet: 149.1KB
+dataset\solana-common-attack-vectors\ownership-check\Cargo.lock: 71.1KB
+dataset\solana-common-attack-vectors\pda-privileges\Cargo.lock: 70.7KB
+
+=== CI/CD PIPELINES ===
+No CI/CD pipelines detected.
+
+=== CONTAINERS & ORCHESTRATION ===
+No containerization configs detected.
+
+=== SECURITY & COMPLIANCE ===
+No security configs detected.
+
+=== PERFORMANCE & TESTING ===
+No performance testing configs detected.
+
+=== SCAN COMPLETE ===
