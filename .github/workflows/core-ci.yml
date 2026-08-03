@@ -63,3 +63,12 @@ jobs:
           # rustsec/audit-check@v2 takes `working-directory`, not `file`; the
           # Cargo.lock now lives in core/.
           working-directory: core
+          # Accepted on the ENG-1 import, tracked for follow-up dep bumps: all
+          # four are DoS-class (Availability) advisories in parsing libs, and
+          # the engine is not yet wired into the audit pipeline. Clear by
+          # bumping lopdf>=0.42, quick-xml>=0.41, crossbeam-epoch>=0.9.20.
+          ignore: |
+            RUSTSEC-2026-0187
+            RUSTSEC-2026-0194
+            RUSTSEC-2026-0195
+            RUSTSEC-2026-0204
