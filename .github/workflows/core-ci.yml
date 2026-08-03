@@ -67,8 +67,4 @@ jobs:
           # four are DoS-class (Availability) advisories in parsing libs, and
           # the engine is not yet wired into the audit pipeline. Clear by
           # bumping lopdf>=0.42, quick-xml>=0.41, crossbeam-epoch>=0.9.20.
-          ignore: |
-            RUSTSEC-2026-0187
-            RUSTSEC-2026-0194
-            RUSTSEC-2026-0195
-            RUSTSEC-2026-0204
+          ignore: RUSTSEC-2026-0187,RUSTSEC-2026-0194,RUSTSEC-2026-0195,RUSTSEC-2026-0204
