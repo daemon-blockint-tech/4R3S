@@ -1,0 +1,50 @@
+{
+  "schema_version": "ares_demo_missions/v1",
+  "missions": [
+    {
+      "id": "owned-local-web-api",
+      "label": "Owned Local Web/API",
+      "family": "web_api",
+      "target": "http://127.0.0.1:3333",
+      "directive": "We own this local API. Map the exposed surface, identify the highest-impact web and API risks, preserve evidence, avoid production writes, and produce an engineering fix plan.",
+      "safe_first_moves": ["preflight", "sync arsenal", "plan tools", "log evidence", "mission gate"],
+      "expected_outputs": ["route preview", "tool plan", "evidence item", "finding", "retest", "mission bundle"]
+    },
+    {
+      "id": "repo-supply-chain-hardening",
+      "label": "Repository Supply Chain Hardening",
+      "family": "code_supply_chain",
+      "target": ".",
+      "directive": "Review this local repository for dependency, secret, CI/CD, release, and provenance risk. Do not expose secret values. Produce prioritized fixes and acceptance tests.",
+      "safe_first_moves": ["preflight", "activation", "plan tools", "log evidence", "review run"],
+      "expected_outputs": ["repo trust map", "dependency triage", "secret redaction check", "fix plan", "memory proposal"]
+    },
+    {
+      "id": "ai-agent-boundary-probe",
+      "label": "AI Agent Boundary Probe",
+      "family": "ai_red_team",
+      "target": "local-agent-fixture",
+      "directive": "Test a local AI agent boundary for prompt, tool, memory, and browser authority failures. Use synthetic hostile content, preserve transcripts as evidence, and map findings to defensive controls.",
+      "safe_first_moves": ["preflight", "guided start", "plan tools", "log evidence", "bundle"],
+      "expected_outputs": ["boundary map", "prompt eval plan", "transcript evidence", "control recommendations"]
+    },
+    {
+      "id": "smart-contract-local-fixture",
+      "label": "Smart Contract Local Fixture",
+      "family": "smart_contract",
+      "target": "contracts/",
+      "directive": "Analyze local smart-contract artifacts for static, property, fuzz, and dry-run risks. Stay local unless a scoped testnet receipt is provided.",
+      "safe_first_moves": ["sync arsenal", "activation", "plan tools", "log evidence"],
+      "expected_outputs": ["static findings", "property-test plan", "dry-run gate", "fix acceptance criteria"]
+    },
+    {
+      "id": "leadership-risk-brief",
+      "label": "Leadership Risk Brief",
+      "family": "reporting_remediation",
+      "target": "current-mission-ledger",
+      "directive": "Turn the current evidence and findings into a plain-English risk brief with bottom line, scope, top risks, owners, next actions, and retest acceptance criteria.",
+      "safe_first_moves": ["bundle", "gate", "review run"],
+      "expected_outputs": ["executive summary", "owner/action table", "evidence appendix", "retest plan"]
+    }
+  ]
+}

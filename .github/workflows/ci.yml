@@ -102,6 +102,12 @@ jobs:
           manifest-path: core/Cargo.toml
           command: check licenses bans sources
 
+      # GOLDEN RULE 1, product/safety-boundary half: offensive tooling in
+      # apps/ares-sec/ must never be imported into the defensive Auditor.
+      # Deferred in CLAUDE.md until real code landed there (SEC-1) — it has.
+      - name: Import-boundary check (ares-sec must stay out of the Auditor)
+        run: node scripts/check-import-boundary.mjs
+
   eval-scorer:
     name: eval scorer (python)
     runs-on: ubuntu-latest

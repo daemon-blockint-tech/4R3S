@@ -1,0 +1,219 @@
+/**
+ * Kali+ adapter → CustomTool factory (Phase-1).
+ * Pins the load-bearing safety + behavior contract:
+ *   - catalog_only / import_only adapters are NEVER minted (metasploit/hydra/bloodhound stay off the
+ *     callable surface) — the factory returns null.
+ *   - a missing binary DEGRADES (returns {success:false, error:<installHint>}) instead of throwing.
+ *   - an out-of-scope target is refused (SCOPE DENIED) BEFORE the subprocess runs.
+ *   - a mintable adapter produces a CustomTool with a working name + category + real stdout output.
+ *   - buildAdapterTools drops non-mintable adapters and skips already-registered tool names.
+ * All deps are injected fakes — no real binaries are spawned.
+ */
+import { describe, it, expect } from 'vitest';
+import {
+  adapterToCustomTool,
+  buildAdapterTools,
+  toolNameFor,
+  type AdapterToolDeps,
+  type SubprocessResult,
+} from '../arsenal/adapter-tools.js';
+import { TOOL_ADAPTERS } from '../arsenal/catalog.js';
+import type { ToolAdapter } from '../arsenal/catalog.js';
+import type { CustomTool, ToolContext } from '../types/index.js';
+
+function adapter(id: string): ToolAdapter {
+  const a = TOOL_ADAPTERS.find(x => x.id === id);
+  if (!a) throw new Error(`test fixture: adapter '${id}' not found in catalog`);
+  return a;
+}
+
+/** Mint an adapter and assert (for the type-checker and the test) that it was not gated to null. */
+function mint(id: string, deps: AdapterToolDeps): CustomTool {
+  const tool = adapterToCustomTool(adapter(id), deps);
+  expect(tool, `${id} should be mintable`).not.toBeNull();
+  return tool as CustomTool;
+}
+
+/** A deps double that records subprocess spawns and lets each behavior be configured per test. */
+function makeDeps(overrides: Partial<AdapterToolDeps> = {}): AdapterToolDeps & { spawns: string[][] } {
+  const spawns: string[][] = [];
+  return {
+    spawns,
+    isToolAvailable: async () => true,
+    runSubprocess: async (_command, args): Promise<SubprocessResult> => {
+      spawns.push(args);
+      return { stdout: 'FAKE_OUTPUT', stderr: '', exitCode: 0 };
+    },
+    ...overrides,
+  };
+}
+
+const ctx = (parameters: Record<string, unknown>): ToolContext => ({ parameters });
+
+describe('adapterToCustomTool — mint gate', () => {
+  it('NEVER mints catalog_only / import_only adapters (metasploit, hydra, bloodhound → null)', () => {
+    const deps = makeDeps();
+    expect(adapterToCustomTool(adapter('metasploit'), deps)).toBeNull(); // catalog_only
+    expect(adapterToCustomTool(adapter('hydra'), deps)).toBeNull();      // catalog_only
+    expect(adapterToCustomTool(adapter('bloodhound'), deps)).toBeNull(); // import_only
+    expect(adapterToCustomTool(adapter('pacu'), deps)).toBeNull();       // catalog_only (AWS exploitation framework)
+    expect(adapterToCustomTool(adapter('frida'), deps)).toBeNull();      // catalog_only (runtime code injection)
+  });
+
+  it('mints a command-ready adapter with a working name + category', () => {
+    const tool = mint('nmap', makeDeps());
+    expect(tool.name).toBe(toolNameFor(adapter('nmap')));
+    expect(tool.name).toBe('nmap_tool');
+    expect(tool.category).toBe('network'); // passthrough of the catalog category
+    expect(typeof tool.handler).toBe('function');
+  });
+});
+
+describe('cloud/mobile category loadouts — presence + risk gating', () => {
+  const deps = makeDeps();
+  const execOf = (id: string) => adapter(id).execution;
+
+  it('cloud: assessment/recon tools are receipt-gated; the exploitation framework is catalog-only', () => {
+    expect(execOf('scoutsuite')).toBe('receipt_required');
+    expect(execOf('cloudfox')).toBe('receipt_required');
+    expect(execOf('pmapper')).toBe('receipt_required');
+    expect(execOf('pacu')).toBe('catalog_only');
+    expect(adapter('scoutsuite').category).toBe('cloud');
+    expect(adapterToCustomTool(adapter('pacu'), deps)).toBeNull(); // never callable
+  });
+
+  it('mobile: static scanner is safe; dynamic/runtime tools are gated', () => {
+    expect(execOf('apkleaks')).toBe('safe_command');
+    expect(execOf('mobsfscan')).toBe('safe_command'); // static source scanner — safe
+    expect(execOf('objection')).toBe('receipt_required');
+    expect(execOf('frida')).toBe('catalog_only');
+    expect(adapter('apkleaks').category).toBe('mobile');
+    expect(adapterToCustomTool(adapter('frida'), deps)).toBeNull();        // never callable
+    expect(adapterToCustomTool(adapter('apkleaks'), deps)).not.toBeNull(); // safe, mintable
+  });
+});
+
+describe('adapterToCustomTool — degrade / scope / execution', () => {
+  it('a missing binary DEGRADES (does not throw) and surfaces the installHint', async () => {
+    const deps = makeDeps({ isToolAvailable: async () => false });
+    const tool = mint('nmap', deps);
+    const res = await tool.handler(ctx({ target: '127.0.0.1' }));
+    expect(res.success).toBe(false);
+    expect(res.error).toContain(adapter('nmap').installHint);
+    expect(deps.spawns.length).toBe(0); // nothing was spawned
+  });
+
+  it('scopeOk=false → SCOPE DENIED before the subprocess runs', async () => {
+    const deps = makeDeps({ scopeOk: () => false });
+    const tool = mint('nuclei', deps);
+    const res = await tool.handler(ctx({ url: 'https://evil.example.com' }));
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/SCOPE DENIED/);
+    expect(res.error).toContain('evil.example.com');
+    expect(deps.spawns.length).toBe(0); // refused before spawning
+  });
+
+  it('scopeOk=true → runs the subprocess and returns stdout as output', async () => {
+    const deps = makeDeps({ scopeOk: () => true });
+    const tool = mint('nuclei', deps);
+    const res = await tool.handler(ctx({ url: 'https://target.example.com' }));
+    expect(res.success).toBe(true);
+    expect(res.output).toBe('FAKE_OUTPUT');
+    expect(deps.spawns.length).toBe(1);
+    // nuclei template threads the target through -target
+    expect(deps.spawns[0]).toContain('https://target.example.com');
+  });
+
+  it('a networked adapter with no target degrades gracefully (no spawn)', async () => {
+    const deps = makeDeps();
+    const tool = mint('nuclei', deps);
+    const res = await tool.handler(ctx({}));
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/requires a target/);
+    expect(deps.spawns.length).toBe(0);
+  });
+
+  it('a non-zero exit code is reported as failure, not a throw', async () => {
+    const deps = makeDeps({
+      scopeOk: () => true,
+      runSubprocess: async () => ({ stdout: '', stderr: 'boom', exitCode: 2 }),
+    });
+    const tool = mint('nikto', deps);
+    const res = await tool.handler(ctx({ url: 'https://target.example.com' }));
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('boom');
+  });
+});
+
+describe('adapterToCustomTool — argument-injection hardening', () => {
+  it('nmap IGNORES an LLM-supplied free-form flags param (no -oN/--script reaches argv)', async () => {
+    const deps = makeDeps({ scopeOk: () => true });
+    const tool = mint('nmap', deps);
+    const res = await tool.handler(ctx({
+      target: 'target.example.com',
+      flags: '-oN /tmp/pwned --script vuln,exploit', // injection attempt
+    }));
+    expect(res.success).toBe(true);
+    const argv = deps.spawns[0];
+    expect(argv).toEqual(['-sV', '-T4', 'target.example.com']); // flags hardcoded; injection dropped
+    expect(argv).not.toContain('-oN');
+    expect(argv.join(' ')).not.toContain('--script');
+  });
+
+  it('nmap accepts a clean port spec but drops one carrying an injected flag', async () => {
+    const deps = makeDeps({ scopeOk: () => true });
+    const tool = mint('nmap', deps);
+    await tool.handler(ctx({ target: 'target.example.com', ports: '22,80,443' }));
+    expect(deps.spawns[0]).toEqual(['-sV', '-T4', '-p', '22,80,443', 'target.example.com']);
+    await tool.handler(ctx({ target: 'target.example.com', ports: '80 -oN /tmp/x' }));
+    expect(deps.spawns[1]).toEqual(['-sV', '-T4', 'target.example.com']); // malicious ports dropped
+  });
+
+  it('refuses an option-looking target (leading dash) before spawning', async () => {
+    const deps = makeDeps({ scopeOk: () => true });
+    const tool = mint('nmap', deps);
+    const res = await tool.handler(ctx({ target: '-oN/tmp/pwned' }));
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/option-looking target/);
+    expect(deps.spawns.length).toBe(0); // never spawned
+  });
+
+  it('curl sends a literal body via --data-raw and REFUSES a local-file-read data value (-d @file)', async () => {
+    const deps = makeDeps({ scopeOk: () => true });
+    const tool = mint('curl', deps);
+    // a clean body is sent verbatim with --data-raw (never plain -d, which would file-interpret @/<)
+    const ok = await tool.handler(ctx({ url: 'https://target.example.com/', data: 'a=1&b=2' }));
+    expect(ok.success).toBe(true);
+    expect(deps.spawns[0]).toContain('--data-raw');
+    expect(deps.spawns[0]).not.toContain('-d');
+    // `@/etc/passwd` (and `<file`) make curl read a local file into the body — must be refused, no spawn
+    for (const evil of ['@/etc/passwd', '@-', '<secret.txt']) {
+      const res = await tool.handler(ctx({ url: 'https://target.example.com/', data: evil }));
+      expect(res.success, `data '${evil}' must be refused`).toBe(false);
+      expect(res.error).toMatch(/read a local file/);
+    }
+    expect(deps.spawns.length).toBe(1); // only the clean call ever spawned
+  });
+});
+
+describe('buildAdapterTools', () => {
+  it('drops non-mintable adapters (metasploit/hydra/bloodhound never appear)', () => {
+    const tools = buildAdapterTools(TOOL_ADAPTERS, makeDeps());
+    const names = tools.map(t => t.name);
+    expect(names).toContain(toolNameFor(adapter('nmap')));
+    expect(names).not.toContain(toolNameFor(adapter('metasploit')));
+    expect(names).not.toContain(toolNameFor(adapter('hydra')));
+    expect(names).not.toContain(toolNameFor(adapter('bloodhound')));
+    // count matches the catalog's mintable population
+    const mintable = TOOL_ADAPTERS.filter(
+      a => a.execution === 'safe_command' || a.execution === 'receipt_required'
+    ).length;
+    expect(tools.length).toBe(mintable);
+  });
+
+  it('skips adapters whose minted name is already registered', () => {
+    const already = new Set([toolNameFor(adapter('nmap'))]);
+    const tools = buildAdapterTools(TOOL_ADAPTERS, makeDeps(), already);
+    expect(tools.map(t => t.name)).not.toContain(toolNameFor(adapter('nmap')));
+  });
+});

