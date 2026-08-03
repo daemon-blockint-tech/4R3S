@@ -1,0 +1,55 @@
+---
+config:
+  theme: neutral
+---
+flowchart TD
+    Entry(["Developer Interface<br/>CLI / API / IDE"]) --> Dispatch
+
+    subgraph Step1["Step 1 — Dispatch Layer"]
+        Dispatch{"Does this query<br/>require code analysis?"}
+    end
+
+    Dispatch -->|NO| KBOnly["Knowledge Base<br/>Lookup Only"]
+    Dispatch -->|YES| Orch
+
+    subgraph Step2["Step 2 — Agent Orchestrator + Multi-Source Retrieval"]
+        Orch["Agent<br/>Orchestrator"]
+
+        subgraph Sources["Data Sources"]
+            direction LR
+            SrcA["<b>Source A</b><br/>ARES Core Engine<br/><i>deterministic</i><hr size='1'/>Phase 1: Regex<br/>Phase 2: AST Scanner<br/>Phase 3: Taint Engine<br/>Phase 4: Local Judge"]
+            SrcB["<b>Source B</b><br/>Vector DB /<br/>Vuln Knowledge Base<hr size='1'/>Historical exploit<br/>embeddings<br/>Audit report patterns<br/>Attack taxonomy"]
+            SrcC["<b>Source C</b><br/>On-Chain /<br/>Structured DB<hr size='1'/>Program bytecode<br/>TX history<br/>TVL / authority"]
+            SrcD["<b>Source D</b><br/>MCP Server<hr size='1'/>web_search<br/>web_fetch<br/>repo_fetch<br/>explorer_query<br/>registry_lookup"]
+        end
+
+        Orch --> SrcA
+        Orch --> SrcB
+        Orch --> SrcC
+        Orch --> SrcD
+    end
+
+    SrcA --> Rerank
+    SrcB --> Rerank
+    SrcC --> Rerank
+    SrcD --> Rerank
+
+    subgraph Step3["Step 3 — Rerank & Correlate"]
+        Rerank["Merge + Deduplicate<br/>Cross-validate + Rank<br/>severity x confidence x impact"]
+    end
+
+    Rerank --> Generate
+
+    subgraph Step4["Step 4 — Generate Audit Report"]
+        Generate["LLM Report Generator<br/>Narrative + JSON + Code Snippets<br/>Attack Scenarios + Remediation"]
+    end
+
+    Generate --> Validate
+
+    subgraph Step5["Step 5 — Validate Findings"]
+        Validate{"Is the report<br/>correct & relevant?"}
+    end
+
+    Validate -->|YES| Final(["Final Report<br/>to Developer Interface"])
+    Validate -->|NO| Rewrite["Rewrite Analysis Scope<br/>narrow or broaden"]
+    Rewrite -->|max 3 iterations| Dispatch

@@ -99,6 +99,7 @@ jobs:
       - name: License check (cargo)
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
+          manifest-path: core/Cargo.toml
           command: check licenses bans sources
 
   eval-scorer:

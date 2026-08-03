@@ -1,6 +1,0 @@
-# ARES Rust workspace (PLAT-1 skeleton).
-# The deterministic detection engine is built here, INSIDE 4R3S — there is no
-# separate "ARES-v3" repo to vendor. The real engine crates land in ENG-1.
-[workspace]
-resolver = "2"
-members = ["core"]

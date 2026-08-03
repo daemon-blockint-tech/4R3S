@@ -1,0 +1,33 @@
+---
+config:
+  theme: neutral
+---
+flowchart TD
+    Input(["Solana Program Directory<br/>Cargo.toml + .rs files"]) --> P1
+
+    subgraph CorePipeline["ARES V3 — Four-Phase Core Detection Pipeline"]
+        P1["<b>Phase 1</b><br/>Regex Heuristics<br/><i>rayon-parallel pattern scan</i>"]
+        P1 -->|"Map&lt;file, RawFinding[]&gt;"| P2
+        P2["<b>Phase 2</b><br/>AST Scanner<br/><i>syn + proc-macro2</i>"]
+        P2 -->|"ProgramGraph + AstFinding[]"| P3
+        P3["<b>Phase 3</b><br/>Taint Engine<br/><i>source to sink tracking</i>"]
+        P3 -->|"TaintGraph + AccountOps"| P4
+        P4["<b>Phase 4</b><br/>Deterministic Local Judge<br/><i>AST metadata suppression</i>"]
+        P4 -->|"FilteredFinding[] + SuppressionLog"| Cross
+    end
+
+    Cross["<b>Cross-Instruction</b><br/>Analyzer<br/><i>reload / reinit / revalidation</i>"]
+    Cross --> Report
+
+    subgraph Output["Report Generator"]
+        direction LR
+        JSON["JSON"]
+        MD["Markdown"]
+        HTML["HTML"]
+        PDF["PDF"]
+    end
+
+    Report["Report<br/>Generator"] --> JSON
+    Report --> MD
+    Report --> HTML
+    Report --> PDF

@@ -1,0 +1,68 @@
+name: Core CI
+
+# Renamed from "CI" on import (ENG-1: pulled ARES-v3 in as core/) to avoid
+# colliding with the existing TypeScript ci.yml. Scoped to only trigger on
+# changes under core/, so unrelated TS-only commits don't spin up a Rust
+# toolchain for nothing.
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ "core/**" ]
+  pull_request:
+    branches: [ "main" ]
+    paths: [ "core/**" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: core
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Run tests
+        run: cargo test --workspace
+
+  lint:
+    name: Lint and Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-features -- -D warnings
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # NOT VERIFIED — rustsec/audit-check's default behavior assumes
+          # Cargo.lock at repo root. Since it now lives at core/Cargo.lock,
+          # this action likely needs an explicit path input. I'm not fully
+          # certain of this action's exact input name from memory — check
+          # its actual docs before relying on this job passing as-is.
+          file: core/Cargo.lock
