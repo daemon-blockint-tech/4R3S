@@ -60,9 +60,6 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # NOT VERIFIED — rustsec/audit-check's default behavior assumes
-          # Cargo.lock at repo root. Since it now lives at core/Cargo.lock,
-          # this action likely needs an explicit path input. I'm not fully
-          # certain of this action's exact input name from memory — check
-          # its actual docs before relying on this job passing as-is.
-          file: core/Cargo.lock
+          # rustsec/audit-check@v2 takes `working-directory`, not `file`; the
+          # Cargo.lock now lives in core/.
+          working-directory: core
