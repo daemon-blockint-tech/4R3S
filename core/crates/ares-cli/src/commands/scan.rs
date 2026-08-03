@@ -189,12 +189,29 @@ pub async fn execute(
     // Phase 2: Executable PoC generation using category-specific BanksClient harnesses
     if poc {
         info!("[4/5] Exploit Constructor: Generating proof-of-concept tests...");
+        // Parse the target IDL once so each PoC can embed real instruction data
+        // (Anchor discriminator + args) instead of the placeholder `&[]` (POC-1).
+        let target_idl = program_target
+            .idl_path
+            .as_deref()
+            .and_then(crate::idl::load_idl);
+        if target_idl.is_none() {
+            info!("No parseable IDL for target; PoCs will use placeholder instruction data.");
+        }
         for finding in findings.iter_mut() {
             let poc_path = output.join("poc").join(format!(
                 "{}_test.rs",
                 finding.id.to_lowercase().replace("-", "_")
             ));
-            let poc_code = crate::poc::PocGenerator::generate(finding, &program_target.name);
+            let instruction = target_idl.as_ref().and_then(|idl| {
+                crate::idl::select_instruction(idl, finding.location.function.as_deref())
+            });
+            let poc_code = crate::poc::PocGenerator::generate(
+                finding,
+                &program_target.name,
+                instruction,
+                program_target.program_id.as_deref(),
+            );
             tokio::fs::write(&poc_path, poc_code).await?;
             finding.proof_of_concept = Some(poc_path);
             info!("Generated PoC harness: {:?}", finding.proof_of_concept);

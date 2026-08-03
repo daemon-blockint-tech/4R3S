@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod fork_validator;
+pub mod idl;
 pub mod llm_judge;
 pub mod poc;
 pub mod scorer;
