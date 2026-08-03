@@ -118,7 +118,7 @@
     "figlet": "^1.7.0",
     "gradient-string": "^2.0.2",
     "inquirer": "^9.2.15",
-    "langsmith": "^0.3.87",
+    "langsmith": "^0.6.0",
     "ora": "^8.0.1",
     "tsx": "^4.7.0"
   },
