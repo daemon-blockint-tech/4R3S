@@ -7,10 +7,11 @@ name: Core CI
 on:
   push:
     branches: [ "main" ]
-    paths: [ "core/**" ]
+    paths: [ "core/**", ".github/workflows/core-ci.yml" ]
   pull_request:
     branches: [ "main" ]
-    paths: [ "core/**" ]
+    paths: [ "core/**", ".github/workflows/core-ci.yml" ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
