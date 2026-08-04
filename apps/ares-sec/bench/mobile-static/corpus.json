@@ -40,6 +40,7 @@
       "clean": false,
       "expect": ["S-GOOGLE-API"],
       "content": "public class Maps {\n    private static final String API = \"AIza0FAKE_CORPUS_MOBILE_STATIC_BENCH_01\";\n}\n"
+      "content": "public class Maps {\n    private static final String API = \"AIzaSy4R3S_BENCH_MOBILE_STATIC_CORPUS_0\";\n}\n"
     },
     {
       "id": "code-private-key-http",
