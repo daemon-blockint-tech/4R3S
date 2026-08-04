@@ -21,13 +21,14 @@ export async function GET(req: NextRequest): Promise<Response> {
     ? (req.nextUrl.searchParams.get('next') ?? '/')
     : '/'
 
-  // If user is already authenticated with Vercel, treat this as a "Connect GitHub" flow
-  // Otherwise, treat it as a "Sign in with GitHub" flow
-  const isSignInFlow = !session?.user
-  const authMode = isSignInFlow ? 'signin' : 'connect'
+  // Vercel session → connect GitHub to existing account.
+  // GitHub session or no session → sign-in flow (create profile, returning login, or token refresh).
+  const isConnectFlow = session?.user != null && session.authProvider === 'vercel'
+  const isSignInFlow = !isConnectFlow
+  const authMode = isConnectFlow ? 'connect' : 'signin'
 
   // Add a query parameter to show a toast message after redirect
-  if (!isSignInFlow) {
+  if (isConnectFlow) {
     const redirectUrl = new URL(redirectTo, req.nextUrl.origin)
     redirectUrl.searchParams.set('github_connected', 'true')
     redirectTo = redirectUrl.pathname + redirectUrl.search
@@ -40,8 +41,8 @@ export async function GET(req: NextRequest): Promise<Response> {
     [`github_auth_mode`, authMode],
   ]
 
-  // If connecting (user already signed in), store their user ID
-  if (!isSignInFlow && session?.user?.id) {
+  // Connect flow: link GitHub to the signed-in Vercel user
+  if (isConnectFlow && session?.user?.id) {
     cookiesToSet.push([`github_oauth_user_id`, session.user.id])
   }
 

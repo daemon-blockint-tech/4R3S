@@ -4,3 +4,6 @@ This application includes material from the Vercel coding-agent-template
 (https://github.com/vercel-labs/coding-agent-template), Copyright 2025 Vercel, Inc.
 
 Licensed under the Apache License, Version 2.0.
+
+UI components in components/ui/ follow the shadcn/ui distribution model
+(https://github.com/shadcn-ui/ui, MIT License).

@@ -104,9 +104,17 @@ export async function GET(req: NextRequest): Promise<Response> {
       },
     })
 
+    if (!userResponse.ok) {
+      console.error('[GitHub Callback] Failed to fetch GitHub user:', userResponse.status)
+      return new Response('Failed to fetch GitHub profile', { status: 400 })
+    }
+
     const githubUser = (await userResponse.json()) as {
       login: string
       id: number
+      email: string | null
+      name: string | null
+      avatar_url: string
     }
 
     if (isSignInFlow) {
@@ -208,6 +216,18 @@ export async function GET(req: NextRequest): Promise<Response> {
           username: githubUser.login,
         })
       }
+
+      // Sync GitHub profile fields onto the Vercel user record
+      await db
+        .update(users)
+        .set({
+          email: githubUser.email ?? undefined,
+          name: githubUser.name ?? githubUser.login,
+          avatarUrl: githubUser.avatar_url,
+          updatedAt: new Date(),
+          lastLoginAt: new Date(),
+        })
+        .where(eq(users.id, storedUserId!))
 
       // Clean up cookies (handle both new and legacy cookie names)
       if (authMode) {

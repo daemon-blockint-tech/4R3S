@@ -57,20 +57,37 @@ export async function upsertUser(
       .limit(1)
 
     if (existingAccount.length > 0) {
+      const userId = existingAccount[0].userId
       console.log(
-        `[upsertUser] GitHub account (${externalId}) is already connected to user ${existingAccount[0].userId}. Using existing user.`,
+        `[upsertUser] GitHub account (${externalId}) is already connected to user ${userId}. Refreshing profile and token.`,
       )
 
-      // Update the existing user's last login
+      const now = new Date()
+
+      // Keep linked-account token and profile in sync when user signs in with GitHub again
+      await db
+        .update(accounts)
+        .set({
+          accessToken,
+          scope,
+          username: userData.username,
+          updatedAt: now,
+        })
+        .where(and(eq(accounts.userId, userId), eq(accounts.provider, 'github'), eq(accounts.externalUserId, externalId)))
+
+      // Refresh display fields on the parent user without changing primary auth provider
       await db
         .update(users)
         .set({
-          updatedAt: new Date(),
-          lastLoginAt: new Date(),
+          email: userData.email,
+          name: userData.name,
+          avatarUrl: userData.avatarUrl,
+          updatedAt: now,
+          lastLoginAt: now,
         })
-        .where(eq(users.id, existingAccount[0].userId))
+        .where(eq(users.id, userId))
 
-      return existingAccount[0].userId
+      return userId
     }
   }
 

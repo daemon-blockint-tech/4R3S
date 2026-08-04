@@ -26,10 +26,15 @@ import { useSetAtom, useAtom, useAtomValue } from 'jotai'
 import { taskPromptAtom } from '@/lib/atoms/task'
 import { HomePageMobileFooter } from '@/components/home-page-mobile-footer'
 import { multiRepoModeAtom, selectedReposAtom } from '@/lib/atoms/multi-repo'
-import { sessionAtom } from '@/lib/atoms/session'
+import { sessionAtom, sessionInitializedAtom } from '@/lib/atoms/session'
 import { githubConnectionAtom, githubConnectionInitializedAtom } from '@/lib/atoms/github-connection'
 import { OpenRepoUrlDialog } from '@/components/open-repo-url-dialog'
 import { MultiRepoDialog } from '@/components/multi-repo-dialog'
+import {
+  getGitHubOAuthAction,
+  getGitHubOAuthButtonLabel,
+  startGitHubOAuth,
+} from '@/lib/auth/start-github-oauth'
 
 interface HomePageContentProps {
   initialSelectedOwner?: string
@@ -74,10 +79,18 @@ export function HomePageContent({
 
   // GitHub connection state
   const session = useAtomValue(sessionAtom)
+  const sessionInitialized = useAtomValue(sessionInitializedAtom)
   const githubConnection = useAtomValue(githubConnectionAtom)
   const githubConnectionInitialized = useAtomValue(githubConnectionInitializedAtom)
   const setGitHubConnection = useSetAtom(githubConnectionAtom)
   const isGitHubAuthUser = session.authProvider === 'github'
+
+  const githubOAuthAction = getGitHubOAuthAction(
+    session,
+    githubConnection.connected,
+    sessionInitialized && githubConnectionInitialized,
+  )
+  const githubOAuthButtonLabel = getGitHubOAuthButtonLabel(githubOAuthAction)
 
   // Check which auth providers are enabled
   const { github: hasGitHub, vercel: hasVercel } = getEnabledAuthProviders()
@@ -205,7 +218,7 @@ export function HomePageContent({
   }
 
   const handleConnectGitHub = () => {
-    window.location.href = '/api/auth/github/signin'
+    startGitHubOAuth()
   }
 
   const handleReconfigureGitHub = () => {
@@ -213,7 +226,7 @@ export function HomePageContent({
     if (clientId) {
       window.open(`https://github.com/settings/connections/applications/${clientId}`, '_blank')
     } else {
-      window.location.href = '/api/auth/github/signin'
+      startGitHubOAuth()
     }
   }
 
@@ -337,8 +350,12 @@ export function HomePageContent({
     keepAlive: boolean
     enableBrowser: boolean
   }) => {
-    // Check if user is authenticated
+    // Check if user is authenticated (server prop or client session)
     if (!user) {
+      if (sessionInitialized && session.user) {
+        router.refresh()
+        return
+      }
       setShowSignInDialog(true)
       return
     }
@@ -549,7 +566,7 @@ export function HomePageContent({
 
   const handleGitHubSignIn = () => {
     setLoadingGitHub(true)
-    window.location.href = '/api/auth/signin/github'
+    startGitHubOAuth()
   }
 
   return (
@@ -589,7 +606,9 @@ export function HomePageContent({
                 ? 'You need to sign in to create tasks. Choose how you want to sign in.'
                 : hasVercel
                   ? 'You need to sign in with Vercel to create tasks.'
-                  : 'You need to sign in with GitHub to create tasks.'}
+                  : githubOAuthAction === 'connect'
+                    ? 'Connect GitHub to create your profile and access repositories.'
+                    : 'Sign in with GitHub to create your profile or continue with an existing account.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -672,7 +691,7 @@ export function HomePageContent({
                 ) : (
                   <>
                     <GitHubIcon className="h-4 w-4 mr-2" />
-                    Sign in with GitHub
+                    {githubOAuthButtonLabel}
                   </>
                 )}
               </Button>

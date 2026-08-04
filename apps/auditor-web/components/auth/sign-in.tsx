@@ -4,16 +4,47 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { redirectToSignIn } from '@/lib/session/redirect-to-sign-in'
 import { GitHubIcon } from '@/components/icons/github-icon'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useAtomValue } from 'jotai'
 import { getEnabledAuthProviders } from '@/lib/auth/providers'
+import {
+  getGitHubOAuthAction,
+  getGitHubOAuthButtonLabel,
+  startGitHubOAuth,
+} from '@/lib/auth/start-github-oauth'
+import { sessionAtom, sessionInitializedAtom } from '@/lib/atoms/session'
+import { githubConnectionAtom, githubConnectionInitializedAtom } from '@/lib/atoms/github-connection'
+import { toast } from 'sonner'
 
 export function SignIn() {
   const [showDialog, setShowDialog] = useState(false)
   const [loadingVercel, setLoadingVercel] = useState(false)
   const [loadingGitHub, setLoadingGitHub] = useState(false)
 
+  const session = useAtomValue(sessionAtom)
+  const sessionInitialized = useAtomValue(sessionInitializedAtom)
+  const githubConnection = useAtomValue(githubConnectionAtom)
+  const githubConnectionInitialized = useAtomValue(githubConnectionInitializedAtom)
+
   // Check which auth providers are enabled
   const { github: hasGitHub, vercel: hasVercel } = getEnabledAuthProviders()
+
+  const githubAction = getGitHubOAuthAction(
+    session,
+    githubConnection.connected,
+    sessionInitialized && githubConnectionInitialized,
+  )
+  const githubButtonLabel = getGitHubOAuthButtonLabel(githubAction)
+
+  useEffect(() => {
+    if (!showDialog || !sessionInitialized) {
+      return
+    }
+    if (session.user && githubAction === 'refresh') {
+      setShowDialog(false)
+      toast.info("You're already signed in with GitHub.")
+    }
+  }, [showDialog, sessionInitialized, session.user, githubAction])
 
   const handleVercelSignIn = async () => {
     setLoadingVercel(true)
@@ -22,12 +53,20 @@ export function SignIn() {
 
   const handleGitHubSignIn = () => {
     setLoadingGitHub(true)
-    window.location.href = '/api/auth/signin/github'
+    startGitHubOAuth()
+  }
+
+  const handleOpenDialog = () => {
+    if (sessionInitialized && session.user && githubAction === 'refresh') {
+      toast.info("You're already signed in with GitHub.")
+      return
+    }
+    setShowDialog(true)
   }
 
   return (
     <>
-      <Button onClick={() => setShowDialog(true)} variant="outline" size="sm">
+      <Button onClick={handleOpenDialog} variant="outline" size="sm">
         Sign in
       </Button>
 
@@ -40,7 +79,9 @@ export function SignIn() {
                 ? 'Choose how you want to sign in to continue.'
                 : hasVercel
                   ? 'Sign in with Vercel to continue.'
-                  : 'Sign in with GitHub to continue.'}
+                  : githubAction === 'connect'
+                    ? 'Connect your GitHub account to create your profile and access repositories.'
+                    : 'Sign in with GitHub to create your profile or continue with an existing account.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -123,7 +164,7 @@ export function SignIn() {
                 ) : (
                   <>
                     <GitHubIcon className="h-4 w-4 mr-2" />
-                    Sign in with GitHub
+                    {githubButtonLabel}
                   </>
                 )}
               </Button>

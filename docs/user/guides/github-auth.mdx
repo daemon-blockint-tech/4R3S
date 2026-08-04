@@ -144,17 +144,86 @@ GitHub validates `redirect_uri` against your OAuth app callback URL:
 
 For local dev, register **`http://localhost:3000/api/auth/github/callback`** (or `127.0.0.1`). Loopback ports can differ for native apps, but the dashboard uses a fixed callback path on the Next.js origin.
 
-### Scopes
+### OAuth scopes
 
-The dashboard requests:
+Scopes **limit** what the token can do. They never grant access beyond what the signed-in user already has. GitHub shows requested scopes on the authorization screen before the user approves.
 
-| Scope | Why |
-| ----- | --- |
-| `repo` | Clone private repos, open PRs from agent tasks |
-| `read:user` | Username, avatar, profile |
-| `user:email` | Email when public; falls back to `/user/emails` API |
+#### What ARES requests (dashboard)
 
-Request only scopes you need. GitHub allows multiple tokens per user/app/scope combination (max 10 active).
+The sign-in route sends a space-separated `scope` parameter (URL-encoded as `%20` between values):
+
+```
+repo read:user user:email
+```
+
+In code this is `repo,read:user,user:email` — GitHub accepts comma or space separation in the authorize URL.
+
+| Scope | What it allows | Why ARES needs it |
+| ----- | -------------- | ----------------- |
+| **`repo`** | Read/write access to **public and private** repositories — code, commits, collaborators, webhooks, PRs | Clone private repos for agent tasks, push branches, open/update pull requests |
+| **`read:user`** | Read profile data (login, avatar, name) | Display signed-in user; build session identity |
+| **`user:email`** | Read email addresses | Account linking; falls back to `GET /user/emails` when the primary email is private |
+
+<Note>
+  GitHub **normalizes** scopes on the token. `user:email` is implicitly included when `user` is granted, but ARES requests it explicitly so the consent screen lists email access clearly.
+</Note>
+
+#### Scopes ARES does *not* request
+
+| Scope | Why not |
+| ----- | ------- |
+| `admin:org`, `write:org` | No organization administration |
+| `gist` | No gist integration |
+| `workflow` | GitHub Actions workflow edits use repo access where needed; no separate workflow scope today |
+| `delete_repo` | Never deletes repositories |
+| `(no scope)` | Insufficient — private repo tasks require `repo` |
+
+For **public repositories only**, a lighter alternative is `public_repo` instead of `repo` — but private-repo audits would fail. ARES defaults to `repo` for the coding-agent task flow.
+
+#### Granted vs requested scopes
+
+Users can **reduce** scopes after authorizing (GitHub → Settings → Applications). The token's effective scopes may be smaller than requested.
+
+ARES stores the granted scope string on sign-in (`users.scope` / `accounts.scope`). If a user drops `repo`:
+
+- Repo list may show only public repos
+- Sandbox/PR flows fail with GitHub `403` or empty repo pickers
+
+**Recovery:** ask the user to re-authorize via **Sign in with GitHub** or reconnect from account settings. Do not assume the token still has `repo` after months idle — users may have edited scopes.
+
+#### Verify token scopes (debugging)
+
+Inspect response headers from any GitHub API call:
+
+```bash
+curl -sI -H "Authorization: Bearer gho_xxxx" https://api.github.com/user
+```
+
+| Header | Meaning |
+| ------ | ------- |
+| `X-OAuth-Scopes` | Scopes **granted** on this token |
+| `X-Accepted-OAuth-Scopes` | Scopes the **endpoint** checks for |
+
+Example:
+
+```
+X-OAuth-Scopes: read:user, repo, user:email
+X-Accepted-OAuth-Scopes: user
+```
+
+#### GitHub App vs OAuth app
+
+GitHub recommends **GitHub Apps** with fine-grained permissions for new integrations. ARES dashboard uses a classic **OAuth app** (from the coding-agent template) because it needs user-delegated repo access across arbitrary user repositories. See [Differences between GitHub Apps and OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/differences-between-github-apps-and-oauth-apps).
+
+#### Supabase GitHub Auth scopes
+
+Supabase manages its own GitHub OAuth authorize request when you enable the GitHub provider. Typical scopes are **`read:user`** and **`user:email`** for identity only — not `repo`. Knowledge-base login does not clone repositories.
+
+#### Reference
+
+Full scope list: [Scopes for OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps) · Multiple scopes in one request: join with `%20` in the authorize URL, e.g. `scope=read:user%20repo`
+
+Request only what you need. GitHub allows up to **10 active tokens** per user/app/scope combination.
 
 ### Sign out and token revocation
 
@@ -175,12 +244,87 @@ https://github.com/settings/connections/applications/{client_id}
 | `github_not_configured` | Missing env vars | Set `NEXT_PUBLIC_GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` |
 | Token exchange 400 | Expired code or wrong client secret | Restart flow; verify secret in GitHub app settings |
 | Repo access denied | User denied `repo` scope or token revoked | Re-authorize; check [connections page](https://github.com/settings/applications) |
+| Private repo missing in picker | Token lacks `repo` (user reduced scopes) | Re-sign in; verify `X-OAuth-Scopes` includes `repo` |
+| PR/push fails with 403 | Insufficient scope for target repo | Confirm user has repo access and token includes `repo` |
 
 See GitHub's [authorization error troubleshooting](https://docs.github.com/en/apps/oauth-apps/maintaining-oauth-apps/troubleshooting-authorization-request-errors).
 
 ### Device flow (not used today)
 
 GitHub's **device flow** is for headless CLIs (`POST /login/device/code`). ARES CLI audits do not use GitHub OAuth — enable device flow only if you build a standalone CLI that needs user GitHub access.
+
+<Warning>
+  GitHub recommends **authorization code + PKCE** over device flow for public clients. Device flow has no redirect URI, which makes phishing easier. Do not enable device flow on your OAuth app unless the client truly cannot use a browser (CLI, IoT, headless).
+</Warning>
+
+### Security best practices
+
+GitHub's [OAuth app security guidance](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/best-practices-for-creating-an-oauth-app) applies to both the dashboard and Supabase flows. Below is how ARES aligns today and what operators should add for production.
+
+#### Prefer a GitHub App when starting fresh
+
+GitHub Apps use **fine-grained permissions**, **repository-level install control**, and **short-lived user access tokens** — generally safer than classic OAuth apps if credentials leak.
+
+ARES dashboard still uses a **classic OAuth app** (inherited from the coding-agent template) because it needs user-delegated access across arbitrary repositories without a per-repo install step. For greenfield integrations, evaluate a GitHub App first. See [Migrating OAuth apps to GitHub Apps](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/migrating-oauth-apps-to-github-apps).
+
+#### Request minimal scopes
+
+Request only scopes required for your deployment. ARES defaults to `repo`, `read:user`, and `user:email` for private-repo agent tasks — see [OAuth scopes](#oauth-scopes). If you only audit public repos, consider `public_repo` instead of `repo` to limit blast radius if a token leaks.
+
+#### Authorize thoroughly on every sign-in
+
+After OAuth completes, treat access as **session-specific**, not permanent:
+
+| Practice | ARES today | Recommendation |
+| -------- | ---------- | -------------- |
+| Re-fetch identity on sign-in | Callback calls `GET /user` after token exchange | Keep this on every auth |
+| Store users by durable GitHub **`id`** | `accounts.externalUserId` = numeric GitHub user ID | Never key users by login, email, or org slug alone |
+| Store repos by durable **`id`** | Tasks store `repoUrl` (owner/name) | Prefer numeric repo ID where possible for renames |
+| Re-check org membership / SAML SSO | Not automated | For enterprise: poll org access; block org-owned data if SSO lapses |
+| Tag cached data with org context | Tasks tied to `userId` only | For multi-tenant SaaS: scope sandboxes and exports by org |
+
+**Org access example:** A user leaves an organization but still has an ARES session. Without org-context checks, they might retain cloned code in sandboxes. For org deployments, re-validate GitHub access before showing tasks and purge org-scoped artifacts when membership ends.
+
+**Enterprise-only apps:** If the dashboard is internal-only, allowlist GitHub orgs on sign-in via [`GET /user/orgs`](https://docs.github.com/en/rest/orgs/orgs#list-organizations-for-the-authenticated-user) and reject others.
+
+#### Secure credentials and tokens
+
+| Secret | Where | Notes |
+| ------ | ----- | ----- |
+| `GITHUB_CLIENT_SECRET` | Server env only (`apps/auditor-web/.env.local`, Vercel secrets) | Never prefix with `NEXT_PUBLIC_` or commit to git |
+| `ENCRYPTION_KEY` | Server env | Encrypts GitHub access tokens in Postgres (`accounts.accessToken`) |
+| `JWE_SECRET` | Server env | Signs dashboard session cookies |
+| Supabase GitHub secret | Supabase Dashboard / env | Separate OAuth app; not shared with dashboard |
+
+The dashboard is a **confidential client** (Next.js server holds the client secret). Store secrets in a vault (e.g. Vercel/Railway secrets, Azure Key Vault) — not in the repo.
+
+User access tokens live **encrypted on the server**, not in browser localStorage. Sign-out revokes the token via GitHub's API (see [Sign out and token revocation](#sign-out-and-token-revocation)).
+
+<Warning>
+  Do **not** authenticate with personal access tokens or GitHub passwords in application code. OAuth user access tokens only.
+</Warning>
+
+**PKCE:** GitHub recommends `code_challenge` / `code_verifier` for all OAuth clients. The dashboard does not send PKCE yet — add it before exposing auth to untrusted origins.
+
+#### Breach response
+
+Plan ahead:
+
+1. **Client secret leaked** — rotate in GitHub OAuth app settings, update deployment env, delete the old secret.
+2. **User tokens leaked** — revoke via [`DELETE /applications/{client_id}/token`](https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-token) or ask users to revoke at GitHub → Settings → Applications.
+3. **Database compromise** — rotate `ENCRYPTION_KEY` and `JWE_SECRET`, invalidate all sessions, force re-auth (tokens are encrypted but assume breach).
+
+#### Operations hygiene
+
+| Area | Guidance |
+| ---- | -------- |
+| **Dependency & secret scanning** | CI runs license checks; enable GitHub code scanning and secret scanning on the deployment repo |
+| **Environment** | Run dashboard on hardened hosts; rate-limit auth routes (ARES has basic rate limiting on session APIs) |
+| **Third-party services** | Unique credentials per service; no shared admin accounts for Postgres, email, or hosting |
+| **Logging** | Log auth success/failure, token exchange errors, and scope mismatches — avoid logging raw tokens |
+| **Data deletion** | Provide a path for users to delete account data (tasks, tokens, connectors); document in your privacy policy |
+
+For Marketplace apps, see GitHub's [Marketplace security best practices](https://docs.github.com/en/apps/github-marketplace/creating-apps-for-github-marketplace/security-best-practices-for-apps-on-github-marketplace).
 
 ---
 
@@ -364,3 +508,5 @@ Unifying dashboard session and Supabase Auth into one login is planned integrati
 - [Sign in with Web3](/guides/web3-auth) — wallet alternative
 - [Supabase: Login with GitHub](https://supabase.com/docs/guides/auth/social-login/auth-github) — upstream reference
 - [GitHub: Authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) — authorization code flow, PKCE, device flow
+- [GitHub: Scopes for OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps) — full scope reference
+- [GitHub: Best practices for creating an OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/best-practices-for-creating-an-oauth-app) — security and operations guidance
