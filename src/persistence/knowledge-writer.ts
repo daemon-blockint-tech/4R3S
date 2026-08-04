@@ -18,6 +18,10 @@ import { createHash } from "node:crypto";
 
 import { logger } from "../config/logger.js";
 import type { KnowledgeLevel } from "../memory/types.js";
+import {
+  describePostgrestError,
+  logPostgrestError,
+} from "./supabase-error.js";
 import { getSupabase, hasSupabase } from "./supabase.js";
 import { hasNeo4j, withNeo4jSession } from "./neo4j.js";
 
@@ -106,7 +110,14 @@ export class HybridKnowledgeWriter implements KnowledgeWriter {
         },
         { onConflict: "doc_id" },
       );
-      if (docErr) throw new Error(`documents upsert: ${docErr.message}`);
+      if (docErr) {
+        logPostgrestError(
+          "knowledge-writer",
+          docErr,
+          "documents upsert failed (non-fatal)",
+        );
+        return false;
+      }
 
       const { error: chunkErr } = await supabase.from("chunks").upsert(
         {
@@ -118,7 +129,14 @@ export class HybridKnowledgeWriter implements KnowledgeWriter {
         },
         { onConflict: "chunk_id" },
       );
-      if (chunkErr) throw new Error(`chunks upsert: ${chunkErr.message}`);
+      if (chunkErr) {
+        logPostgrestError(
+          "knowledge-writer",
+          chunkErr,
+          "chunks upsert failed (non-fatal)",
+        );
+        return false;
+      }
       return true;
     } catch (err) {
       logger.warn(

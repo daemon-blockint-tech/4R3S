@@ -1,0 +1,89 @@
+---
+title: Environment variables
+description: Complete reference for ARES Auditor .env settings.
+---
+
+All variables are defined in `.env.example` at the repository root.
+
+## LLM (OpenRouter)
+
+| Variable | Required | Description |
+| -------- | -------- | ----------- |
+| `OPENROUTER_API_KEY` | Yes | Primary LLM API key. |
+| `OPENROUTER_MODEL` | No | Model identifier. |
+| `OPENROUTER_BASE_URL` | No | API base URL. |
+| `OPENROUTER_TIMEOUT_MS` | No | Request timeout. |
+| `OPENROUTER_REFERRER` | No | Referrer header for OpenRouter. |
+
+## Solana
+
+| Variable | Description |
+| -------- | ----------- |
+| `SOLANA_RPC_URL` | Default RPC endpoint. |
+| `HELIUS_RPC_URL` | Preferred RPC when set. |
+| `SOLANA_COMMITMENT` | e.g. `confirmed`. |
+| `SOLANA_TIMEOUT_MS` | RPC timeout. |
+
+## Postgres checkpoint
+
+| Variable | Description |
+| -------- | ----------- |
+| `POSTGRES_HOST` | Host. |
+| `POSTGRES_PORT` | Port. |
+| `POSTGRES_DB` | Database. |
+| `POSTGRES_USER` | User. |
+| `POSTGRES_PASSWORD` | Password. |
+| `POSTGRES_SSL` | `true` for Supabase pooler. |
+| `POSTGRES_TIMEOUT_MS` | Connection timeout. |
+
+## Supabase
+
+| Variable | Description |
+| -------- | ----------- |
+| `SUPABASE_URL` | Project API URL. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-side key for hybrid search. |
+| `SUPABASE_TIMEOUT_MS` | RPC/fetch timeout. |
+
+## Neo4j
+
+| Variable | Description |
+| -------- | ----------- |
+| `NEO4J_URI` | Bolt URI. |
+| `NEO4J_USER` | Username (`neo4j`). |
+| `NEO4J_PASSWORD` | Password. |
+| `NEO4J_TIMEOUT_MS` | Query timeout. |
+
+## Embeddings
+
+| Variable | Description |
+| -------- | ----------- |
+| `EMBEDDINGS_BASE_URL` | OpenAI-compatible API. |
+| `EMBEDDINGS_API_KEY` | API key. |
+| `EMBEDDINGS_MODEL` | Model name. |
+| `EMBEDDINGS_DIM` | Vector dimension (must match schema: `1536`). |
+| `EMBEDDINGS_TIMEOUT_MS` | Request timeout. |
+
+## CUA (opt-in)
+
+| Variable | Description |
+| -------- | ----------- |
+| `CUA_ENABLED` | Enable browser analyzer. |
+| `OPENAI_API_KEY` | OpenAI key for CUA loop. |
+| `SCRAPYBARA_API_KEY` | Scrapybara hosted browser. |
+
+## Logging & limits
+
+| Variable | Description |
+| -------- | ----------- |
+| `ARES_LOG_LEVEL` | `debug`, `info`, `warn`, `error`. |
+| `ARES_SOURCE_BUDGET_CHARS` | Max chars loaded from source tree. |
+
+## Ingest
+
+| Variable | Description |
+| -------- | ----------- |
+| `SOLSEC_REPO_URL` | Git URL for `npm run ingest:solsec`. |
+
+<Info>
+  Never commit `.env` with real secrets. `.gitignore` excludes it by default.
+</Info>

@@ -21,6 +21,7 @@ import { dirname, join, resolve, relative, extname } from "node:path";
 
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
+import { describePostgrestError } from "../persistence/supabase-error.js";
 import { getSupabase, hasSupabase } from "../persistence/supabase.js";
 import { hasNeo4j, withNeo4jSession, closeNeo4j } from "../persistence/neo4j.js";
 import { embedBatch, hasEmbeddings } from "../retrieval/embeddings.js";
@@ -148,7 +149,9 @@ async function upsertSupabase(
   const { error: docErr } = await supabase
     .from("documents")
     .upsert(documentRows, { onConflict: "doc_id" });
-  if (docErr) throw new Error(`documents upsert failed: ${docErr.message}`);
+  if (docErr) {
+    throw new Error(`documents upsert failed: ${describePostgrestError(docErr)}`);
+  }
 
   // Chunk upserts in batches to stay within payload limits.
   for (let i = 0; i < chunkRows.length; i += 200) {
@@ -156,7 +159,9 @@ async function upsertSupabase(
     const { error } = await supabase
       .from("chunks")
       .upsert(batch, { onConflict: "chunk_id" });
-    if (error) throw new Error(`chunks upsert failed: ${error.message}`);
+    if (error) {
+      throw new Error(`chunks upsert failed: ${describePostgrestError(error)}`);
+    }
   }
   logger.info(
     { component: "ingest", documents: documentRows.length, chunks: chunkRows.length },
