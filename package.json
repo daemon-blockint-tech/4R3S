@@ -24,7 +24,7 @@
     "eval:predict": "tsx src/scripts/eval-predict.ts"
   },
   "dependencies": {
-    "@langchain/core": "^1.2.3",
+    "@langchain/core": "^1.2.4",
     "@langchain/langgraph": "^1.4.8",
     "@langchain/langgraph-checkpoint": "^1.0.0",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
@@ -42,7 +42,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.2",
-    "@types/pg": "^8.11.10",
+    "@types/pg": "^8.20.3",
     "@types/uuid": "^11.0.0",
     "eslint": "^10.8.0",
     "tsx": "^4.19.2",
