@@ -45,6 +45,7 @@ docs/user/
 ├── guides/
 │   ├── audit-pipeline.mdx
 │   ├── knowledge-base.mdx
+│   ├── neo4j.mdx
 │   ├── github-auth.mdx
 │   ├── web3-auth.mdx
 │   └── dashboard.mdx

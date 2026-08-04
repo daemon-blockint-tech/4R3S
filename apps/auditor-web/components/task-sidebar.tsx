@@ -28,6 +28,7 @@ import { sessionAtom } from '@/lib/atoms/session'
 import { PRStatusIcon } from '@/components/pr-status-icon'
 import { PRCheckStatus } from '@/components/pr-check-status'
 import { githubConnectionAtom } from '@/lib/atoms/github-connection'
+import { AresBrand } from '@/components/ares-brand'
 
 // Model mappings for human-friendly names
 const AGENT_MODELS = {
@@ -374,6 +375,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
         className="h-full border-r bg-muted px-2 md:px-3 pt-3 md:pt-5.5 pb-3 md:pb-4 overflow-y-auto flex flex-col"
         style={{ width: `${width}px` }}
       >
+        <AresBrand height={24} className="mb-3 md:mb-4" />
         <div className="mb-3 md:mb-4">
           <div className="flex items-center justify-between mb-2">
             {/* Tabs */}
@@ -445,6 +447,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
       className="h-full border-r bg-muted px-2 md:px-3 pt-3 md:pt-5.5 pb-3 md:pb-4 overflow-y-auto"
       style={{ width: `${width}px` }}
     >
+      <AresBrand height={24} className="mb-3 md:mb-4" />
       <div className="mb-3 md:mb-4">
         <div className="flex items-center justify-between mb-2">
           {/* Tabs */}

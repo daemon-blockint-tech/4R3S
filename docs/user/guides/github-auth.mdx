@@ -64,6 +64,124 @@ After authorization, GitHub redirects to `/api/auth/github/callback`, which crea
   Vercel users can **connect** GitHub as a secondary account without signing out. The sign-in route detects an existing Vercel session and switches to connect mode automatically.
 </Tip>
 
+### OAuth authorization flow
+
+The dashboard implements GitHub's standard **web application flow** (authorization code grant). GitHub does not support the implicit grant for new apps.
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant App as auditor-web
+  participant GitHub
+  participant API as GitHub API
+
+  User->>App: GET /api/auth/signin/github
+  App->>App: Generate state, store in httpOnly cookie
+  App->>GitHub: Redirect to /login/oauth/authorize
+  User->>GitHub: Approve scopes
+  GitHub->>App: Redirect to /api/auth/github/callback?code&state
+  App->>App: Verify state matches cookie
+  App->>GitHub: POST /login/oauth/access_token
+  GitHub->>App: access_token
+  App->>API: GET /user (Bearer token)
+  App->>App: Create JWE session, store encrypted token
+  App->>User: Redirect to app
+```
+
+#### Step 1 — Request authorization
+
+The sign-in route builds this request (see `apps/auditor-web/app/api/auth/signin/github/route.ts`):
+
+```
+GET https://github.com/login/oauth/authorize
+  ?client_id={NEXT_PUBLIC_GITHUB_CLIENT_ID}
+  &redirect_uri={origin}/api/auth/github/callback
+  &scope=repo,read:user,user:email
+  &state={random}
+```
+
+| Parameter | ARES usage |
+| --------- | ---------- |
+| `client_id` | From `NEXT_PUBLIC_GITHUB_CLIENT_ID` |
+| `redirect_uri` | Must match the OAuth app callback URL exactly |
+| `scope` | `repo` (private repos for tasks), `read:user`, `user:email` |
+| `state` | Random string in an httpOnly cookie — **required** for CSRF protection |
+
+<Warning>
+  GitHub strongly recommends **PKCE** (`code_challenge` / `code_verifier`). The dashboard does not send PKCE today; consider adding it for new deployments. See [GitHub OAuth docs](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps).
+</Warning>
+
+#### Step 2 — Handle the callback
+
+GitHub redirects with `?code=...&state=...`. The callback route:
+
+1. Compares `state` to the cookie — aborts with `400` on mismatch
+2. Exchanges `code` for a token via `POST https://github.com/login/oauth/access_token`
+3. Re-fetches `GET https://api.github.com/user` to confirm identity (GitHub recommends this on every sign-in)
+4. Creates a JWE session or links the token to an existing Vercel user
+
+The authorization `code` expires after **10 minutes**.
+
+#### Step 3 — Use the token
+
+Stored tokens are encrypted (`ENCRYPTION_KEY`) in Postgres. The app calls GitHub as the user, for example listing repos and creating pull requests from agent tasks.
+
+#### Sign-in vs connect
+
+| Mode | When | Result |
+| ---- | ---- | ------ |
+| **Sign-in** | No existing session | New dashboard user + JWE cookie |
+| **Connect** | Signed in with Vercel | GitHub token linked in `accounts` table |
+
+### Redirect URL rules
+
+GitHub validates `redirect_uri` against your OAuth app callback URL:
+
+| Callback registered | Valid `redirect_uri` | Invalid |
+| ------------------- | -------------------- | ------- |
+| `http://localhost:3000/api/auth/github/callback` | Same path, or subpath under it | Different host/port |
+| `https://auditor.example.com/api/auth/github/callback` | `https://auditor.example.com/api/auth/github/callback` | `http://...`, wrong domain |
+
+For local dev, register **`http://localhost:3000/api/auth/github/callback`** (or `127.0.0.1`). Loopback ports can differ for native apps, but the dashboard uses a fixed callback path on the Next.js origin.
+
+### Scopes
+
+The dashboard requests:
+
+| Scope | Why |
+| ----- | --- |
+| `repo` | Clone private repos, open PRs from agent tasks |
+| `read:user` | Username, avatar, profile |
+| `user:email` | Email when public; falls back to `/user/emails` API |
+
+Request only scopes you need. GitHub allows multiple tokens per user/app/scope combination (max 10 active).
+
+### Sign out and token revocation
+
+Signing out calls `DELETE https://api.github.com/applications/{client_id}/token` to revoke the stored access token, then clears the JWE session cookie.
+
+Users can also review or revoke access at:
+
+```
+https://github.com/settings/connections/applications/{client_id}
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| ------- | -------------- | --- |
+| `Invalid OAuth state` | State cookie missing, expired (10 min), or CSRF mismatch | Retry sign-in; don't open callback in a different browser |
+| `redirect_uri mismatch` | Callback URL doesn't match GitHub app settings | Align OAuth app callback with `{origin}/api/auth/github/callback` |
+| `github_not_configured` | Missing env vars | Set `NEXT_PUBLIC_GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` |
+| Token exchange 400 | Expired code or wrong client secret | Restart flow; verify secret in GitHub app settings |
+| Repo access denied | User denied `repo` scope or token revoked | Re-authorize; check [connections page](https://github.com/settings/applications) |
+
+See GitHub's [authorization error troubleshooting](https://docs.github.com/en/apps/oauth-apps/maintaining-oauth-apps/troubleshooting-authorization-request-errors).
+
+### Device flow (not used today)
+
+GitHub's **device flow** is for headless CLIs (`POST /login/device/code`). ARES CLI audits do not use GitHub OAuth — enable device flow only if you build a standalone CLI that needs user GitHub access.
+
 ---
 
 ## Supabase GitHub Auth (knowledge base)
@@ -245,3 +363,4 @@ Unifying dashboard session and Supabase Auth into one login is planned integrati
 - [Knowledge base](/guides/knowledge-base) — RBAC and migrations
 - [Sign in with Web3](/guides/web3-auth) — wallet alternative
 - [Supabase: Login with GitHub](https://supabase.com/docs/guides/auth/social-login/auth-github) — upstream reference
+- [GitHub: Authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) — authorization code flow, PKCE, device flow

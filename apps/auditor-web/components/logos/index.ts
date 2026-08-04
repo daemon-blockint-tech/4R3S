@@ -1,3 +1,4 @@
+export { default as AresLogo } from './ares'
 export { default as Claude } from './claude'
 export { default as Codex } from './codex'
 export { default as Copilot } from './copilot'

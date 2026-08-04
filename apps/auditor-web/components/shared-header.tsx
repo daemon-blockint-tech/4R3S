@@ -5,6 +5,7 @@ import { Menu } from 'lucide-react'
 import { useTasks } from '@/components/app-layout'
 import { User } from '@/components/auth/user'
 import { GitHubStarsButton } from '@/components/github-stars-button'
+import { AresBrand } from '@/components/ares-brand'
 
 interface SharedHeaderProps {
   leftActions?: React.ReactNode
@@ -29,6 +30,7 @@ export function SharedHeader({
           <Button onClick={toggleSidebar} variant="ghost" size="sm" className="h-8 w-8 p-0 flex-shrink-0">
             <Menu className="h-4 w-4" />
           </Button>
+          <AresBrand height={26} className="hidden sm:block" />
           {leftActions}
         </div>
 

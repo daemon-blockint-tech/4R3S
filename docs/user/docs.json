@@ -34,6 +34,7 @@
         "pages": [
           "guides/audit-pipeline",
           "guides/knowledge-base",
+          "guides/neo4j",
           "guides/github-auth",
           "guides/web3-auth",
           "guides/dashboard"
