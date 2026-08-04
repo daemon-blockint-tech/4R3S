@@ -67,25 +67,24 @@ describe("CrystallineStore", () => {
     expect(await store.load(c.id, "working")).toBeUndefined();
   });
 
-  it("spreads activation from a recalled crystal to a linked neighbor", async () => {
+  it("KR-1 fall-back: a linked neighbor is no longer boosted by recall", async () => {
+    // Spreading activation was removed (docs/KR-1-FINDINGS.md): no caller in
+    // this codebase ever invoked link(), so every crystal shipped with
+    // links: [] and the boost never fired in production. This test replaces
+    // the old "spreads activation" assertion — link() still records the edge,
+    // but recall() no longer reads it.
     const hub = await store.crystallize("semantic", "signer checks", {
       tags: ["signer"],
     });
     const neighbor = await store.crystallize("semantic", "owner checks", {
       tags: ["owner"],
     });
-    // Link hub → neighbor so recalling the hub primes the neighbor.
     await store.link(hub.id, "semantic", neighbor.id, 1, "related");
 
-    const hits = await store.recall({
-      query: "signer",
-      tags: ["signer", "owner"],
-      spreadDepth: 1,
-    });
-    const neighborHit = hits.find((h) => h.crystal.id === neighbor.id);
-    expect(neighborHit).toBeDefined();
-    // Its score includes the spread boost from the hub.
-    expect(neighborHit!.score).toBeGreaterThan(0);
+    // A query that only matches the hub's tag must not surface the neighbor —
+    // if it does, something is spreading score along links again.
+    const hits = await store.recall({ query: "signer", tags: ["signer"] });
+    expect(hits.find((h) => h.crystal.id === neighbor.id)).toBeUndefined();
   });
 
   it("promotes a frequently-accessed episodic crystal to semantic on consolidate", async () => {
