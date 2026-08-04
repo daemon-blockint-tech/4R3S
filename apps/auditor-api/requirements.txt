@@ -1,0 +1,32 @@
+# apps/auditor-api runtime + test dependencies.
+#
+# Deliberately narrow: this plane is a thin FastAPI/Arq wrapper around the
+# existing TypeScript audit CLI, so it needs a web surface, a queue, and a way
+# to test both — not an LLM client. LiteLLM is named in the ORC-1 brief but is
+# not listed here yet: no code in this app calls an LLM (every model call still
+# happens inside the TS graph the worker shells out to), and pinning a
+# dependency with no caller would be dead weight in every install and audit.
+# See docs/ORC-1-ASSUMPTIONS.md.
+#
+# Versions below are the ones the test suite was actually executed against, not
+# chosen from a changelog. If a pin is bumped, re-run the suite rather than
+# assuming compatibility.
+fastapi==0.141.1
+arq==0.28.0
+redis==5.3.1
+pydantic==2.13.4
+
+# Server. Not pinned to a verified version: uvicorn is the dev entrypoint
+# (`uvicorn main:app`) and is not imported by any tested code path, so no
+# version of it was exercised by the suite. Pin it once it is run in CI.
+uvicorn
+
+# Test client backend for FastAPI's TestClient. Newer starlette versions
+# require httpx2 (no longer fall back to plain httpx) — confirmed on PyPI:
+# maintained by Tom Christie (httpx's original author) under Pydantic
+# Services Inc., same org as the pydantic dependency above, 11 published
+# releases. This is the successor, not a typosquat of httpx.
+httpx2==2.9.1
+
+# Tests
+pytest==9.1.1
