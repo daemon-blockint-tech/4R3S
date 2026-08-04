@@ -1,0 +1,247 @@
+---
+title: Login with GitHub
+description: GitHub OAuth for the ARES dashboard and Supabase Auth knowledge-base access.
+---
+
+ARES uses GitHub in **two separate places**. They use **different OAuth apps** and **different callback URLs** — do not mix them up.
+
+| Flow | Purpose | Callback URL |
+| ---- | ------- | -------------- |
+| **Dashboard OAuth** | Sign in to `apps/auditor-web` (tasks, JWE session) | `https://your-app.example.com/api/auth/github/callback` |
+| **Supabase Auth** | Sign in for knowledge-base API access (JWT + RBAC) | `https://<project-ref>.supabase.co/auth/v1/callback` |
+
+<Warning>
+  One GitHub OAuth app cannot serve both callbacks. Create **two apps** on GitHub if you need both flows.
+</Warning>
+
+---
+
+## Dashboard GitHub OAuth (auditor-web)
+
+The shipping dashboard uses a **custom OAuth flow** (not Supabase Auth). It stores an encrypted JWE session and optionally links GitHub to a Vercel account for repo access.
+
+### 1. Register a GitHub OAuth app (dashboard)
+
+1. Go to [GitHub → OAuth apps](https://github.com/settings/developers) → **New OAuth App**
+2. Set:
+   - **Application name:** `ARES Auditor` (or your deployment name)
+   - **Homepage URL:** your dashboard origin, e.g. `http://localhost:3000`
+   - **Authorization callback URL:** `{origin}/api/auth/github/callback`
+     - Local: `http://localhost:3000/api/auth/github/callback`
+     - Production: `https://auditor.example.com/api/auth/github/callback`
+3. Copy **Client ID** and generate a **Client secret**
+
+### 2. Configure the dashboard
+
+Add to `apps/auditor-web/.env.local`:
+
+```env
+NEXT_PUBLIC_AUTH_PROVIDERS=github
+NEXT_PUBLIC_GITHUB_CLIENT_ID=Ov23li...
+GITHUB_CLIENT_SECRET=...
+JWE_SECRET=<random-32+-char-secret>
+ENCRYPTION_KEY=<random-32+-char-secret>
+POSTGRES_URL=postgres://...
+```
+
+Enable GitHub in providers:
+
+```env
+NEXT_PUBLIC_AUTH_PROVIDERS=github,vercel
+```
+
+### 3. Sign in
+
+Users click **Sign in with GitHub** in the dashboard. The app redirects to:
+
+```
+/api/auth/signin/github
+```
+
+After authorization, GitHub redirects to `/api/auth/github/callback`, which creates a session in the dashboard Postgres `users` table.
+
+<Tip>
+  Vercel users can **connect** GitHub as a secondary account without signing out. The sign-in route detects an existing Vercel session and switches to connect mode automatically.
+</Tip>
+
+---
+
+## Supabase GitHub Auth (knowledge base)
+
+Use Supabase Auth when browser clients need **JWT-backed access** to `documents`, `chunks`, and `hybrid_search` with RLS and the `user_role` claim from `custom_access_token_hook`.
+
+### 1. Find your Supabase callback URL
+
+1. Open [Supabase Dashboard](https://supabase.com/dashboard) → your project
+2. **Authentication** → [**Providers**](https://supabase.com/dashboard/project/_/auth/providers) → **GitHub**
+3. Copy the **Callback URL**:
+
+```
+https://<project-ref>.supabase.co/auth/v1/callback
+```
+
+For the ARES Supabase project, replace `<project-ref>` with your project reference (e.g. `dzrchlticyhalygqzonr`).
+
+<Note>
+  **Local Supabase CLI:** use `http://127.0.0.1:54321/auth/v1/callback` (or `http://localhost:54321/auth/v1/callback`) as the callback when testing with `supabase start`.
+</Note>
+
+### 2. Register a second GitHub OAuth app (Supabase)
+
+Create a **separate** OAuth app from the dashboard one:
+
+1. [Register a new OAuth application](https://github.com/settings/applications/new)
+2. **Authorization callback URL:** paste the Supabase callback URL from step 1
+3. Save **Client ID** and **Client secret**
+
+### 3. Enter credentials in Supabase
+
+**Dashboard:**
+
+1. **Authentication** → **Providers** → **GitHub**
+2. Enable **GitHub Enabled**
+3. Paste Client ID and Client secret → **Save**
+
+**CLI (`supabase/config.toml`):**
+
+```toml
+[auth.external.github]
+enabled = true
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET)"
+```
+
+Set env vars when running locally:
+
+```bash
+export SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID=Ov23li...
+export SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET=...
+```
+
+**Management API (optional):**
+
+```bash
+export SUPABASE_ACCESS_TOKEN="your-access-token"
+export PROJECT_REF="your-project-ref"
+
+curl -X PATCH "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth" \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "external_github_enabled": true,
+    "external_github_client_id": "your-github-client-id",
+    "external_github_secret": "your-github-client-secret"
+  }'
+```
+
+### 4. Redirect URLs
+
+Add your app URLs to Supabase **Authentication → URL configuration → Redirect URLs**:
+
+- `http://localhost:3000/**` (local dashboard)
+- `https://auditor.example.com/**` (production)
+
+These are where Supabase sends the user **after** OAuth completes (PKCE code exchange), not the GitHub callback.
+
+### 5. Client sign-in code
+
+Browser client using `@supabase/supabase-js`:
+
+```typescript
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+)
+
+async function signInWithGithub() {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'github',
+    options: {
+      redirectTo: `${window.location.origin}/auth/callback`,
+    },
+  })
+  if (error) console.error(error)
+}
+```
+
+### 6. Next.js callback (PKCE)
+
+Create `app/auth/callback/route.ts` in your Next.js app to exchange the OAuth code for a session:
+
+```typescript
+import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+
+export async function GET(request: Request) {
+  const { searchParams, origin } = new URL(request.url)
+  const code = searchParams.get('code')
+  let next = searchParams.get('next') ?? '/'
+  if (!next.startsWith('/')) next = '/'
+
+  if (code) {
+    const supabase = await createClient()
+    const { error } = await supabase.auth.exchangeCodeForSession(code)
+    if (!error) {
+      return NextResponse.redirect(`${origin}${next}`)
+    }
+  }
+
+  return NextResponse.redirect(`${origin}/auth/auth-code-error`)
+}
+```
+
+Use the [Supabase Server-Side Auth guide](https://supabase.com/docs/guides/auth/server-side/creating-a-client) to set up cookie-based `createClient` for Next.js App Router.
+
+### 7. Assign RBAC role
+
+After the first GitHub sign-in via Supabase:
+
+1. **Authentication → Users** — find the user (GitHub email is available unlike Web3)
+2. Grant a role:
+
+```sql
+insert into public.user_roles (user_id, role)
+values ('<auth-user-uuid>', 'auditor');
+```
+
+See [Knowledge base](/guides/knowledge-base) for role permissions.
+
+### 8. Sign out
+
+```typescript
+await supabase.auth.signOut()
+```
+
+---
+
+## Environment summary
+
+| Variable | Used by | Purpose |
+| -------- | ------- | ------- |
+| `NEXT_PUBLIC_GITHUB_CLIENT_ID` | Dashboard | Dashboard OAuth app ID |
+| `GITHUB_CLIENT_SECRET` | Dashboard (server) | Dashboard OAuth secret |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase client | Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase client | Browser Auth |
+| GitHub credentials in Supabase Dashboard | Supabase Auth | **Separate** OAuth app |
+
+---
+
+## Which flow should I use?
+
+| Need | Use |
+| ---- | --- |
+| Task UI, coding-agent template features | **Dashboard OAuth** (already wired) |
+| Read/write knowledge base from browser with RLS | **Supabase GitHub Auth** |
+| Solana wallet, no GitHub account | [Sign in with Web3](/guides/web3-auth) |
+| CLI audits, ingest, agent recall | `SUPABASE_SERVICE_ROLE_KEY` (no user login) |
+
+Unifying dashboard session and Supabase Auth into one login is planned integration work (**INT-4**). Until then, treat them as independent.
+
+## Related
+
+- [Dashboard](/guides/dashboard) — local dev and env vars
+- [Knowledge base](/guides/knowledge-base) — RBAC and migrations
+- [Sign in with Web3](/guides/web3-auth) — wallet alternative
+- [Supabase: Login with GitHub](https://supabase.com/docs/guides/auth/social-login/auth-github) — upstream reference

@@ -1,0 +1,74 @@
+---
+title: Quickstart
+description: Run your first Solana security audit with ARES.
+---
+
+Run a local audit against a **program address** or a **source directory**.
+
+<Steps>
+  <Step title="Clone and install">
+    ```bash
+    git clone https://github.com/daemon-blockint-tech/4R3S.git
+    cd 4R3S
+    npm ci
+    ```
+  </Step>
+
+  <Step title="Configure environment">
+    ```bash
+    cp .env.example .env
+    ```
+
+    Set at minimum:
+
+    ```env
+    OPENROUTER_API_KEY=sk-or-v1-...
+    ```
+
+    See [Configuration](/configuration) for optional Supabase, Neo4j, and Helius settings.
+  </Step>
+
+  <Step title="Run an audit">
+    **On-chain program** (deployment metadata + source when available):
+
+    ```bash
+    npm run audit -- --program <PROGRAM_ADDRESS>
+    ```
+
+    **Local source** (Semgrep + LLM over loaded `.rs` / IDL):
+
+    ```bash
+    npm run audit -- --source ./path/to/program
+    ```
+
+    **Without Postgres** (ephemeral checkpoint):
+
+    ```bash
+    npm run audit -- --program <ADDRESS> --ephemeral
+    ```
+  </Step>
+
+  <Step title="Read the report">
+    The audit writes a markdown report to stdout. Redirect to a file:
+
+    ```bash
+    npm run audit -- --source ./my-program > report.md
+    ```
+
+    Check the **Scope & Methodology** section for analyzer status (`ok`, `skipped`, `degraded`, `failed`).
+  </Step>
+</Steps>
+
+<Tip>
+  Install [Semgrep](https://semgrep.dev/) for static analysis. If Semgrep is missing, static analysis reports `failed` — silence does **not** mean clean.
+</Tip>
+
+<Warning>
+  Detection accuracy metrics are **not published** until scored via the `eval/` harness. Treat findings as assistive, not certification.
+</Warning>
+
+## Next steps
+
+- [Configuration](/configuration) — full environment variable reference
+- [Knowledge base](/guides/knowledge-base) — Supabase hybrid search + ingest
+- [Audit pipeline](/guides/audit-pipeline) — how each phase works

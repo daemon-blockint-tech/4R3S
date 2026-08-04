@@ -1,0 +1,98 @@
+---
+title: Configuration
+description: Environment variables and local services for ARES Auditor.
+---
+
+Copy `.env.example` to `.env` at the repository root. ARES loads it automatically.
+
+## Required
+
+| Variable | Description |
+| -------- | ----------- |
+| `OPENROUTER_API_KEY` | API key for LLM calls (intake, heuristic, verify, report). |
+
+Common optional overrides:
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `OPENROUTER_MODEL` | `anthropic/claude-3.5-sonnet` | Model slug on OpenRouter. |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter API base. |
+| `OPENROUTER_TIMEOUT_MS` | `120000` | Per-request LLM deadline. |
+
+## Solana RPC
+
+| Variable | Description |
+| -------- | ----------- |
+| `SOLANA_RPC_URL` | Default RPC for on-chain reads. |
+| `HELIUS_RPC_URL` | When set, overrides `SOLANA_RPC_URL` for deployment metadata reads. |
+| `SOLANA_TIMEOUT_MS` | RPC read deadline (default `15000`). |
+
+## Postgres (LangGraph checkpoint)
+
+Optional. Without Postgres, use `--ephemeral` or configure local Docker:
+
+```bash
+npm run db:up
+npm run db:migrate
+```
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `POSTGRES_HOST` | `localhost` | Database host. |
+| `POSTGRES_PORT` | `5432` | Port. |
+| `POSTGRES_DB` | `ares` | Database name. |
+| `POSTGRES_USER` | `ares` | User. |
+| `POSTGRES_PASSWORD` | `ares_dev_password` | Password. |
+| `POSTGRES_SSL` | `false` | Set `true` for Supabase pooler. |
+
+## Supabase (hybrid retrieval)
+
+Optional. When unset, recall uses in-process Crystalline memory only.
+
+| Variable | Description |
+| -------- | ----------- |
+| `SUPABASE_URL` | Project URL (`https://<ref>.supabase.co`). |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-side key for ingest/recall (never expose in browser). |
+
+For browser clients using Supabase Auth (including Web3 wallet sign-in), also set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in the dashboard app. See [Sign in with Web3](/guides/web3-auth).
+
+Apply migrations in `db/supabase/` before ingesting. See [Knowledge base](/guides/knowledge-base).
+
+## Neo4j (graph expansion)
+
+Optional. Started via `npm run db:up` locally.
+
+| Variable | Default |
+| -------- | ------- |
+| `NEO4J_URI` | `bolt://localhost:7687` |
+| `NEO4J_USER` | `neo4j` |
+| `NEO4J_PASSWORD` | `ares_dev_password` |
+
+## Embeddings (semantic search)
+
+Optional. Required for vector leg of hybrid search during ingest.
+
+| Variable | Default |
+| -------- | ------- |
+| `EMBEDDINGS_MODEL` | `text-embedding-3-small` |
+| `EMBEDDINGS_DIM` | `1536` |
+| `EMBEDDINGS_BASE_URL` | OpenAI-compatible endpoint |
+| `EMBEDDINGS_API_KEY` | API key for embeddings |
+
+## CUA browser analyzer (opt-in)
+
+Off by default. Requires **OpenAI** (not OpenRouter) + Scrapybara:
+
+```bash
+npm run audit -- --program <ADDRESS> --cua
+```
+
+| Variable | Description |
+| -------- | ----------- |
+| `CUA_ENABLED` | Set `true` to enable globally. |
+| `OPENAI_API_KEY` | Drives `computer-use-preview` via LangGraph CUA. |
+| `SCRAPYBARA_API_KEY` | Hosted browser sessions. |
+
+<Check>
+  Full variable list: [Environment reference](/reference/environment).
+</Check>

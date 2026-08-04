@@ -7,6 +7,10 @@
  * the Neo4j stage can expand them by graph relationships.
  */
 import { logger } from "../config/logger.js";
+import {
+  describePostgrestError,
+  logPostgrestError,
+} from "../persistence/supabase-error.js";
 import { getSupabase } from "../persistence/supabase.js";
 import { synthCrystal } from "./util.js";
 import type { HybridQuery, RetrievalResult, Retriever } from "./types.js";
@@ -33,11 +37,15 @@ export class SupabaseRetriever implements Retriever {
         match_count: query.limit ?? 20,
       });
       if (error) {
-        logger.warn(
-          { component: "supabase-retriever", err: error.message },
+        logPostgrestError(
+          "supabase-retriever",
+          error,
           "hybrid_search RPC failed; skipping Supabase source",
         );
-        return { fragments: [], error: `hybrid_search RPC failed: ${error.message}` };
+        return {
+          fragments: [],
+          error: `hybrid_search RPC failed: ${describePostgrestError(error)}`,
+        };
       }
 
       const rows = (data ?? []) as HybridSearchRow[];

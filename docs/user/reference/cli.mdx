@@ -1,0 +1,62 @@
+---
+title: CLI reference
+description: npm scripts and audit command-line flags.
+---
+
+## npm scripts (root)
+
+The shipping auditor builds with **npm** at the repository root.
+
+| Command | Description |
+| ------- | ----------- |
+| `npm ci` | Install dependencies. |
+| `npm run audit -- …` | Run an audit (see below). |
+| `npm run typecheck` | TypeScript check. |
+| `npm run lint` | ESLint. |
+| `npm test` | Vitest (hermetic). |
+| `npm run build` | Compile to `dist/`. |
+| `npm run db:up` | Start Postgres + Neo4j (Docker). |
+| `npm run db:down` | Stop Docker services. |
+| `npm run db:migrate` | Checkpoint tables + Neo4j constraints. |
+| `npm run ingest:solsec` | Seed knowledge base from solsec corpus. |
+
+## `npm run audit`
+
+```bash
+npm run audit -- [options]
+```
+
+Common options:
+
+| Flag | Description |
+| ---- | ----------- |
+| `--program <ADDRESS>` | Audit a deployed Solana program by address. |
+| `--source <PATH>` | Audit local source directory. |
+| `--ephemeral` | Skip Postgres checkpoint (in-memory only). |
+| `--cua` | Enable CUA browser analyzer for this run. |
+
+Examples:
+
+```bash
+npm run audit -- --program So11111111111111111111111111111111111111112
+npm run audit -- --source ./datasets/my-program
+npm run audit -- --source ./program > audit-report.md
+```
+
+## Development quality gates
+
+CI runs on every push/PR:
+
+```bash
+npm run typecheck && npm run lint && npm run build && npm test
+```
+
+## Eval harness
+
+```bash
+pip install -r eval/requirements.txt
+python -m pytest eval -q
+python eval/score_detections.py --truth <t.csv> --predictions <p.csv> --target-f1 0.94
+```
+
+See `eval/README.md` in the repository for dataset and scoring details.

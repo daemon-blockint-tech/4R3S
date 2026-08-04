@@ -1,0 +1,65 @@
+---
+title: Dashboard
+description: ARES Auditor web UI at apps/auditor-web.
+---
+
+The **ARES Auditor dashboard** lives in `apps/auditor-web` — a Next.js app adapted from the [Vercel coding-agent-template](https://github.com/vercel-labs/coding-agent-template) (Apache-2.0).
+
+It provides the UX shell for:
+
+- Task sidebar and live status
+- OAuth sign-in (GitHub / Vercel) — see [Login with GitHub](/guides/github-auth)
+- Multi-agent and connector management
+- Future: Solana audit intake and report viewing
+
+<Warning>
+  The dashboard still follows the **coding-agent task flow**. Wiring it to `npm run audit` and ARES report rendering is planned work (**INT-4**).
+</Warning>
+
+## Local development
+
+```bash
+cd apps/auditor-web
+pnpm install
+cp .env.local.example .env.local   # see README.upstream.md for full list
+pnpm db:push
+pnpm dev
+```
+
+Open http://localhost:3000
+
+## Required app environment
+
+| Variable | Purpose |
+| -------- | ------- |
+| `POSTGRES_URL` | App database (tasks, users) |
+| `JWE_SECRET` | Session encryption |
+| `ENCRYPTION_KEY` | Encrypted user API keys |
+| `NEXT_PUBLIC_AUTH_PROVIDERS` | `github`, `vercel`, and/or `solana` (comma-separated) |
+| OAuth client IDs/secrets | Per enabled OAuth provider — [GitHub setup](/guides/github-auth) |
+
+### Supabase Auth (optional)
+
+For GitHub or Web3 sign-in against the knowledge base (JWT + RBAC), not the dashboard JWE session:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser Auth client (never use service role here) |
+
+- GitHub via Supabase: [Login with GitHub](/guides/github-auth)
+- Solana wallet: [Sign in with Web3](/guides/web3-auth)
+
+See `apps/auditor-web/README.md` and `README.upstream.md` for the full template variable list.
+
+## Relationship to the CLI auditor
+
+| Component | Role |
+| --------- | ---- |
+| Root `src/` + `npm run audit` | **Shipping** LangGraph auditor (CLI) |
+| `apps/auditor-web` | **Dashboard** UI (in progress) |
+| Supabase knowledge base | Shared optional backend for recall/ingest |
+
+<Tip>
+  Today, run audits from the CLI. Use the dashboard for auth/task UX experiments until audit jobs are wired through an API.
+</Tip>
