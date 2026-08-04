@@ -21,5 +21,12 @@ pydantic==2.13.4
 # version of it was exercised by the suite. Pin it once it is run in CI.
 uvicorn
 
+# Test client backend for FastAPI's TestClient. Newer starlette versions
+# require httpx2 (no longer fall back to plain httpx) — confirmed on PyPI:
+# maintained by Tom Christie (httpx's original author) under Pydantic
+# Services Inc., same org as the pydantic dependency above, 11 published
+# releases. This is the successor, not a typosquat of httpx.
+httpx2==2.9.1
+
 # Tests
 pytest==9.1.1
