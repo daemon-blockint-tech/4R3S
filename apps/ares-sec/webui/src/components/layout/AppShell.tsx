@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router-dom'
+import { Outlet } from 'react-router'
 import { ApprovalProvider } from '@/contexts/ApprovalContext'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'

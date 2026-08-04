@@ -26,3 +26,9 @@ target/
 # the previous unanchored `target/` rule. The Rust engine's own build output is
 # ignored by core/.gitignore.
 /target/
+
+# IDE / AI assistant local config
+.vscode/
+.devin/
+.claude/
+.windsurf/

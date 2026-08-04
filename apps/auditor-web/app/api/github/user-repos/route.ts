@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getUserGitHubToken } from '@/lib/github/user-token'
+import { withObservedRoute } from '@/lib/observability/route-handler'
 
 interface GitHubRepo {
   name: string
@@ -20,7 +21,7 @@ interface GitHubSearchResult {
   items: GitHubRepo[]
 }
 
-export async function GET(request: NextRequest) {
+async function getUserRepos(request: NextRequest) {
   try {
     const token = await getUserGitHubToken(request)
 
@@ -135,3 +136,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch repositories' }, { status: 500 })
   }
 }
+
+export const GET = withObservedRoute('/api/github/user-repos', 'connect_repo', getUserRepos)

@@ -18,8 +18,9 @@ import { checkRateLimit } from '@/lib/utils/rate-limit'
 import { getMaxSandboxDuration } from '@/lib/db/settings'
 import { generateCommitMessage, createFallbackCommitMessage } from '@/lib/utils/commit-message-generator'
 import { detectPortFromRepo } from '@/lib/sandbox/port-detection'
+import { withObservedRoute } from '@/lib/observability/route-handler'
 
-export async function POST(req: NextRequest, context: { params: Promise<{ taskId: string }> }) {
+async function continueTaskRoute(req: NextRequest, context: { params: Promise<{ taskId: string }> }) {
   try {
     const session = await getServerSession()
     if (!session?.user?.id) {
@@ -114,6 +115,8 @@ export async function POST(req: NextRequest, context: { params: Promise<{ taskId
     return NextResponse.json({ error: 'Failed to continue task' }, { status: 500 })
   }
 }
+
+export const POST = withObservedRoute('/api/tasks/[taskId]/continue', 'create_task', continueTaskRoute)
 
 async function continueTask(
   taskId: string,

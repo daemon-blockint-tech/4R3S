@@ -22,8 +22,13 @@ import { getGitHubUser } from '@/lib/github/client'
 import { getUserApiKeys } from '@/lib/api-keys/user-keys'
 import { checkRateLimit } from '@/lib/utils/rate-limit'
 import { getMaxSandboxDuration } from '@/lib/db/settings'
+import { buildRequestContext, runWithRequestContextAsync } from '@/lib/observability/context'
+import { logger } from '@/lib/observability/logger'
+import { hashId } from '@/lib/observability/redaction'
 
-export async function GET() {
+import { withObservedRoute } from '@/lib/observability/route-handler'
+
+async function listTasks() {
   try {
     // Get user session
     const session = await getServerSession()
@@ -40,35 +45,55 @@ export async function GET() {
 
     return NextResponse.json({ tasks: userTasks })
   } catch (error) {
-    console.error('Error fetching tasks:', error)
+    logger.error('Failed to fetch tasks', {
+      component: 'tasks.lifecycle',
+      error: {
+        name: error instanceof Error ? error.name : 'UnknownError',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        code: 'LIST_TASKS_FAILED',
+      },
+    })
     return NextResponse.json({ error: 'Failed to fetch tasks' }, { status: 500 })
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    // Get user session
-    const session = await getServerSession()
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+export const GET = withObservedRoute('/api/tasks', 'list_tasks', listTasks)
 
-    // Check rate limit
-    const rateLimit = await checkRateLimit(session.user.id)
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        {
-          error: 'Rate limit exceeded',
-          message: `You have reached the daily limit of ${rateLimit.total} messages (tasks + follow-ups). Your limit will reset at ${rateLimit.resetAt.toISOString()}`,
-          remaining: rateLimit.remaining,
-          total: rateLimit.total,
-          resetAt: rateLimit.resetAt.toISOString(),
-        },
-        { status: 429 },
-      )
-    }
+async function createTask(request: NextRequest) {
+  const ctx = buildRequestContext(request)
 
-    const body = await request.json()
+  return runWithRequestContextAsync(ctx, async () => {
+    try {
+      // Get user session
+      const session = await getServerSession()
+      if (!session?.user?.id) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+
+      // Check rate limit
+      const rateLimit = await checkRateLimit(session.user.id)
+      if (!rateLimit.allowed) {
+        logger.warn('Rate limit exceeded', {
+          component: 'auth.session',
+          meta: {
+            userIdHash: hashId(session.user.id),
+            remaining: rateLimit.remaining,
+            total: rateLimit.total,
+          },
+        })
+        return NextResponse.json(
+          {
+            error: 'Rate limit exceeded',
+            message: `You have reached the daily limit of ${rateLimit.total} messages (tasks + follow-ups). Your limit will reset at ${rateLimit.resetAt.toISOString()}`,
+            remaining: rateLimit.remaining,
+            total: rateLimit.total,
+            resetAt: rateLimit.resetAt.toISOString(),
+          },
+          { status: 429 },
+        )
+      }
+
+      const body = await request.json()
 
     // Use provided ID or generate a new one
     const taskId = body.id || generateId(12)
@@ -90,17 +115,32 @@ export async function POST(request: NextRequest) {
       })
       .returning()
 
-    // Generate AI branch name after response is sent (non-blocking)
-    after(async () => {
-      try {
-        // Check if AI Gateway API key is available
-        if (!process.env.AI_GATEWAY_API_KEY) {
-          console.log('AI_GATEWAY_API_KEY not available, skipping AI branch name generation')
-          return
-        }
+      logger.info('Task created', {
+        component: 'tasks.lifecycle',
+        meta: {
+          taskId,
+          userIdHash: hashId(session.user.id),
+          task: { action: 'create', agent: validatedData.selectedAgent || 'claude', outcome: 'success' },
+        },
+      })
 
-        const logger = createTaskLogger(taskId)
-        await logger.info('Generating AI-powered branch name...')
+      const postCorrelationId = ctx.correlationId
+
+      // Generate AI branch name after response is sent (non-blocking)
+      after(async () => {
+        try {
+          // Check if AI Gateway API key is available
+          if (!process.env.AI_GATEWAY_API_KEY) {
+            logger.debug('AI branch name generation skipped', {
+              component: 'tasks.lifecycle',
+              correlationId: postCorrelationId,
+              meta: { taskId, reason: 'ai_gateway_unconfigured' },
+            })
+            return
+          }
+
+        const taskLogger = createTaskLogger(taskId)
+        await taskLogger.info('Generating AI-powered branch name...')
 
         // Extract repository name from URL for context
         let repoName: string | undefined
@@ -130,38 +170,64 @@ export async function POST(request: NextRequest) {
           })
           .where(eq(tasks.id, taskId))
 
-        await logger.success('Generated AI branch name')
-      } catch (error) {
-        console.error('Error generating AI branch name:', error)
+        await taskLogger.success('Generated AI branch name')
+        } catch (error) {
+          logger.warn('AI branch name generation failed', {
+            component: 'tasks.lifecycle',
+            correlationId: postCorrelationId,
+            meta: {
+              taskId,
+              error: {
+                name: error instanceof Error ? error.name : 'UnknownError',
+                message: error instanceof Error ? error.message : 'Unknown error occurred',
+                code: 'AI_BRANCH_NAME_FAILED',
+              },
+            },
+          })
 
-        // Fallback to timestamp-based branch name
-        const fallbackBranchName = createFallbackBranchName(taskId)
+          // Fallback to timestamp-based branch name
+          const fallbackBranchName = createFallbackBranchName(taskId)
 
-        try {
-          await db
-            .update(tasks)
-            .set({
-              branchName: fallbackBranchName,
-              updatedAt: new Date(),
+          try {
+            await db
+              .update(tasks)
+              .set({
+                branchName: fallbackBranchName,
+                updatedAt: new Date(),
+              })
+              .where(eq(tasks.id, taskId))
+
+            const taskLogger = createTaskLogger(taskId)
+            await taskLogger.info('Using fallback branch name')
+          } catch (dbError) {
+            logger.error('Fallback branch name update failed', {
+              component: 'tasks.lifecycle',
+              correlationId: postCorrelationId,
+              meta: {
+                taskId,
+                error: {
+                  name: dbError instanceof Error ? dbError.name : 'UnknownError',
+                  message: dbError instanceof Error ? dbError.message : 'Unknown error occurred',
+                  code: 'FALLBACK_BRANCH_UPDATE_FAILED',
+                },
+              },
             })
-            .where(eq(tasks.id, taskId))
-
-          const logger = createTaskLogger(taskId)
-          await logger.info('Using fallback branch name')
-        } catch (dbError) {
-          console.error('Error updating task with fallback branch name:', dbError)
+          }
         }
-      }
-    })
+      })
 
-    // Generate AI title after response is sent (non-blocking)
-    after(async () => {
-      try {
-        // Check if AI Gateway API key is available
-        if (!process.env.AI_GATEWAY_API_KEY) {
-          console.log('AI_GATEWAY_API_KEY not available, skipping AI title generation')
-          return
-        }
+      // Generate AI title after response is sent (non-blocking)
+      after(async () => {
+        try {
+          // Check if AI Gateway API key is available
+          if (!process.env.AI_GATEWAY_API_KEY) {
+            logger.debug('AI title generation skipped', {
+              component: 'tasks.lifecycle',
+              correlationId: postCorrelationId,
+              meta: { taskId, reason: 'ai_gateway_unconfigured' },
+            })
+            return
+          }
 
         // Extract repository name from URL for context
         let repoName: string | undefined
@@ -190,64 +256,111 @@ export async function POST(request: NextRequest) {
             updatedAt: new Date(),
           })
           .where(eq(tasks.id, taskId))
-      } catch (error) {
-        console.error('Error generating AI title:', error)
+        } catch (error) {
+          logger.warn('AI title generation failed', {
+            component: 'tasks.lifecycle',
+            correlationId: postCorrelationId,
+            meta: {
+              taskId,
+              error: {
+                name: error instanceof Error ? error.name : 'UnknownError',
+                message: error instanceof Error ? error.message : 'Unknown error occurred',
+                code: 'AI_TITLE_FAILED',
+              },
+            },
+          })
 
-        // Fallback to truncated prompt
-        const fallbackTitle = createFallbackTitle(validatedData.prompt)
+          // Fallback to truncated prompt
+          const fallbackTitle = createFallbackTitle(validatedData.prompt)
 
-        try {
-          await db
-            .update(tasks)
-            .set({
-              title: fallbackTitle,
-              updatedAt: new Date(),
+          try {
+            await db
+              .update(tasks)
+              .set({
+                title: fallbackTitle,
+                updatedAt: new Date(),
+              })
+              .where(eq(tasks.id, taskId))
+          } catch (dbError) {
+            logger.error('Fallback title update failed', {
+              component: 'tasks.lifecycle',
+              correlationId: postCorrelationId,
+              meta: {
+                taskId,
+                error: {
+                  name: dbError instanceof Error ? dbError.name : 'UnknownError',
+                  message: dbError instanceof Error ? dbError.message : 'Unknown error occurred',
+                  code: 'FALLBACK_TITLE_UPDATE_FAILED',
+                },
+              },
             })
-            .where(eq(tasks.id, taskId))
-        } catch (dbError) {
-          console.error('Error updating task with fallback title:', dbError)
+          }
         }
-      }
-    })
+      })
 
-    // Get user's API keys, GitHub token, and GitHub user info BEFORE entering after() block (where session is not accessible)
-    const userApiKeys = await getUserApiKeys()
-    const userGithubToken = await getUserGitHubToken()
-    const githubUser = await getGitHubUser()
-    // Get max sandbox duration for this user (user-specific > global > env var)
-    const maxSandboxDuration = await getMaxSandboxDuration(session.user.id)
+      // Get user's API keys, GitHub token, and GitHub user info BEFORE entering after() block (where session is not accessible)
+      const userApiKeys = await getUserApiKeys()
+      const userGithubToken = await getUserGitHubToken()
+      const githubUser = await getGitHubUser()
+      // Per-user settings.maxSandboxDuration, else env MAX_SANDBOX_DURATION
+      const maxSandboxDuration = await getMaxSandboxDuration(session.user.id)
 
-    // Process the task asynchronously with timeout
-    // CRITICAL: Wrap in after() to ensure Vercel doesn't kill the function after response
-    // Without this, serverless functions terminate immediately after sending the response
-    after(async () => {
-      try {
-        await processTaskWithTimeout(
-          newTask.id,
-          validatedData.prompt,
-          validatedData.repoUrl || '',
-          validatedData.maxDuration || maxSandboxDuration,
-          validatedData.selectedAgent || 'claude',
-          validatedData.selectedModel,
-          validatedData.installDependencies || false,
-          validatedData.keepAlive || false,
-          validatedData.enableBrowser || false,
-          userApiKeys,
-          userGithubToken,
-          githubUser,
-        )
-      } catch (error) {
-        console.error('Task processing failed:', error)
-        // Error handling is already done inside processTaskWithTimeout
-      }
-    })
+      // Process the task asynchronously with timeout
+      // CRITICAL: Wrap in after() to ensure Vercel doesn't kill the function after response
+      // Without this, serverless functions terminate immediately after sending the response
+      after(async () => {
+        try {
+          await processTaskWithTimeout(
+            newTask.id,
+            validatedData.prompt,
+            validatedData.repoUrl || '',
+            validatedData.maxDuration || maxSandboxDuration,
+            validatedData.selectedAgent || 'claude',
+            validatedData.selectedModel,
+            validatedData.installDependencies || false,
+            validatedData.keepAlive || false,
+            validatedData.enableBrowser || false,
+            userApiKeys,
+            userGithubToken,
+            githubUser,
+          )
+        } catch (error) {
+          logger.error('Task processing failed', {
+            component: 'tasks.lifecycle',
+            correlationId: postCorrelationId,
+            meta: {
+              taskId: newTask.id,
+              task: { action: 'create', agent: validatedData.selectedAgent || 'claude', outcome: 'failure' },
+              error: {
+                name: error instanceof Error ? error.name : 'UnknownError',
+                message: error instanceof Error ? error.message : 'Unknown error occurred',
+                code: 'TASK_PROCESS_FAILED',
+              },
+            },
+          })
+          // Error handling is already done inside processTaskWithTimeout
+        }
+      })
 
-    return NextResponse.json({ task: newTask })
-  } catch (error) {
-    console.error('Error creating task:', error)
-    return NextResponse.json({ error: 'Failed to create task' }, { status: 500 })
-  }
+      return NextResponse.json({ task: newTask })
+    } catch (error) {
+      logger.error('Task creation failed', {
+        component: 'tasks.lifecycle',
+        meta: {
+          task: { action: 'create', outcome: 'failure' },
+          error: {
+            name: error instanceof Error ? error.name : 'UnknownError',
+            message: error instanceof Error ? error.message : 'Unknown error occurred',
+            code: 'TASK_CREATE_FAILED',
+          },
+        },
+      })
+      return NextResponse.json({ error: 'Failed to create task' }, { status: 500 })
+    }
+  })
 }
+
+export const POST = withObservedRoute('/api/tasks', 'create_task', createTask)
 
 async function processTaskWithTimeout(
   taskId: string,
