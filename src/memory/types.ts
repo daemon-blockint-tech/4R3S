@@ -95,7 +95,15 @@ export interface ScoredCrystal {
   score: number;
 }
 
-/** Query parameters for activation-based retrieval. */
+/**
+ * Query parameters for similarity-based retrieval.
+ *
+ * `minActivation`, `spreadDepth`, and `spreadDecay` were removed with the KR-1
+ * fall-back (see docs/KR-1-FINDINGS.md): recall() no longer reads activation or
+ * traverses links, so leaving them declared meant a caller could set
+ * `spreadDepth: 3`, pass typecheck, and have nothing happen — a silent no-op.
+ * Deleting them turns that into a compile error instead.
+ */
 export interface RecallQuery {
   /** Text query; used for tag matching and (if embeddings exist) similarity. */
   query: string;
@@ -105,14 +113,8 @@ export interface RecallQuery {
   levels?: KnowledgeLevel[];
   /** Restrict to crystals with any of these tags. */
   tags?: string[];
-  /** Minimum activation threshold to be returned. Default 0.05. */
-  minActivation?: number;
   /** Maximum number of crystals to return. Default 8. */
   limit?: number;
-  /** How many hops of spreading activation to perform. Default 1. */
-  spreadDepth?: number;
-  /** Decay factor applied per hop of spread. Default 0.5. */
-  spreadDecay?: number;
 }
 
 /** Result of a consolidation pass. */

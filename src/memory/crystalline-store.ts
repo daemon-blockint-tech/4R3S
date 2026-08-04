@@ -40,6 +40,13 @@ interface StoredCrystal {
   crystal: Crystal;
 }
 
+/**
+ * Upper bound on rows read while tag-filtering one level. Tag matching happens
+ * after the store returns rows, so finding matches means paging; this stops an
+ * unbounded read on a large level. Hitting it is logged, never silent.
+ */
+const MAX_LEVEL_SCAN = 10_000;
+
 export class CrystallineStore {
   private readonly store: BaseStore;
   private readonly cfg: CrystallineConfig;
@@ -338,19 +345,58 @@ export class CrystallineStore {
    * List crystals in a level, optionally filtered by tag overlap. Tag matching
    * is done in-memory (rather than via store filter operators) so it works
    * uniformly across store backends and against array-valued `tags`.
+   *
+   * Because the match happens after the store returns rows, a single capped
+   * read would filter an arbitrary slice: a crystal that matched the tags but
+   * sat past the cap was invisible, and the miss surfaced as "no relevant
+   * memory" rather than "the scan stopped early" — verified by writing 250
+   * non-matching crystals followed by one match, which recall then could not
+   * find. Page through the level instead, stopping as soon as enough matches
+   * are collected, and say so if the hard scan bound is reached.
    */
   private async searchLevel(
     level: KnowledgeLevel,
     tags: string[] | undefined,
     limit: number,
   ): Promise<Item[]> {
-    const items = await this.store.search(levelNamespace(level), { limit });
-    if (!tags || tags.length === 0) return items;
+    if (!tags || tags.length === 0) {
+      return this.store.search(levelNamespace(level), { limit });
+    }
+
     const wanted = new Set(tags);
-    return items.filter((item) => {
-      const c = this.deserialize(item);
-      return c ? c.tags.some((t) => wanted.has(t)) : false;
-    });
+    const matches: Item[] = [];
+    let scanned = 0;
+
+    while (scanned < MAX_LEVEL_SCAN) {
+      const page = await this.store.search(levelNamespace(level), {
+        limit,
+        offset: scanned,
+      });
+      if (page.length === 0) break;
+      scanned += page.length;
+
+      for (const item of page) {
+        const c = this.deserialize(item);
+        if (c && c.tags.some((t) => wanted.has(t))) matches.push(item);
+      }
+      if (matches.length >= limit) return matches;
+      if (page.length < limit) break; // level exhausted
+    }
+
+    if (scanned >= MAX_LEVEL_SCAN) {
+      log.warn(
+        {
+          component: "crystalline",
+          level,
+          scanned,
+          matched: matches.length,
+          cap: MAX_LEVEL_SCAN,
+        },
+        "Tag scan hit its bound before exhausting the level; matches beyond " +
+          "this point were not considered. Recall for this query is partial.",
+      );
+    }
+    return matches;
   }
 
   private findMerges(
@@ -418,8 +464,17 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 function tagSimilarity(query: string, tags: string[]): number {
-  if (tags.length === 0) return 0;
+  // A blank tag matches everything: `"anything".includes("")` is true in JS, so
+  // a single empty-string tag scored a perfect 1.0 against any query and
+  // surfaced an unrelated crystal at the top of every recall (verified: a
+  // crystal tagged [""] scored 1 against "solana owner check"). remember.ts
+  // stores whatever tags the model returned, so a blank entry is reachable
+  // input rather than a hypothetical. Drop blanks and score against what's
+  // left, so a crystal whose tags are all blank contributes no signal instead
+  // of maximum signal.
+  const meaningful = tags.filter((t) => t.trim().length > 0);
+  if (meaningful.length === 0) return 0;
   const q = query.toLowerCase();
-  const hits = tags.filter((t) => q.includes(t.toLowerCase())).length;
-  return hits / tags.length;
+  const hits = meaningful.filter((t) => q.includes(t.toLowerCase())).length;
+  return hits / meaningful.length;
 }
