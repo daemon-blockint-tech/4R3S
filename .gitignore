@@ -18,8 +18,6 @@ eval/data/
 ares-eval-staging/
 ares-output/
 
-# Rust
-target/
 # Rust build output. Anchored to the repo root (leading slash) so it does NOT
 # also ignore source directories named `target/` deeper in the tree — e.g.
 # apps/ares-sec/src/target/, which was silently dropped from the SEC-1 import by
