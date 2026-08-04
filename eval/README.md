@@ -166,11 +166,37 @@ EVAL-3 sources.
 
 EVAL-3's dataset half (the three sections above, 18 targets total) is
 complete. This section fills in the ticket's remaining "recall/precision"
-clause now that `ENG-1` has landed a real engine at `core/` — but **no real
-number is committed here yet**; the pipeline below produces
-`eval/predictions/ares-latest.csv`, which nobody has generated and run yet.
-Do not read this section as claiming a measured score — see the honest
-status table above.
+clause now that `ENG-1` has landed a real engine at `core/`.
+
+**First real measurement (18 EVAL-3 targets, `ares scan --fuzz false --poc false`):
+precision 0.0, recall 0.0, F1 0.0 — 0 true positives, 0 false positives, 18
+false negatives.** This is a genuine result from real `ares-cli` output, not
+a placeholder, and it is **not** a vocabulary-mapping artifact: every one of
+the 18 scan reports came back with zero findings before the category mapping
+ever ran. Root cause, confirmed by reading the source directly: `ares scan`'s
+own pipeline (`MapperAgent` → `cross_analysis` → fuzzing) never invokes the
+AST scanner or taint engine (`core/crates/ares-mapper/src/{ast_scanner,
+taint_engine}.rs`) that actually contain the single-instruction
+signer/owner/type-cosplay detectors — those two modules are wired only into
+the separate `ares benchmark` command's pipeline
+(`core/crates/ares-cli/src/commands/benchmark/execute.rs`), never into
+`scan.rs`. `cross_analysis` alone only fires on multi-instruction
+read/write patterns, so a single-instruction program like
+`sealevel-attacks:0-signer-authorization` has nothing for it to catch. This
+is a real gap in `ENG-1`'s `scan` command, not a bug in this eval pipeline —
+flagged separately for whoever owns `core/`'s detection wiring.
+
+This staging → conversion → scoring pipeline was also independently
+verified against synthetic, hand-written `ares-report-*.json` fixtures
+matching the real `AuditReport`/`Finding` struct shape byte-for-byte (see
+`eval/test_stage_ares_core_targets.py`, `eval/test_convert_ares_core_reports.py`)
+— confirming categories map, unmapped categories surface as `"other"`
+instead of vanishing, and TP/FP/FN come out right on non-empty input. The
+category mapping (`eval/mappings/ares-core-categories.json`) remains
+functionally untested against a real non-empty finding, since none has
+existed yet — that verification is still pending a future `scan` run that
+actually produces output, once the AST-scanner/taint-engine wiring gap above
+is fixed.
 
 Scope: **`ares scan` static output only** (`--fuzz false --poc false`). PoC
 generation/confirmation metrics (`--poc`, `ares confirm` against a forked
@@ -185,10 +211,14 @@ python eval/fetch_sealevel_attacks.py
 python eval/fetch_neodyme_workshop.py
 python eval/build_incident_repros.py
 
-# 2. build ares-cli (requires a Rust toolchain; not available in every environment)
-cd core && cargo build --release -p ares-cli && cd ..
+# 2. build the CLI (requires a Rust toolchain; not available in every environment)
+#    NOTE: the crate directory is named ares-cli, but its actual package name
+#    (Cargo.toml [package].name) is ares-v3, and the compiled binary is named
+#    `ares` (not ares-cli) -- `cargo build -p ares-cli` fails with "package ID
+#    specification `ares-cli` did not match any packages".
+cd core && cargo build --release -p ares-v3 && cd ..
 
-# 3. stage each target into its own directory -- ares-cli scan requires a
+# 3. stage each target into its own directory -- `ares scan` requires a
 #    directory shaped like an Anchor project (<dir>/programs/ or <dir>/src/);
 #    it silently returns zero findings for a bare .rs file or the wrong shape.
 python eval/stage_ares_core_targets.py \
@@ -199,7 +229,7 @@ python eval/stage_ares_core_targets.py \
 #    across targets, or their findings merge into a single report with no
 #    per-target attribution)
 for d in ./ares-eval-staging/*/; do
-  ./core/target/release/ares-cli scan "$d" --fuzz false --poc false -o ./ares-output
+  ./core/target/release/ares scan "$d" --fuzz false --poc false -o ./ares-output
 done
 
 # 5. convert reports -> predictions CSV, then score

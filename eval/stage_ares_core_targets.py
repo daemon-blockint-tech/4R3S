@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Stage EVAL-3 corpus files for `ares-cli scan`.
 
+STATUS: smoke-tested only, with synthetic corpus fixtures in a temp dir --
+never run against the real 18-target eval/data/corpus/ produced by the three
+EVAL-3 fetch/build scripts, and never fed into a real `ares-cli scan` run.
+
 `ares-cli scan <PROGRAM_PATH>` expects PROGRAM_PATH to be a directory shaped
 like an Anchor project: `MapperAgent::analyze()` (core/crates/ares-mapper)
 only recognizes `<PROGRAM_PATH>/programs/` or `<PROGRAM_PATH>/src/` as the

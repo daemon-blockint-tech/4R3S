@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Convert `ares-cli scan` output into eval/predictions/ares-latest.csv.
 
+STATUS: smoke-tested only, against hand-written synthetic report fixtures
+that match the real AuditReport/Finding struct shape -- never run against
+real ares-cli output. This proves the conversion logic is wired correctly,
+not that the category mapping holds up against real findings.
+
 Reads one `ares-report-<safe_name>.json` per staged target (written by
 `ares-cli scan <staging_root>/<safe_name> -o <reports-dir>` -- the filename is
 exactly `ares-report-{report.target.name}.json`, and `target.name` is the
