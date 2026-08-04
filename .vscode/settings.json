@@ -1,7 +1,0 @@
-{
-  "//": "Supabase migrations are PostgreSQL, not T-SQL. Without this, the MSSQL extension parses them and floods Problems with false errors.",
-  "files.associations": {
-    "**/db/supabase/**/*.sql": "postgres",
-    "**/supabase/migrations/**/*.sql": "postgres"
-  }
-}
