@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # TUI & Prompts
 ratatui = "0.30.2"
 crossterm = "0.29.0"
-tui-textarea = "0.7.0"
+tui-textarea = { package = "tui-textarea-2", version = "0.12.1" }
 syntect = "5.2"
 dialoguer = "0.12.0"
 textwrap = "0.16.1"
