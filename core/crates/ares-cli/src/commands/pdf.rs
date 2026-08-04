@@ -56,7 +56,7 @@ fn build_pdf(json: &Value, output: &Path) -> AresResult<()> {
         x: Mm,
         y: &mut Mm,
         font: &IndirectFontRef,
-        size: f64,
+        size: f32,
     ) {
         layer.use_text(text, size, x, *y, font);
         *y = Mm(y.0 - size * 0.4);
@@ -382,7 +382,7 @@ pub fn generate_scan_pdf(report: &ares_core::AuditReport, output: &Path) -> Ares
         x: Mm,
         y: &mut Mm,
         font: &IndirectFontRef,
-        size: f64,
+        size: f32,
     ) {
         layer.use_text(text, size, x, *y, font);
         *y = Mm(y.0 - size * 0.4);

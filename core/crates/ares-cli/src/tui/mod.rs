@@ -42,7 +42,9 @@ async fn run_app<B: ratatui::backend::Backend>(
     app: &mut app::App<'_>,
 ) -> Result<()> {
     loop {
-        terminal.draw(|f| ui::draw(f, app))?;
+        terminal
+            .draw(|f| ui::draw(f, app))
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         if let Some(event) = events::next_event().await {
             match event {
