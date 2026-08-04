@@ -128,6 +128,34 @@ jobs:
       - name: Test
         run: python -m pytest eval -q
 
+  auditor-api:
+    # Without this job, apps/auditor-api's Python is never executed in CI: the
+    # existing jobs cover root src/ (npm) and eval/ (pytest) only, so a green
+    # run would mean "not checked", not "correct" — the same false signal
+    # CLAUDE.md warns about for `pnpm -r test` matching zero projects.
+    name: auditor-api (python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/auditor-api/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r apps/auditor-api/requirements.txt
+
+      # Runs from the app directory because main.py/worker.py are imported as
+      # top-level modules, and because REPO_ROOT is derived from __file__ —
+      # exercising it from here is what catches the path depth being wrong.
+      - name: Test
+        working-directory: apps/auditor-api
+        run: python -m pytest -q
+
   verify-claims:
     name: Verify-Claims release gate
     runs-on: ubuntu-latest

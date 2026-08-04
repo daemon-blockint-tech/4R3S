@@ -1,0 +1,54 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "ARES Auditor",
+  "theme": "maple",
+  "description": "User documentation for the ARES autonomous Solana program security auditor.",
+  "colors": {
+    "primary": "#7C3AED",
+    "light": "#A78BFA",
+    "dark": "#5B21B6"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/daemon-blockint-tech/4R3S"
+      }
+    ],
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/daemon-blockint-tech/4R3S"
+    }
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get started",
+        "pages": ["index", "quickstart", "configuration"]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "guides/audit-pipeline",
+          "guides/knowledge-base",
+          "guides/neo4j",
+          "guides/github-auth",
+          "guides/web3-auth",
+          "guides/dashboard"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": ["reference/environment", "reference/cli"]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/daemon-blockint-tech/4R3S"
+    }
+  }
+}

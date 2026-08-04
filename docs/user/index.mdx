@@ -1,0 +1,64 @@
+---
+title: Introduction
+description: Autonomous Solana program security auditing with ARES Auditor.
+---
+
+ARES Auditor is an **autonomous Solana program security auditor**. It runs a LangGraph pipeline that loads program source, recalls prior security knowledge, analyzes the target in parallel, and produces a structured audit report.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install dependencies, configure API keys, and run your first audit in minutes.
+  </Card>
+  <Card title="Audit pipeline" icon="workflow" href="/guides/audit-pipeline">
+    Understand intake, recall, parallel analyzers, merge, verify, and report.
+  </Card>
+  <Card title="Knowledge base" icon="database" href="/guides/knowledge-base">
+    Optional Supabase + Neo4j hybrid retrieval and ingestion.
+  </Card>
+  <Card title="Neo4j graph" icon="share-2" href="/guides/neo4j">
+    Graph expansion, Aura setup, schema, and MCP for hybrid recall.
+  </Card>
+  <Card title="GitHub login" icon="github" href="/guides/github-auth">
+    Dashboard OAuth and Supabase Auth for knowledge-base access.
+  </Card>
+  <Card title="Web3 sign-in" icon="wallet" href="/guides/web3-auth">
+    Authenticate with a Solana wallet via Supabase Auth and RBAC.
+  </Card>
+  <Card title="Dashboard" icon="layout-dashboard" href="/guides/dashboard">
+    Web UI (`apps/auditor-web`) for tasks, auth, and future report viewing.
+  </Card>
+</CardGroup>
+
+## What ARES does
+
+Every audit follows the same graph:
+
+```
+intake → load-source → recall → analyze (parallel) → merge → verify → remember → report
+```
+
+| Phase | Purpose |
+| ----- | ------- |
+| **Intake** | LLM parses your request into a structured target, depth, and concerns. |
+| **Load source** | Reads `.rs` and Anchor IDL files into context (bounded by budget). |
+| **Recall** | Pulls relevant knowledge from Crystalline memory and optional Supabase/Neo4j. |
+| **Analyze** | Four analyzers run in parallel: on-chain, static (Semgrep), heuristic (LLM), optional CUA. |
+| **Merge** | Dedupes and ranks findings by severity. |
+| **Verify** | Skeptical critic pass drops false positives. |
+| **Remember** | Persists useful fragments to durable knowledge (when configured). |
+| **Report** | Markdown report with severity matrix, coverage, and analyzer status. |
+
+<Note>
+  ARES runs fully **offline** with only `OPENROUTER_API_KEY` set. Supabase, Neo4j, Postgres checkpointing, and embeddings are optional enhancements.
+</Note>
+
+## Products in this repository
+
+The `4R3S` monorepo ships two products:
+
+- **ARES Auditor** (defensive) — what this documentation covers. The shipping agent lives in root `src/`.
+- **ARES-Sec** (offensive) — separate authorized pentest framework in `apps/ares-sec/`. Not covered here.
+
+## License
+
+Apache-2.0. See the [GitHub repository](https://github.com/daemon-blockint-tech/4R3S) for details.

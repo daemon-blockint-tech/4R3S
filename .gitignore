@@ -20,3 +20,9 @@ ares-output/
 
 # Rust
 target/
+# Rust build output. Anchored to the repo root (leading slash) so it does NOT
+# also ignore source directories named `target/` deeper in the tree — e.g.
+# apps/ares-sec/src/target/, which was silently dropped from the SEC-1 import by
+# the previous unanchored `target/` rule. The Rust engine's own build output is
+# ignored by core/.gitignore.
+/target/

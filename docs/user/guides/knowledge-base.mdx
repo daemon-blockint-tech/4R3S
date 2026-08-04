@@ -1,0 +1,110 @@
+---
+title: Knowledge base
+description: Supabase hybrid search, migrations, ingest, and RBAC.
+---
+
+ARES can persist and recall security knowledge across audits using **Supabase** (pgvector + full-text) and optionally **Neo4j** for graph expansion.
+
+<Note>
+  Without Supabase/Neo4j, ARES still runs using **Crystalline-only** recall within the session.
+</Note>
+
+## Setup
+
+<Steps>
+  <Step title="Apply Supabase schema">
+    Run migrations in order via the Supabase SQL editor, CLI, or MCP:
+
+    1. `db/supabase/0001_hybrid_search.sql` — `documents`, `chunks`, `hybrid_search()`
+    2. `db/supabase/0002_rbac.sql` — roles, auth hook, RLS policies
+    3. `db/supabase/0003_data_api_security.sql` — explicit grants, revoke anon access
+
+    <Warning>
+      These files are **PostgreSQL**, not MSSQL. If your editor shows T-SQL errors, set the language mode to PostgreSQL for `db/supabase/*.sql`.
+    </Warning>
+  </Step>
+
+  <Step title="Configure environment">
+    ```env
+    SUPABASE_URL=https://<project-ref>.supabase.co
+    SUPABASE_SERVICE_ROLE_KEY=<service_role secret>
+    ```
+
+    For LangGraph checkpoints on the same Supabase Postgres pooler:
+
+    ```env
+    POSTGRES_HOST=aws-0-<region>.pooler.supabase.com
+    POSTGRES_PORT=5432
+    POSTGRES_DB=postgres
+    POSTGRES_USER=postgres.<project-ref>
+    POSTGRES_PASSWORD=<your-db-password>
+    POSTGRES_SSL=true
+    ```
+
+    URL-encode `#` in passwords as `%23` inside `DATABASE_URL`.
+  </Step>
+
+  <Step title="Enable auth hook (dashboard)">
+    Supabase Dashboard → **Authentication → Hooks → Custom Access Token** → select `public.custom_access_token_hook`.
+
+    Assign roles after users sign up (OAuth, email, or Web3 wallet):
+
+    ```sql
+    insert into public.user_roles (user_id, role)
+    values ('<auth-user-uuid>', 'admin');
+    ```
+
+    - **GitHub via Supabase Auth:** see [Login with GitHub](/guides/github-auth)
+    - **Web3 wallet users:** find UUID under **Authentication → Users** — [Sign in with Web3](/guides/web3-auth)
+  </Step>
+
+  <Step title="Ingest seed corpus">
+    ```bash
+    npm run ingest:solsec
+    ```
+
+    Requires Supabase and/or Neo4j plus embeddings when semantic search is desired.
+  </Step>
+</Steps>
+
+## Roles and permissions
+
+| Role | Read | Write | Delete |
+| ---- | ---- | ----- | ------ |
+| `admin` | ✓ | ✓ | ✓ |
+| `auditor` | ✓ | ✓ | — |
+| `viewer` | ✓ | — | — |
+
+- **Browser clients** use Supabase Auth JWT + `user_role` claim + RLS.
+- **ARES agent** uses `SUPABASE_SERVICE_ROLE_KEY` (bypasses RLS) for ingest/recall.
+
+## Troubleshooting Supabase errors
+
+When a Supabase call fails, check the full error object — especially `hint`:
+
+```json
+{
+  "code": "42501",
+  "message": "permission denied for table documents",
+  "hint": "Grant the required privileges..."
+}
+```
+
+Postgres often puts the exact `GRANT` fix in `hint`. Log the whole error, not only `message`.
+
+## Neo4j (graph expansion)
+
+Optional. Adds full-text chunk search and 1–2 hop graph expansion during RECALL. Full setup: [Neo4j graph layer](/guides/neo4j).
+
+```bash
+npm run db:up       # local Docker: postgres + neo4j
+npm run db:migrate  # applies db/neo4j/schema.cypher when configured
+```
+
+```env
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=ares_dev_password
+```
+
+For **Aura**, use `neo4j+s://<id>.databases.neo4j.io`. Copy `NEO4J_USERNAME` from Aura downloads as **`NEO4J_USER`** in ARES `.env`.
