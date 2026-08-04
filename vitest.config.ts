@@ -2,6 +2,10 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // The Auditor's suite lives under src/. Scope to it so the root build does
+    // NOT glob apps/ares-sec tests (a separate app with its own deps + CI in
+    // ares-sec-ci.yml); running those from the root cwd/node_modules fails.
+    include: ["src/**/*.test.ts"],
     // env.ts validates config at import; supply a dummy key + quiet logs so
     // tests run without a real .env.
     env: {
