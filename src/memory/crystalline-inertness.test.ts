@@ -15,7 +15,7 @@ import { CrystallineStore } from "./crystalline-store.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-describe("spreading activation", () => {
+describe("tag scoring", () => {
   let store: CrystallineStore;
 
   beforeEach(async () => {
@@ -23,33 +23,43 @@ describe("spreading activation", () => {
     await store.start();
   });
 
-  it("contributes nothing when crystals carry no links", async () => {
-    // remember.ts calls crystallize() without `links`, and no caller anywhere in
-    // src/ invokes link(). Every crystal written in a real run therefore has
-    // links: [], which is the shape reproduced here.
-    await store.crystallize("semantic", "signer checks", { tags: ["signer"] });
-    await store.crystallize("semantic", "owner checks", { tags: ["owner"] });
+  it("gives a crystal whose tags are all blank no signal, not maximum signal", async () => {
+    // `"anything".includes("")` is true in JS, so an empty-string tag used to
+    // score a perfect 1.0 against any query and surface an unrelated crystal at
+    // the top of every recall. remember.ts stores tags the model produced, so a
+    // blank entry is reachable input.
+    await store.crystallize("semantic", "completely unrelated", { tags: [""] });
 
-    const off = await store.recall({ query: "signer", tags: ["signer", "owner"], spreadDepth: 0 });
-    const on = await store.recall({ query: "signer", tags: ["signer", "owner"], spreadDepth: 1 });
+    const hits = await store.recall({ query: "solana owner check", tags: [""] });
 
-    expect(on.map((h) => h.score)).toEqual(off.map((h) => h.score));
+    expect(hits).toHaveLength(0);
   });
 
-  it("ignores spreadDepth beyond on/off, even with links present", async () => {
-    // recall() reads spreadDepth only as `spreadDepth > 0`; it is never used as
-    // a hop count, so depth 1 and depth 5 are the same traversal.
-    const hub = await store.crystallize("semantic", "signer checks", { tags: ["signer"] });
-    const mid = await store.crystallize("semantic", "owner checks", { tags: ["owner"] });
-    const far = await store.crystallize("semantic", "bump checks", { tags: ["bump"] });
-    await store.link(hub.id, "semantic", mid.id, 1, "related");
-    await store.link(mid.id, "semantic", far.id, 1, "related");
+  it("scores a blank tag as absent rather than counting it against the total", async () => {
+    // One real tag alongside a blank one should score as a full match on the
+    // real tag, not 0.5 for "one of two tags matched".
+    await store.crystallize("semantic", "owner checks", { tags: ["owner", ""] });
 
-    const q = { query: "signer", tags: ["signer", "owner", "bump"] };
-    const depth1 = await store.recall({ ...q, spreadDepth: 1 });
-    const depth5 = await store.recall({ ...q, spreadDepth: 5 });
+    const hits = await store.recall({ query: "owner", tags: ["owner", ""] });
 
-    expect(depth5.map((h) => h.score)).toEqual(depth1.map((h) => h.score));
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.score).toBe(1);
+  });
+
+  it("finds a tag match that sits past the first page of a level", async () => {
+    // Tag filtering happens after the store returns rows, so a single capped
+    // read filtered an arbitrary slice: this exact shape (250 non-matching
+    // crystals, then one match) returned zero results before searchLevel
+    // paginated.
+    for (let i = 0; i < 250; i++) {
+      await store.crystallize("semantic", `noise ${i}`, { tags: ["noise"] });
+    }
+    await store.crystallize("semantic", "needle in the haystack", { tags: ["needle"] });
+
+    const hits = await store.recall({ query: "needle", tags: ["needle"] });
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.crystal.content).toContain("needle");
   });
 });
 
