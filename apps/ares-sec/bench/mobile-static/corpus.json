@@ -39,7 +39,7 @@
       "desc": "Hardcoded Google API key in source",
       "clean": false,
       "expect": ["S-GOOGLE-API"],
-      "content": "public class Maps {\n    private static final String API = \"AIzaSyD-EXAMPLEfakeKEY1234567890abcdEFG\";\n}\n"
+      "content": "public class Maps {\n    private static final String API = \"AIzaSy4R3S_BENCH_MOBILE_STATIC_CORPUS_0\";\n}\n"
     },
     {
       "id": "code-private-key-http",
