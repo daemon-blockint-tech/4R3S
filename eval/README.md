@@ -162,6 +162,101 @@ likewise **invented** — they don't correspond to any real deployed program
 interface for these protocols, included only for schema uniformity across
 EVAL-3 sources.
 
+### Scoring `core/`'s `ares-cli scan` output (EVAL-3 metrics)
+
+EVAL-3's dataset half (the three sections above, 18 targets total) is
+complete. This section fills in the ticket's remaining "recall/precision"
+clause now that `ENG-1` has landed a real engine at `core/` — but **no real
+number is committed here yet**; the pipeline below produces
+`eval/predictions/ares-latest.csv`, which nobody has generated and run yet.
+Do not read this section as claiming a measured score — see the honest
+status table above.
+
+Scope: **`ares scan` static output only** (`--fuzz false --poc false`). PoC
+generation/confirmation metrics (`--poc`, `ares confirm` against a forked
+validator) are explicit follow-on work, not covered here — see the note at
+the end of this section.
+
+**New scripts**, run in sequence:
+
+```bash
+# 1. build the 18-row ground truth + corpus (if not already present)
+python eval/fetch_sealevel_attacks.py
+python eval/fetch_neodyme_workshop.py
+python eval/build_incident_repros.py
+
+# 2. build ares-cli (requires a Rust toolchain; not available in every environment)
+cd core && cargo build --release -p ares-cli && cd ..
+
+# 3. stage each target into its own directory -- ares-cli scan requires a
+#    directory shaped like an Anchor project (<dir>/programs/ or <dir>/src/);
+#    it silently returns zero findings for a bare .rs file or the wrong shape.
+python eval/stage_ares_core_targets.py \
+  --ground-truth eval/data/ground_truth.csv --corpus-dir eval/data/corpus \
+  --staging-root ./ares-eval-staging
+
+# 4. scan each staged target (one dir = one report; never share one dir
+#    across targets, or their findings merge into a single report with no
+#    per-target attribution)
+for d in ./ares-eval-staging/*/; do
+  ./core/target/release/ares-cli scan "$d" --fuzz false --poc false -o ./ares-output
+done
+
+# 5. convert reports -> predictions CSV, then score
+python eval/convert_ares_core_reports.py \
+  --reports-dir ./ares-output \
+  --staging-manifest ./ares-eval-staging/staging_manifest.json \
+  --out eval/predictions/ares-latest.csv
+
+python eval/score_detections.py \
+  --truth eval/data/ground_truth.csv \
+  --predictions eval/predictions/ares-latest.csv \
+  --by category severity
+```
+
+No custom `ares.toml`/`ares-policy.toml` is required for this: verified
+directly against `core/crates/ares-cli/src/main.rs` and
+`core/crates/ares-policy/src/lib.rs` — a missing config file falls back to
+`AresConfig::default()` (LLM judge disabled, no API key needed), and
+`PolicyEngine::check_scan_permission` only *rejects* a path that matches
+`blocked_paths` (`~/.ssh`, `~/.aws`, `/etc`, `/proc`, etc.) while *not*
+matching `allowed_read_paths` — a staging directory outside those blocked
+paths passes by default even with zero policy config.
+
+One real toolchain requirement: `scan` unconditionally checks that a
+`trident` binary exists on `PATH` (regardless of `--fuzz`), but never
+inspects its output or exit code — a no-op stub (e.g. a `trident.bat`
+printing anything) fully satisfies this for the static-only path; real
+Trident/Anchor/Solana installs are not needed here.
+
+**Category vocabulary gap, the biggest source of measurement noise**: only 3
+of the Rust engine's 20 `VulnerabilityCategory` values match `VULN_CATALOG`'s
+29 ids verbatim (`type-cosplay`, `arbitrary-cpi`, `account-data-matching`).
+The rest are mapped via `eval/mappings/ares-core-categories.json` — a human
+judgement call, same `notes`-array honesty discipline as the dataset
+mappings above. Categories with no defensible equivalent are mapped to the
+literal string `"other"` (a guaranteed false positive against ground truth,
+never silently dropped). **A first measurement's precision is expected to be
+pulled down by this vocabulary gap, not necessarily by wrong findings** —
+`convert_ares_core_reports.py` prints an "N/total mapped to other" coverage
+line specifically so this is visible immediately, not buried in the CSV.
+
+Do not confuse a real number produced here with `core/README.md`'s
+self-reported 0.94 F1 / 0.97 recall badges — those come from `ares-cli
+benchmark`'s own separate, hardcoded 20-protocol dataset
+(`core/dataset/solana-common-attack-vectors/ground_truth.json`), a different
+schema, different targets, and a different (though overlapping) category
+vocabulary. That number is not validated by, and does not validate, anything
+in this file.
+
+PoC generation-rate and confirmation-rate metrics (`--poc`, `ares confirm`)
+are deferred: they need target projects patched with
+`solana-program-test`-compatible dev-dependencies, a heavier toolchain, and
+are only even possible for the 11 sealevel-attacks + 4 neodyme-workshop
+targets that actually compile — the 3 incident-repros targets are explicitly
+non-compiling illustrative fragments (see above), so PoC confirmation is
+fundamentally not applicable to them, not a 0% score.
+
 ## Input schema
 
 Both files may be CSV, JSON, or JSONL. Column names are shared between them.

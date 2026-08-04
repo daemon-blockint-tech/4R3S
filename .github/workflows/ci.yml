@@ -146,7 +146,11 @@ jobs:
         run: pip install -r eval/requirements.txt
 
       - name: Fetch ground truth
-        run: python eval/fetch_datasets.py --out-dir eval/data
+        run: |
+          python eval/fetch_datasets.py --out-dir eval/data
+          python eval/fetch_sealevel_attacks.py --out-dir eval/data
+          python eval/fetch_neodyme_workshop.py --out-dir eval/data
+          python eval/build_incident_repros.py --out-dir eval/data
 
       # ARES has no committed prediction output, so this scores synthetic
       # predictions to prove the gate accepts and rejects at the right F1.

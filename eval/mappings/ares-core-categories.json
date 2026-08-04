@@ -1,0 +1,38 @@
+{
+  "mapping_kind": "category-vocabulary",
+  "source": "core::ares_core::VulnerabilityCategory (Rust, core/crates/ares-core/src/lib.rs:51-72) -- 20 variants, verified by direct read, not by count in a prior summary",
+  "target": "VULN_CATALOG ids (TypeScript, src/knowledge/solana-vulns.ts)",
+  "notes": [
+    "Two independently-evolved vocabularies -- 20 Rust variants vs. 29 VULN_CATALOG ids -- with only 3 verbatim string matches: type-cosplay, arbitrary-cpi, account-data-matching. Everything else below is a human judgement call, not a formal equivalence. Read this before quoting any precision/recall number derived through this mapping.",
+    "duplicate-mutable-accounts (Rust, plural) vs duplicate-mutable-account (Python/TS, singular) look like a typo-level mismatch but are two independently spelled strings in two independently maintained files. Without this explicit mapping entry, score_detections.py's default exact-match category key would silently score every true positive on this category as a miss.",
+    "close-account and revival-attack (two distinct Rust variants) both plausibly map to the single VULN_CATALOG id account-close-revival -- a many-to-one collapse. This means the Rust vocabulary is finer-grained here, not that it is redundant; both still map, since the ground truth only ever asks for account-close-revival.",
+    "signer-authorization and missing-signer (two distinct Rust enum variants, lib.rs:54,68) both plausibly mean 'missing signer check' in practice -- both map to missing-signer-check.",
+    "account-reloading, re-initialization, and revival-attack are handled distinctly in Rust's from_str_checked/Display (lib.rs:106-125) even though they alias together in Rust's own parser in one spot -- this mapping keeps them as three separate Rust source categories mapped to three separate VULN_CATALOG ids (missing-reload-after-cpi, account-reinitialization, account-close-revival) since that is the finer distinction the catalog actually supports; only close-account collapses together with revival-attack per the note above.",
+    "fuzzing-crash and invariant-violation are engine-internal categories that (per this repo's own scope) can only be produced by a --fuzz run. The scan-only pass this mapping was built for (--fuzz false) should never emit fuzzing-crash in practice; its entry here is informational, not exercised, for a first measurement. invariant-violation is mapped to business-logic-error as a coarse stretch since it can also surface from cross-instruction static analysis, not only fuzzing.",
+    "Rust categories with no defensible VULN_CATALOG equivalent are mapped to null and scored downstream as the literal string 'other' -- by design. Forcing a bad mapping to inflate recall/precision would defeat the point of measuring anything. An unmapped category genuinely has no ground-truth correspondence to be credited against.",
+    "generic is Rust's catch-all/fallback category (lib.rs:71) with no defensible single VULN_CATALOG equivalent -- mapped to null/other, same as the other unmapped entries, not given special treatment.",
+    "'confidence' field below is this mapping's own quality flag on the TRANSLATION (exact | semantic | semantic-plural-mismatch | coarse-stretch | not-applicable-static-scan | unmapped), unrelated to Finding.confidence (a float on the Rust side) or the CSV 'confidence' column (low/medium/high bucket of that float) -- three different things named similarly across three different files; do not conflate them when reading this file or the converter script."
+  ],
+  "categories": {
+    "type-cosplay": { "vuln_catalog_id": "type-cosplay", "confidence": "exact" },
+    "arbitrary-cpi": { "vuln_catalog_id": "arbitrary-cpi", "confidence": "exact" },
+    "account-data-matching": { "vuln_catalog_id": "account-data-matching", "confidence": "exact" },
+    "ownership-check": { "vuln_catalog_id": "missing-owner-check", "confidence": "semantic" },
+    "signer-authorization": { "vuln_catalog_id": "missing-signer-check", "confidence": "semantic" },
+    "missing-signer": { "vuln_catalog_id": "missing-signer-check", "confidence": "semantic" },
+    "duplicate-mutable-accounts": { "vuln_catalog_id": "duplicate-mutable-account", "confidence": "semantic-plural-mismatch" },
+    "arithmetic-overflow": { "vuln_catalog_id": "integer-overflow-underflow", "confidence": "semantic" },
+    "close-account": { "vuln_catalog_id": "account-close-revival", "confidence": "semantic" },
+    "revival-attack": { "vuln_catalog_id": "account-close-revival", "confidence": "semantic" },
+    "account-reloading": { "vuln_catalog_id": "missing-reload-after-cpi", "confidence": "semantic" },
+    "re-initialization": { "vuln_catalog_id": "account-reinitialization", "confidence": "semantic" },
+    "unchecked-cast": { "vuln_catalog_id": "unsafe-type-cast", "confidence": "semantic" },
+    "invariant-violation": { "vuln_catalog_id": "business-logic-error", "confidence": "coarse-stretch" },
+    "initialization-frontrunning": { "vuln_catalog_id": "insecure-init-order", "confidence": "coarse-stretch" },
+    "pda-privileges": { "vuln_catalog_id": null, "confidence": "unmapped" },
+    "reentrancy-risk": { "vuln_catalog_id": null, "confidence": "unmapped" },
+    "missing-revalidation": { "vuln_catalog_id": null, "confidence": "unmapped" },
+    "fuzzing-crash": { "vuln_catalog_id": null, "confidence": "not-applicable-static-scan" },
+    "generic": { "vuln_catalog_id": null, "confidence": "unmapped" }
+  }
+}
