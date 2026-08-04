@@ -217,6 +217,7 @@ Failover cross-region hanya dipertimbangkan jika DAU >500 **dan** availability t
 - **Tier S (Postgres COUNT)** — aman cross-instance (kuota harian agent).
 - **Tier A/B/C in-memory** — acceptable at ~50 DAU / low abuse, tetapi **known limitation**; monitor 429 bypass via instance fan-out.
 - **In-process usage cache** (60s) — eventual consistency per instance; lihat [caching-auditor-web.md](./caching-auditor-web.md).
+- **Correlation middleware** (OBS-1 P0, landed on main (2026-08-04)) — stateless Edge; tidak shared memory antar instance; lihat [observability-auditor-web.md](./observability-auditor-web.md).
 - **Scale path unchanged:** Redis/Upstash when 429 abuse or >200 DAU **OR** when multi-instance bypass becomes observable.
 
 Detail tier, algoritma, dan monitoring: [rate-limiting-auditor-web.md § Vercel serverless](./rate-limiting-auditor-web.md#vercel-serverless-vs-single-instance-mvp).

@@ -1,3 +1,5 @@
+![ARES logo](apps/auditor-web/favicon.png)
+
 # ARES-AGENT
 
 [![CI](https://github.com/daemon-blockint-tech/4r3s/actions/workflows/ci.yml/badge.svg)](https://github.com/daemon-blockint-tech/4r3s/actions/workflows/ci.yml)

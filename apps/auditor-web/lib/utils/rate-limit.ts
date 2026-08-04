@@ -17,7 +17,8 @@ export async function checkRateLimit(
   const tomorrow = new Date(today)
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
 
-  // Count user messages sent today (non-deleted tasks only)
+  // Daily quota: taskMessages role=user only (non-deleted tasks).
+  // Pre-insert check: allowed when count < maxMessagesPerDay.
   const userMessagesToday = await db
     .select()
     .from(taskMessages)

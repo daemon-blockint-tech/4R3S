@@ -47,4 +47,4 @@ Probe failures feed alert **A-001** (see [reliability doc](../../../docs/interna
 ## Related
 
 - [Observability design](../../../docs/internal/observability-auditor-web.md) — correlation headers
-- [Runbook A-001](../../../docs/internal/runbooks/A-001-auth-signin-degradation.md)
+- [Runbook A-001](../../../docs/internal/runbooks/A-001-synthetic-down.md)

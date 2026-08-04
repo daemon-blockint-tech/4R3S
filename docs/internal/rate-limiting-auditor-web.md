@@ -14,7 +14,7 @@
 
 | Komponen | Lokasi | Perilaku |
 |----------|--------|----------|
-| `checkRateLimit(userId)` | `lib/utils/rate-limit.ts` | Hitung kuota **harian** dari Postgres: `tasks` dibuat hari ini (UTC) + `taskMessages` role=`user` hari ini. **Implementasi saat ini:** `SELECT` rows lalu `.length` — **bukan** `COUNT(*)` (performance debt; lihat §5) |
+| `checkRateLimit(userId)` | `lib/utils/rate-limit.ts` | Hitung kuota **harian** dari Postgres: **`taskMessages` role=`user` hanya** (Opsi B — fixed). **Implementasi saat ini:** `SELECT` rows lalu `.length` — **bukan** `COUNT(*)` (performance debt; lihat §5) |
 | Batas default | `lib/constants.ts` → `MAX_MESSAGES_PER_DAY` | **5** (override via `MAX_MESSAGES_PER_DAY` env atau `settings.maxMessagesPerDay` per user) |
 | Hierarchy batas | `lib/db/settings.ts` → `getMaxMessagesPerDay` | **`settings.maxMessagesPerDay` (per-user, `userId` NOT NULL) → env `MAX_MESSAGES_PER_DAY`**. Tidak ada tier global di DB — komentar lama "user > global > env" **salah** |
 | Endpoint terproteksi | `POST /api/tasks`, `POST /api/tasks/[taskId]/continue` | Return **429** + JSON `{ error, message, remaining, total, resetAt }` |
@@ -23,7 +23,7 @@
 
 ### Yang belum ada
 
-- Tidak ada `middleware.ts` — semua limit ad hoc per route
+- Tidak ada rate-limit middleware — kuota harian tetap ad hoc per route (`checkRateLimit` inline). **OBS-1 P0** menambahkan `middleware.ts` untuk **correlation ID saja** (bukan pembatasan); file ada secara lokal, **landed on main (2026-08-04)** — lihat [observability-auditor-web.md](./observability-auditor-web.md)
 - Tidak ada header standar `X-RateLimit-*` / `Retry-After`
 - Tidak ada rate limit per IP, per route, atau burst protection
 - Auth routes (`/api/auth/signin/*`, `/api/auth/github/callback`), GitHub proxy, sandbox ops, polling reads — **tidak dibatasi**
@@ -81,33 +81,19 @@ Operasi yang memicu **sandbox + agent LLM**. Satu request ≈ menit–jam comput
 | `/api/tasks` | POST | ✅ Kuota harian | Kuota harian + burst hourly |
 | `/api/tasks/[taskId]/continue` | POST | ✅ Kuota harian | Kuota harian + burst hourly |
 
-**Catatan semantik kuota (known MVP behavior — double-count):**
+**Catatan semantik kuota (fixed — Opsi B):**
 
-Satu `POST /api/tasks` yang sukses menambah **2 unit kuota**, bukan 1:
+`checkRateLimit` menghitung **hanya** `taskMessages` role=`user` (bukan `tasks`). Satu `POST /api/tasks` sukses = **1 unit** (initial user message). Satu `POST .../continue` = **1 unit** (user follow-up message).
 
-| Langkah | Lokasi | Efek pada counter |
-|---------|--------|-------------------|
-| Rate check | `app/api/tasks/route.ts` L63 | Pre-insert; belum menambah count |
-| Insert task | `app/api/tasks/route.ts` L99–105 | +1 di `tasksToday` |
-| Insert initial user message | `processTask()` → `app/api/tasks/route.ts` L432–437 | +1 di `userMessagesToday` (role=`user`) |
+Rate check berjalan **pre-insert** (`app/api/tasks/route.ts` sebelum insert task/message). Off-by-one acceptable: check pakai count existing; insert menambah +1 setelah lolos.
 
-`checkRateLimit` menjumlahkan keduanya (`rate-limit.ts` L41):
+| Messages existing (UTC today) | Rate check | Setelah POST /api/tasks sukses |
+|--------------------------------|------------|----------------------------------|
+| 0 | allowed (0 < 5) | 1 message |
+| 4 | allowed (4 < 5) | 5 messages |
+| 5 | **blocked** (5 ≮ 5) | — |
 
-```typescript
-const count = tasksToday.length + userMessagesToday.length
-```
-
-**Dampak dengan default limit 5:** user efektif ~**2–3 task baru/hari** (2 unit/task) plus sisa quota untuk follow-up (1 unit/`POST .../continue`). Follow-up saja = **1 unit** (hanya `taskMessages`, tanpa task baru).
-
-**Opsi perbaikan (belum diimplementasi — doc-only review):**
-
-| Opsi | Perubahan | Trade-off |
-|------|-----------|-----------|
-| **A** | Hitung hanya `tasks` (exclude initial message dari quota) | Konsisten untuk "task/day"; follow-up perlu aturan terpisah |
-| **B** | Hitung hanya `taskMessages` role=`user` (exclude task insert) | Selaras dengan nama `MAX_MESSAGES_PER_DAY` dan UI "messages remaining" |
-| **C** | Pertahankan double-count; naikkan default (e.g. 10) + perbaiki UI copy | Tanpa refactor counter; quota terasa "2× lebih ketat" |
-
-**Rekomendasi implementasi:** **Opsi B** — satu sumber hitung (`taskMessages` role=`user`), paling selaras semantik env/UI. Opsi C acceptable jika refactor ditunda.
+Default limit **5** = hingga **5 user messages/hari** (mix task create + continue).
 
 ### Tier A — Expensive (tanpa LLM penuh, tetap mahal)
 
@@ -223,16 +209,14 @@ Dengan polling saat ini (satu user di task page ≈ 0.4–0.7 QPS reads saja), *
 | Peak concurrent users | 5 (10% DAU) | Pola SaaS B2B dev tool |
 | Peak aggregate QPS | 0.05 | Given → 180 req/jam puncak |
 | Per-user share at peak | 180 ÷ 5 = **36 req/jam** ≈ **0.6 req/min** | Mean; bucket allow burst |
-| Active agent runs/day (typical) | 50 × 1.2 ≈ **60** | ~60% DAU × 2 msg avg (asumsi pre-double-count; lihat below) |
-| Active agent runs/day (worst) | 50 × 5 = **250** | Semua user max quota (jika 1 unit/msg); **125 task creates** jika double-count 2 unit/task |
-
-**Double-count adjustment (MVP actual):** Dengan limit **5** dan **2 unit/task create**, worst-case = **2–3 creates + 0–1 follow-up** per user/hari, bukan 5 operasi agent penuh. Derivation "5 msg/day" di bawah asumsikan **post-fix Opsi B** atau interpretasi "5 user messages"; **pre-fix** efektif ≈ **2.5 agent starts/day** at cap.
+| Active agent runs/day (typical) | 50 × 1.2 ≈ **60** | ~60% DAU × 2 msg avg |
+| Active agent runs/day (worst) | 50 × 5 = **250** | Semua user max quota (5 user messages/day) |
 
 ### Tier S — Message quota (per user / hari)
 
 | Plan | `maxMessagesPerDay` | Derivation |
 |------|---------------------|------------|
-| **Free (default, current)** | **5** | Env default `5`; **effective ~2–3 task creates/day** until double-count fixed (2 units/create). Post-fix (Opsi B): 5 user messages = up to 5 follow-ups or mix of creates+continues |
+| **Free (default, current)** | **5** | Env default `5`; 5 user messages/day (creates + continues) |
 | **Pro (future, via settings)** | **15** | 3× free; per-user row in `settings` |
 | **Team (future)** | **50** | Shared pool per org (future); per-user cap individual |
 
@@ -289,7 +273,7 @@ Dengan polling saat ini (satu user di task page ≈ 0.4–0.7 QPS reads saja), *
 
 ### Performance debt — Tier S query shape
 
-`checkRateLimit` (`lib/utils/rate-limit.ts` L21–38) menjalankan dua query **`SELECT *`** (tasks + joined taskMessages) dan menghitung via **`.length`**, bukan `COUNT(*)`. Pada user dengan banyak task/message historis hari itu, ini membawa lebih banyak row ke app layer daripada agregasi DB. **Planned:** ganti ke `COUNT(*)` atau materialized daily counter; alert jika `rate_limit.check_duration_ms` p95 > 200ms.
+`checkRateLimit` (`lib/utils/rate-limit.ts`) menjalankan satu query **`SELECT *`** (joined `taskMessages` + `tasks`) dan menghitung via **`.length`**, bukan `COUNT(*)`. Pada user dengan banyak message historis hari itu, ini membawa lebih banyak row ke app layer daripada agregasi DB. **Planned:** ganti ke `COUNT(*)` atau materialized daily counter; alert jika `rate_limit.check_duration_ms` p95 > 200ms.
 
 ### MVP (low-traffic, no Redis) — **recommended now**
 
@@ -436,7 +420,7 @@ Tetap return JSON body; **tambahkan** headers `X-RateLimit-*` pada response 200 
 ## Self-Check Checklist
 
 - [x] Baseline existing (`checkRateLimit`, 5/day, Postgres row SELECT + length, 429 on tasks/continue) documented accurately
-- [x] **Double-count:** 1 POST /api/tasks = 2 quota units (task + initial user message) documented as known MVP behavior
+- [x] **Opsi B (fixed):** 1 POST /api/tasks = 1 quota unit (user message only); pre-insert check documented
 - [x] Settings hierarchy: per-user `settings` → env (no global DB tier)
 - [x] Vercel multi-instance: Postgres Tier S shared; in-memory A/B/C per instance
 - [x] Polling: `app-layout.tsx` 5s, `session-provider.tsx` 60s
