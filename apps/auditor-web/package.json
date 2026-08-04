@@ -41,6 +41,8 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.111.0",
     "@types/js-cookie": "^3.0.6",
     "@types/ws": "^8.18.1",
     "@vercel/analytics": "^1.6.1",

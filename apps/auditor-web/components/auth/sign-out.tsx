@@ -22,6 +22,7 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { Key, Server } from 'lucide-react'
 import { useState, useEffect, useCallback } from 'react'
 import { getEnabledAuthProviders } from '@/lib/auth/providers'
+import { startGitHubOAuth } from '@/lib/auth/start-github-oauth'
 
 interface RateLimitInfo {
   used: number
@@ -154,10 +155,7 @@ export function SignOut({ user, authProvider }: Pick<Session, 'user' | 'authProv
                 Disconnect
               </DropdownMenuItem>
             ) : (
-              <DropdownMenuItem
-                onClick={() => (window.location.href = '/api/auth/github/signin')}
-                className="cursor-pointer"
-              >
+              <DropdownMenuItem onClick={() => startGitHubOAuth()} className="cursor-pointer">
                 <GitHubIcon className="h-4 w-4 mr-2" />
                 Connect
               </DropdownMenuItem>

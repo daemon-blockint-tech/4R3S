@@ -29,6 +29,7 @@ import { PRStatusIcon } from '@/components/pr-status-icon'
 import { PRCheckStatus } from '@/components/pr-check-status'
 import { githubConnectionAtom } from '@/lib/atoms/github-connection'
 import { AresBrand } from '@/components/ares-brand'
+import { SidebarNav } from '@/components/sidebar-nav'
 
 // Model mappings for human-friendly names
 const AGENT_MODELS = {
@@ -372,7 +373,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
   if (!session.user) {
     return (
       <div
-        className="h-full border-r bg-muted px-2 md:px-3 pt-3 md:pt-5.5 pb-3 md:pb-4 overflow-y-auto flex flex-col"
+        className="h-full border-r bg-muted px-2 md:px-3 pt-3 md:pt-5.5 pb-3 md:pb-4 overflow-y-auto flex flex-col min-h-0"
         style={{ width: `${width}px` }}
       >
         <AresBrand height={24} className="mb-3 md:mb-4" />
@@ -422,7 +423,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
             </div>
           </div>
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1 flex-1 min-h-0 overflow-y-auto">
           {activeTab === 'tasks' && (
             <Card>
               <CardContent className="p-3 text-center text-xs text-muted-foreground">
@@ -438,13 +439,14 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
             </Card>
           )}
         </div>
+        <SidebarNav isSignedIn={false} onLinkClick={handleLinkClick} />
       </div>
     )
   }
 
   return (
     <div
-      className="h-full border-r bg-muted px-2 md:px-3 pt-3 md:pt-5.5 pb-3 md:pb-4 overflow-y-auto"
+      className="h-full border-r bg-muted px-2 md:px-3 pt-3 md:pt-5.5 pb-3 md:pb-4 overflow-y-auto flex flex-col min-h-0"
       style={{ width: `${width}px` }}
     >
       <AresBrand height={24} className="mb-3 md:mb-4" />
@@ -495,6 +497,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
         </div>
       </div>
 
+      <div className="flex-1 min-h-0 overflow-y-auto">
       {/* Tasks Tab Content */}
       {activeTab === 'tasks' && (
         <div className="space-y-1">
@@ -715,6 +718,9 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
           </div>
         </div>
       )}
+      </div>
+
+      <SidebarNav isSignedIn onLinkClick={handleLinkClick} />
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>

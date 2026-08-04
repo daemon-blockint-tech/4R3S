@@ -232,6 +232,12 @@ importers:
       '@radix-ui/react-tooltip':
         specifier: ^1.2.8
         version: 1.2.16(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      '@supabase/ssr':
+        specifier: ^0.12.4
+        version: 0.12.4(@supabase/supabase-js@2.112.0(@opentelemetry/api@1.9.0))
+      '@supabase/supabase-js':
+        specifier: ^2.111.0
+        version: 2.112.0(@opentelemetry/api@1.9.0)
       '@types/js-cookie':
         specifier: ^3.0.6
         version: 3.0.6
@@ -2483,6 +2489,11 @@ packages:
     resolution: {integrity: sha512-McFFP+ivFDMTaCEh8JDpG+sPEmv5IjKvrP0uTH3Lbsriai4KbxB8ycY8TqPQnbjhOVjEifQm1q0y2tL1CUw9Zg==}
     engines: {node: '>=22.0.0'}
 
+  '@supabase/ssr@0.12.4':
+    resolution: {integrity: sha512-xHzcgI8cC1TpBKSwJcR5Yd8CCwfIq0SBc5yb4yz/YFw5tbCrEQ0QT3a+2jymCxHgQWLfzwN93HZ6eRbcoMkOlA==}
+    peerDependencies:
+      '@supabase/supabase-js': ^2.111.0
+
   '@supabase/storage-js@2.112.0':
     resolution: {integrity: sha512-X44Bl045X/e5e2tJqWsY+JmQvgtm04BJuijiWprIWYLn0mDvGnu8hLdzPOPcTVji7wlqbt2ZUHttsv+rGKQYXw==}
     engines: {node: '>=22.0.0'}
@@ -3604,6 +3615,10 @@ packages:
   cookie@0.7.2:
     resolution: {integrity: sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==}
     engines: {node: '>= 0.6'}
+
+  cookie@1.1.1:
+    resolution: {integrity: sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ==}
+    engines: {node: '>=18'}
 
   copy-anything@4.0.5:
     resolution: {integrity: sha512-7Vv6asjS4gMOuILabD3l739tsaxFQmC+a7pLZm02zyvs8p977bL3zEgq3yDk5rn9B0PbYgIv++jmHcuUab4RhA==}
@@ -9494,6 +9509,11 @@ snapshots:
       '@supabase/phoenix': 0.4.5
       tslib: 2.8.1
 
+  '@supabase/ssr@0.12.4(@supabase/supabase-js@2.112.0(@opentelemetry/api@1.9.0))':
+    dependencies:
+      '@supabase/supabase-js': 2.112.0(@opentelemetry/api@1.9.0)
+      cookie: 1.1.1
+
   '@supabase/storage-js@2.112.0':
     dependencies:
       iceberg-js: 0.8.1
@@ -10721,6 +10741,8 @@ snapshots:
   cookie-signature@1.2.2: {}
 
   cookie@0.7.2: {}
+
+  cookie@1.1.1: {}
 
   copy-anything@4.0.5:
     dependencies:
