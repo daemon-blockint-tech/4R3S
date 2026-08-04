@@ -5,6 +5,11 @@
   "description": "ARES-AGENT: Solana audit platform with LangGraph + OpenRouter + Crystalline cognitive memory",
   "license": "Apache-2.0",
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "apps/ares-sec/webui"
+  ],
   "engines": {
     "node": ">=20"
   },

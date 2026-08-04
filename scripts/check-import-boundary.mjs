@@ -19,7 +19,11 @@ import path from "node:path";
 
 const ROOT = process.cwd();
 const AUDITOR_DIRS = ["src", "core", "services", "packages", "apps/auditor-api", "apps/auditor-web"];
-const FORBIDDEN = /ares-sec/;
+// Matches an actual import/require targeting an ares-sec path — e.g.
+// `from "../apps/ares-sec/..."` or `require("apps/ares-sec/...")` —
+// not any line that merely mentions "ares-sec" in prose or a comment
+// (this file's own doc comments reference it as provenance, for instance).
+const FORBIDDEN = /\b(?:from|require)\s*\(?\s*["'][^"']*ares-sec[^"']*["']/;
 const SKIP_DIRS = new Set(["node_modules", "target", "dist", ".git", "__pycache__"]);
 const CODE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs"]);
 

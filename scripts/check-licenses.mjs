@@ -30,10 +30,21 @@ function licensesOf(entry) {
   return Array.isArray(raw) ? raw : [String(raw)];
 }
 
+// Windows resolves "npx" to npx.cmd — a batch script, which Windows can
+// only actually execute via a shell/cmd.exe interpreter (confirmed
+// directly: explicit "npx.cmd" naming without shell:true fails with
+// EINVAL, not just ENOENT — this isn't a name-resolution problem, .cmd
+// files genuinely require shell:true on Windows).
+//
+// Node flags shell:true + an args array as a security anti-pattern
+// (arguments get concatenated, not escaped) — real concern in general,
+// but not here: every argument below is a fixed literal in this file's
+// own source, never derived from user input, file content, or any other
+// untrusted source. There is nothing for a shell-injection to attach to.
 const json = execFileSync(
   "npx",
   ["-y", "license-checker-rseidelsohn", "--json", "--production"],
-  { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+  { encoding: "utf8", maxBuffer: 32 * 1024 * 1024, shell: true },
 );
 
 const packages = JSON.parse(json);
