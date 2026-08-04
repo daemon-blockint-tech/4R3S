@@ -22,6 +22,26 @@ updates:
           - "version-update:semver-major"
           - "version-update:semver-minor"
 
+  - package-ecosystem: npm
+    directory: "/apps/ares-sec"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      ares-sec-npm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: cargo
+    directory: "/core"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      core-cargo:
+        patterns:
+          - "*"
+
   # Keep the GitHub Actions used in .github/workflows pinned to current versions.
   - package-ecosystem: github-actions
     directory: "/"
