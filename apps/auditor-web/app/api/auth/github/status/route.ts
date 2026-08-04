@@ -3,8 +3,9 @@ import { getSessionFromReq } from '@/lib/session/server'
 import { db } from '@/lib/db/client'
 import { users, accounts } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
+import { withObservedRoute } from '@/lib/observability/route-handler'
 
-export async function GET(req: NextRequest) {
+async function getGitHubStatus(req: NextRequest) {
   const session = await getSessionFromReq(req)
 
   if (!session?.user) {
@@ -59,3 +60,5 @@ export async function GET(req: NextRequest) {
     return Response.json({ connected: false, error: 'Failed to check status' }, { status: 500 })
   }
 }
+
+export const GET = withObservedRoute('/api/auth/github/status', 'connect_repo', getGitHubStatus)

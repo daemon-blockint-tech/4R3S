@@ -6,153 +6,227 @@ import { eq, and } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { createGitHubSession, saveSession } from '@/lib/session/create-github'
 import { encrypt } from '@/lib/crypto'
+import { buildRequestContext, runWithRequestContextAsync } from '@/lib/observability/context'
+import { logger } from '@/lib/observability/logger'
+import { hashId } from '@/lib/observability/redaction'
+import { withObservedRoute } from '@/lib/observability/route-handler'
 
-export async function GET(req: NextRequest): Promise<Response> {
-  const code = req.nextUrl.searchParams.get('code')
-  const state = req.nextUrl.searchParams.get('state')
-  const cookieStore = await cookies()
+async function githubCallback(req: NextRequest): Promise<Response> {
+  const ctx = buildRequestContext(req)
 
-  // Check if this is a sign-in flow or connect flow
-  const authMode = cookieStore.get(`github_auth_mode`)?.value ?? null
-  const isSignInFlow = authMode === 'signin'
-  const isConnectFlow = authMode === 'connect'
+  return runWithRequestContextAsync(ctx, async () => {
+    const code = req.nextUrl.searchParams.get('code')
+    const state = req.nextUrl.searchParams.get('state')
+    const cookieStore = await cookies()
 
-  // Try both cookie patterns (new unified flow vs legacy oauth flow)
-  const storedState = cookieStore.get(authMode ? `github_auth_state` : `github_oauth_state`)?.value ?? null
-  const storedRedirectTo =
-    cookieStore.get(authMode ? `github_auth_redirect_to` : `github_oauth_redirect_to`)?.value ?? null
-  const storedUserId = cookieStore.get(`github_oauth_user_id`)?.value ?? null // Required for connect flow
+    const authMode = cookieStore.get(`github_auth_mode`)?.value ?? null
+    const isSignInFlow = authMode === 'signin'
 
-  // For sign-in flow, we don't need storedUserId
-  if (isSignInFlow) {
-    if (code === null || state === null || storedState !== state || storedRedirectTo === null) {
-      return new Response('Invalid OAuth state', {
-        status: 400,
-      })
-    }
-  } else {
-    // For connect flow (including legacy oauth flow), we need storedUserId
-    if (
+    const storedState = cookieStore.get(authMode ? `github_auth_state` : `github_oauth_state`)?.value ?? null
+    const storedRedirectTo =
+      cookieStore.get(authMode ? `github_auth_redirect_to` : `github_oauth_redirect_to`)?.value ?? null
+    const storedUserId = cookieStore.get(`github_oauth_user_id`)?.value ?? null
+
+    if (isSignInFlow) {
+      if (code === null || state === null || storedState !== state || storedRedirectTo === null) {
+        logger.warn('OAuth state validation failed', {
+          component: 'auth.github',
+          meta: {
+            auth: { provider: 'github', mode: 'signin', outcome: 'failure' },
+            error: { name: 'OAuthStateError', message: 'Invalid OAuth state', code: 'INVALID_OAUTH_STATE' },
+          },
+        })
+        return new Response('Invalid OAuth state', { status: 400 })
+      }
+    } else if (
       code === null ||
       state === null ||
       storedState !== state ||
       storedRedirectTo === null ||
       storedUserId === null
     ) {
-      return new Response('Invalid OAuth state', {
-        status: 400,
+      logger.warn('OAuth state validation failed', {
+        component: 'auth.github',
+        meta: {
+          auth: { provider: 'github', mode: 'connect', outcome: 'failure' },
+          error: { name: 'OAuthStateError', message: 'Invalid OAuth state', code: 'INVALID_OAUTH_STATE' },
+        },
       })
-    }
-  }
-
-  const clientId = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID
-  const clientSecret = process.env.GITHUB_CLIENT_SECRET
-
-  if (!clientId || !clientSecret) {
-    return new Response('GitHub OAuth not configured', {
-      status: 500,
-    })
-  }
-
-  try {
-    console.log('[GitHub Callback] Starting OAuth flow, mode:', authMode)
-
-    // Exchange code for access token
-    const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: clientId,
-        client_secret: clientSecret,
-        code: code,
-      }),
-    })
-
-    if (!tokenResponse.ok) {
-      console.error('[GitHub Callback] Token exchange failed with status:', tokenResponse.status)
-      const errorText = await tokenResponse.text()
-      console.error('[GitHub Callback] Error response:', errorText)
-      return new Response('Failed to exchange code for token', { status: 400 })
+      return new Response('Invalid OAuth state', { status: 400 })
     }
 
-    const tokenData = (await tokenResponse.json()) as {
-      access_token: string
-      scope: string
-      token_type: string
-      error?: string
-      error_description?: string
+    const clientId = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID
+    const clientSecret = process.env.GITHUB_CLIENT_SECRET
+
+    if (!clientId || !clientSecret) {
+      logger.error('GitHub OAuth not configured', {
+        component: 'auth.github',
+        meta: {
+          auth: { provider: 'github', outcome: 'failure' },
+          error: { name: 'ConfigurationError', message: 'Missing OAuth credentials', code: 'OAUTH_NOT_CONFIGURED' },
+        },
+      })
+      return new Response('GitHub OAuth not configured', { status: 500 })
     }
 
-    console.log('[GitHub Callback] Token data received, has access_token:', !!tokenData.access_token)
-
-    if (!tokenData.access_token) {
-      console.error('[GitHub Callback] Failed to get GitHub access token:', tokenData)
-      return new Response(
-        `Failed to authenticate with GitHub: ${tokenData.error_description || tokenData.error || 'Unknown error'}`,
-        { status: 400 },
-      )
-    }
-
-    // Fetch GitHub user info
-    const userResponse = await fetch('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${tokenData.access_token}`,
-        Accept: 'application/vnd.github.v3+json',
-      },
-    })
-
-    if (!userResponse.ok) {
-      console.error('[GitHub Callback] Failed to fetch GitHub user:', userResponse.status)
-      return new Response('Failed to fetch GitHub profile', { status: 400 })
-    }
-
-    const githubUser = (await userResponse.json()) as {
-      login: string
-      id: number
-      email: string | null
-      name: string | null
-      avatar_url: string
-    }
-
-    if (isSignInFlow) {
-      // SIGN-IN FLOW: Create a new session for the GitHub user
-      console.log('[GitHub Callback] Sign-in flow - creating GitHub session')
-      const session = await createGitHubSession(tokenData.access_token, tokenData.scope)
-
-      if (!session) {
-        console.error('[GitHub Callback] Failed to create GitHub session')
-        return new Response('Failed to create session', { status: 500 })
-      }
-
-      console.log('[GitHub Callback] GitHub session created for user:', session.user.id)
-      // Note: Tokens are already stored in users table by upsertUser() in createGitHubSession()
-
-      // Create response with redirect
-      const response = new Response(null, {
-        status: 302,
-        headers: {
-          Location: storedRedirectTo,
+    try {
+      logger.info('OAuth callback started', {
+        component: 'auth.github',
+        meta: {
+          auth: {
+            provider: 'github',
+            mode: isSignInFlow ? 'signin' : 'connect',
+            outcome: 'partial',
+          },
         },
       })
 
-      // Save session to cookie
-      await saveSession(response, session)
+      const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code: code,
+        }),
+      })
 
-      // Clean up cookies
-      cookieStore.delete(`github_auth_state`)
-      cookieStore.delete(`github_auth_redirect_to`)
-      cookieStore.delete(`github_auth_mode`)
+      if (!tokenResponse.ok) {
+        logger.error('Token exchange failed', {
+          component: 'auth.github',
+          meta: {
+            auth: { provider: 'github', mode: isSignInFlow ? 'signin' : 'connect', outcome: 'failure' },
+            error: {
+              name: 'OAuthExchangeError',
+              message: 'Token exchange failed',
+              code: 'OAUTH_EXCHANGE_FAILED',
+              upstream_status: tokenResponse.status,
+            },
+          },
+        })
+        return new Response('Failed to exchange code for token', { status: 400 })
+      }
 
-      return response
-    } else {
-      // CONNECT FLOW: Add GitHub account to existing Vercel user
-      // Encrypt the access token before storing
+      const tokenData = (await tokenResponse.json()) as {
+        access_token: string
+        scope: string
+        token_type: string
+        error?: string
+        error_description?: string
+      }
+
+      if (!tokenData.access_token) {
+        logger.error('Token exchange failed', {
+          component: 'auth.github',
+          meta: {
+            auth: { provider: 'github', mode: isSignInFlow ? 'signin' : 'connect', outcome: 'failure' },
+            error: {
+              name: 'OAuthExchangeError',
+              message: 'Access token missing from exchange response',
+              code: 'OAUTH_EXCHANGE_FAILED',
+              upstream_status: tokenResponse.status,
+            },
+          },
+        })
+        return new Response(
+          `Failed to authenticate with GitHub: ${tokenData.error_description || tokenData.error || 'Unknown error'}`,
+          { status: 400 },
+        )
+      }
+
+      logger.info('Token exchange completed', {
+        component: 'auth.github',
+        meta: {
+          auth: { provider: 'github', mode: isSignInFlow ? 'signin' : 'connect', outcome: 'success' },
+          tokenPresent: true,
+        },
+      })
+
+      const userResponse = await fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      })
+
+      if (!userResponse.ok) {
+        logger.error('GitHub profile fetch failed', {
+          component: 'auth.github',
+          meta: {
+            auth: { provider: 'github', mode: isSignInFlow ? 'signin' : 'connect', outcome: 'failure' },
+            error: {
+              name: 'GitHubProfileError',
+              message: 'Failed to fetch GitHub profile',
+              code: 'GITHUB_PROFILE_FETCH_FAILED',
+              upstream_status: userResponse.status,
+            },
+          },
+        })
+        return new Response('Failed to fetch GitHub profile', { status: 400 })
+      }
+
+      const githubUser = (await userResponse.json()) as {
+        login: string
+        id: number
+        email: string | null
+        name: string | null
+        avatar_url: string
+      }
+
+      if (isSignInFlow) {
+        logger.info('Sign-in flow session creation started', {
+          component: 'auth.github',
+          meta: { auth: { provider: 'github', mode: 'signin', outcome: 'partial' } },
+        })
+
+        const session = await createGitHubSession(tokenData.access_token, tokenData.scope)
+
+        if (!session) {
+          logger.error('Session creation failed', {
+            component: 'auth.github',
+            meta: {
+              auth: { provider: 'github', mode: 'signin', outcome: 'failure' },
+              error: {
+                name: 'SessionCreationError',
+                message: 'Failed to create GitHub session',
+                code: 'SESSION_CREATE_FAILED',
+              },
+            },
+          })
+          return new Response('Failed to create session', { status: 500 })
+        }
+
+        logger.info('Session created', {
+          component: 'auth.github',
+          meta: {
+            auth: {
+              provider: 'github',
+              mode: 'signin',
+              outcome: 'success',
+              userIdHash: hashId(session.user.id),
+            },
+          },
+        })
+
+        const response = new Response(null, {
+          status: 302,
+          headers: { Location: storedRedirectTo },
+        })
+
+        await saveSession(response, session)
+
+        cookieStore.delete(`github_auth_state`)
+        cookieStore.delete(`github_auth_redirect_to`)
+        cookieStore.delete(`github_auth_mode`)
+
+        return response
+      }
+
       const encryptedToken = encrypt(tokenData.access_token)
 
-      // Check if this GitHub account is already connected somewhere
       const existingAccount = await db
         .select()
         .from(accounts)
@@ -162,26 +236,38 @@ export async function GET(req: NextRequest): Promise<Response> {
       if (existingAccount.length > 0) {
         const connectedUserId = existingAccount[0].userId
 
-        // If the GitHub account belongs to a different user, we need to merge accounts
         if (connectedUserId !== storedUserId) {
-          console.log(
-            `[GitHub Callback] Merging accounts: GitHub account ${githubUser.id} belongs to user ${connectedUserId}, connecting to user ${storedUserId}`,
-          )
+          logger.info('Account merge started', {
+            component: 'auth.github',
+            meta: {
+              auth: {
+                provider: 'github',
+                mode: 'connect',
+                outcome: 'partial',
+                userIdHash: storedUserId ? hashId(storedUserId) : undefined,
+              },
+              githubId: githubUser.id,
+            },
+          })
 
-          // Transfer all tasks, connectors, accounts, and keys from old user to new user
           await db.update(tasks).set({ userId: storedUserId! }).where(eq(tasks.userId, connectedUserId))
           await db.update(connectors).set({ userId: storedUserId! }).where(eq(connectors.userId, connectedUserId))
           await db.update(accounts).set({ userId: storedUserId! }).where(eq(accounts.userId, connectedUserId))
           await db.update(keys).set({ userId: storedUserId! }).where(eq(keys.userId, connectedUserId))
-
-          // Delete the old user record (this will cascade delete their accounts/keys)
           await db.delete(users).where(eq(users.id, connectedUserId))
 
-          console.log(
-            `[GitHub Callback] Account merge complete. Old user ${connectedUserId} merged into ${storedUserId}`,
-          )
+          logger.info('Account merge completed', {
+            component: 'auth.github',
+            meta: {
+              auth: {
+                provider: 'github',
+                mode: 'connect',
+                outcome: 'success',
+                userIdHash: storedUserId ? hashId(storedUserId) : undefined,
+              },
+            },
+          })
 
-          // Update the GitHub account token
           await db
             .update(accounts)
             .set({
@@ -193,7 +279,6 @@ export async function GET(req: NextRequest): Promise<Response> {
             })
             .where(eq(accounts.id, existingAccount[0].id))
         } else {
-          // Same user, just update the token
           await db
             .update(accounts)
             .set({
@@ -205,19 +290,17 @@ export async function GET(req: NextRequest): Promise<Response> {
             .where(eq(accounts.id, existingAccount[0].id))
         }
       } else {
-        // No existing GitHub account connection, create a new one
         await db.insert(accounts).values({
           id: nanoid(),
           userId: storedUserId!,
           provider: 'github',
-          externalUserId: `${githubUser.id}`, // Store GitHub numeric ID
+          externalUserId: `${githubUser.id}`,
           accessToken: encryptedToken,
           scope: tokenData.scope,
           username: githubUser.login,
         })
       }
 
-      // Sync GitHub profile fields onto the Vercel user record
       await db
         .update(users)
         .set({
@@ -229,7 +312,18 @@ export async function GET(req: NextRequest): Promise<Response> {
         })
         .where(eq(users.id, storedUserId!))
 
-      // Clean up cookies (handle both new and legacy cookie names)
+      logger.info('GitHub account connected', {
+        component: 'auth.github',
+        meta: {
+          auth: {
+            provider: 'github',
+            mode: 'connect',
+            outcome: 'success',
+            userIdHash: storedUserId ? hashId(storedUserId) : undefined,
+          },
+        },
+      })
+
       if (authMode) {
         cookieStore.delete(`github_auth_state`)
         cookieStore.delete(`github_auth_redirect_to`)
@@ -240,15 +334,25 @@ export async function GET(req: NextRequest): Promise<Response> {
       }
       cookieStore.delete(`github_oauth_user_id`)
 
-      // Redirect back to app
       return Response.redirect(new URL(storedRedirectTo, req.nextUrl.origin))
+    } catch (error) {
+      logger.error('OAuth callback failed', {
+        component: 'auth.github',
+        meta: {
+          auth: { provider: 'github', mode: isSignInFlow ? 'signin' : 'connect', outcome: 'failure' },
+          error: {
+            name: error instanceof Error ? error.name : 'UnknownError',
+            message: error instanceof Error ? error.message : 'Unknown error occurred',
+            code: 'OAUTH_CALLBACK_FAILED',
+          },
+        },
+      })
+      return new Response(
+        `Failed to complete GitHub authentication: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        { status: 500 },
+      )
     }
-  } catch (error) {
-    console.error('[GitHub Callback] OAuth callback error:', error)
-    console.error('[GitHub Callback] Error stack:', error instanceof Error ? error.stack : 'No stack trace')
-    return new Response(
-      `Failed to complete GitHub authentication: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      { status: 500 },
-    )
-  }
+  })
 }
+
+export const GET = withObservedRoute('/api/auth/github/callback', 'signin', githubCallback)

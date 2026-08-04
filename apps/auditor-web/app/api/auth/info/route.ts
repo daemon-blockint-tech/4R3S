@@ -4,8 +4,9 @@ import { createSession, saveSession } from '@/lib/session/create'
 import { saveSession as saveGitHubSession } from '@/lib/session/create-github'
 import { getSessionFromReq } from '@/lib/session/server'
 import { getOAuthToken } from '@/lib/session/get-oauth-token'
+import { withObservedRoute } from '@/lib/observability/route-handler'
 
-export async function GET(req: NextRequest) {
+async function authInfo(req: NextRequest) {
   const existingSession = await getSessionFromReq(req)
 
   // For GitHub users, just return the existing session without recreating it
@@ -50,3 +51,5 @@ async function getData(session: Session | undefined): Promise<SessionUserInfo> {
     return { user: session.user, authProvider: session.authProvider }
   }
 }
+
+export const GET = withObservedRoute('/api/auth/info', 'signin', authInfo)

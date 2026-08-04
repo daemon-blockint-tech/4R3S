@@ -12,8 +12,9 @@ import { detectPackageManager, installDependencies } from '@/lib/sandbox/package
 import { createTaskLogger } from '@/lib/utils/task-logger'
 import { getMaxSandboxDuration } from '@/lib/db/settings'
 import { detectPortFromRepo } from '@/lib/sandbox/port-detection'
+import { withObservedRoute } from '@/lib/observability/route-handler'
 
-export async function POST(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+async function startSandbox(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   try {
     const session = await getServerSession()
     if (!session?.user?.id) {
@@ -328,3 +329,5 @@ export default mergeConfig(userConfig, defineConfig({
     )
   }
 }
+
+export const POST = withObservedRoute('/api/tasks/[taskId]/start-sandbox', 'sandbox', startSandbox)

@@ -121,20 +121,37 @@
     "langsmith": "^0.6.0",
     "ora": "^9.4.1",
     "tsx": "^4.7.0"
+    "@langchain/langgraph": "^1.4.8",
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "boxen": "^8.0.1",
+    "chalk": "^6.0.0",
+    "cli-table3": "^0.6.3",
+    "commander": "^15.0.0",
+    "conf": "^15.1.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "eventemitter3": "^5.0.1",
+    "express": "^5.2.1",
+    "figlet": "^1.11.4",
+    "gradient-string": "^3.0.0",
+    "inquirer": "^14.0.2",
+    "langsmith": "^0.8.9",
+    "ora": "^9.4.1",
+    "tsx": "^4.23.1"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.2",
+    "@eslint/js": "^10.0.1",
     "@langchain/langgraph-cli": "^1.4.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
     "@types/figlet": "^1.5.8",
     "@types/gradient-string": "^1.1.5",
-    "@types/inquirer": "^9.0.7",
-    "@types/node": "^20.11.0",
-    "eslint": "^9.39.2",
-    "typescript": "^5.3.3",
-    "typescript-eslint": "^8.51.0",
-    "vitest": "^4.1.9"
+    "@types/inquirer": "^9.0.10",
+    "@types/node": "^26.1.2",
+    "eslint": "^10.8.0",
+    "typescript": "^7.0.2",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -142,6 +159,7 @@
   "overrides": {
     "qs": "^6.15.2",
     "hono": "^4.12.25",
+    "@hono/node-server": ">=2.0.5",
     "js-yaml": "^4.2.0"
   }
 }

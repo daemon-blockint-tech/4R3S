@@ -6,7 +6,7 @@ import { getMaxMessagesPerDay } from '@/lib/db/settings'
 export async function checkRateLimit(
   userId: string,
 ): Promise<{ allowed: boolean; remaining: number; total: number; resetAt: Date }> {
-  // Get max messages per day for this user (user-specific > global > env var)
+  // Per-user settings.maxMessagesPerDay, else env MAX_MESSAGES_PER_DAY (no global DB tier)
   const maxMessagesPerDay = await getMaxMessagesPerDay(userId)
 
   // Get start of today (UTC)
@@ -17,13 +17,8 @@ export async function checkRateLimit(
   const tomorrow = new Date(today)
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
 
-  // Count tasks created by this user today (excluding soft-deleted tasks)
-  const tasksToday = await db
-    .select()
-    .from(tasks)
-    .where(and(eq(tasks.userId, userId), gte(tasks.createdAt, today), isNull(tasks.deletedAt)))
-
-  // Count user messages sent today across all tasks
+  // Daily quota: taskMessages role=user only (non-deleted tasks).
+  // Pre-insert check: allowed when count < maxMessagesPerDay.
   const userMessagesToday = await db
     .select()
     .from(taskMessages)
@@ -37,8 +32,7 @@ export async function checkRateLimit(
       ),
     )
 
-  // Total count includes both new tasks and follow-up messages
-  const count = tasksToday.length + userMessagesToday.length
+  const count = userMessagesToday.length
   const remaining = Math.max(0, maxMessagesPerDay - count)
   const allowed = count < maxMessagesPerDay
 

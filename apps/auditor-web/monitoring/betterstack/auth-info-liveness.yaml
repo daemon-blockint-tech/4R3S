@@ -1,0 +1,61 @@
+# Better Stack uptime monitor — import via dashboard or API.
+# Requires: ARES_WEB_MONITOR_URL, optional ARES_WEB_MONITOR_ASSERT_CORRELATION
+#
+# Regions: us-east (Virginia) + ap-southeast (Singapore) — create one monitor per region
+# or use Better Stack multi-location checks if available on your plan.
+
+monitors:
+  - name: auth-info-liveness-us-east
+    type: status
+    url: "${ARES_WEB_MONITOR_URL}/api/auth/info"
+    check_frequency: 60
+    request_timeout: 3000
+    recovery_period: 180
+    confirmation_period: 180
+    regions:
+      - us
+    request:
+      method: GET
+      headers:
+        Accept: application/json
+    assertions:
+      - type: status_code
+        operator: in
+        value: [200, 401]
+      - type: response_time
+        operator: less_than
+        value: 3000
+    metadata:
+      alert_id: A-001
+      service: auditor-web
+      probe: auth-info-liveness
+
+  - name: auth-info-liveness-ap-southeast
+    type: status
+    url: "${ARES_WEB_MONITOR_URL}/api/auth/info"
+    check_frequency: 60
+    request_timeout: 3000
+    recovery_period: 180
+    confirmation_period: 180
+    regions:
+      - asia
+    request:
+      method: GET
+      headers:
+        Accept: application/json
+    assertions:
+      - type: status_code
+        operator: in
+        value: [200, 401]
+      - type: response_time
+        operator: less_than
+        value: 3000
+    metadata:
+      alert_id: A-001
+      service: auditor-web
+      probe: auth-info-liveness
+
+# Optional header assertion (enable when middleware is deployed):
+#   - type: response_header
+#     header: x-correlation-id
+#     operator: exists

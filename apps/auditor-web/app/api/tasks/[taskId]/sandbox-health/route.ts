@@ -4,8 +4,9 @@ import { tasks } from '@/lib/db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 import { Sandbox } from '@vercel/sandbox'
 import { getServerSession } from '@/lib/session/get-server-session'
+import { withObservedRoute } from '@/lib/observability/route-handler'
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+async function sandboxHealth(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   try {
     const session = await getServerSession()
     if (!session?.user?.id) {
@@ -134,3 +135,5 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     })
   }
 }
+
+export const GET = withObservedRoute('/api/tasks/[taskId]/sandbox-health', 'sandbox', sandboxHealth)
