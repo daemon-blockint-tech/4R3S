@@ -142,6 +142,7 @@
   "overrides": {
     "qs": "^6.15.2",
     "hono": "^4.12.25",
+    "@hono/node-server": ">=2.0.5",
     "js-yaml": "^4.2.0"
   }
 }
