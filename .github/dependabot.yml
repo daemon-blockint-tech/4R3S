@@ -32,6 +32,16 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: npm
+    directory: "/apps/ares-sec/webui"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      ares-sec-webui-npm:
+        patterns:
+          - "*"
+
   - package-ecosystem: cargo
     directory: "/core"
     schedule:
