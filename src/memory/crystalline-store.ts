@@ -150,16 +150,25 @@ export class CrystallineStore {
   }
 
   /**
-   * Activation-based recall. Computes decayed activation for all crystals
-   * in the candidate set, scores by similarity + tag match + activation,
-   * then spreads activation along links up to `spreadDepth` hops.
+   * Similarity-based recall (KR-1 fall-back from activation scoring).
+   *
+   * Scores candidates by embedding similarity, falling back to tag overlap
+   * when no comparable embedding exists. Previously this also weighted in
+   * decayed activation and spread the result along `links`. Both are removed:
+   * `link()` has no caller anywhere in this codebase, so every crystal ships
+   * with `links: []` and spreading never contributed a nonzero boost; and
+   * decay is keyed off wall-clock time (`Date.now() - lastActivated`), which
+   * made two recall() calls milliseconds apart score differently even over
+   * identical data — the same non-reproducibility eval/ exists to catch.
+   * See docs/KR-1-FINDINGS.md for the evidence (crystalline-inertness.test.ts).
+   *
+   * `minActivation`, `spreadDepth`, and `spreadDecay` on RecallQuery are
+   * accepted but unused, kept for call-site compatibility rather than forcing
+   * an unrelated signature change in this pass.
    */
   async recall(query: RecallQuery): Promise<ScoredCrystal[]> {
     const levels = query.levels ?? LEVEL_ORDER;
     const limit = query.limit ?? this.cfg.defaultRecallLimit;
-    const minActivation = query.minActivation ?? 0.05;
-    const spreadDepth = query.spreadDepth ?? 1;
-    const spreadDecay = query.spreadDecay ?? 0.5;
 
     // Gather candidates across levels, optionally filtered by tags.
     const candidates: Crystal[] = [];
@@ -176,7 +185,6 @@ export class CrystallineStore {
     // it falls back to tag scoring rather than being silently scored at zero.
     let dimMismatches = 0;
     const scored = candidates.map((c) => {
-      const act = this.decayedActivation(c);
       const comparable =
         query.queryEmbedding &&
         c.embedding &&
@@ -185,8 +193,7 @@ export class CrystallineStore {
       const sim = comparable
         ? cosineSimilarity(query.queryEmbedding!, c.embedding!)
         : tagSimilarity(query.query, c.tags);
-      const base = act * 0.4 + sim * 0.6;
-      return { crystal: c, score: base, act };
+      return { crystal: c, score: sim };
     });
 
     if (dimMismatches > 0) {
@@ -201,31 +208,6 @@ export class CrystallineStore {
           "scoring fell back to tags for those crystals. Re-ingest after an " +
           "EMBEDDINGS_MODEL change.",
       );
-    }
-
-    // Spreading activation: boost scores of neighbors of top candidates.
-    const topIds = new Set(
-      scored
-        .filter((s) => s.act >= minActivation)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, limit)
-        .map((s) => s.crystal.id),
-    );
-
-    if (spreadDepth > 0 && topIds.size > 0) {
-      const spread = new Map<string, number>();
-      for (const s of scored) {
-        if (!topIds.has(s.crystal.id)) continue;
-        for (const link of s.crystal.links) {
-          const boost = s.score * link.weight * spreadDecay;
-          spread.set(link.target, (spread.get(link.target) ?? 0) + boost);
-        }
-      }
-      // Resolve spread targets across all levels.
-      for (const s of scored) {
-        const boost = spread.get(s.crystal.id);
-        if (boost) s.score += boost;
-      }
     }
 
     return scored
