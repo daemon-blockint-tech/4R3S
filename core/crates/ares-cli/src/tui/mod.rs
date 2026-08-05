@@ -37,10 +37,13 @@ pub async fn run_tui(config: &AresConfig) -> Result<()> {
     Ok(())
 }
 
-async fn run_app<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    app: &mut app::App<'_>,
-) -> Result<()> {
+async fn run_app<B>(terminal: &mut Terminal<B>, app: &mut app::App<'_>) -> Result<()>
+where
+    B: ratatui::backend::Backend,
+    // ratatui 0.30 generalized `Backend::Error` (was `io::Error`); anyhow's `?`
+    // conversion needs it to be a `Send + Sync + 'static` std error.
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
 
