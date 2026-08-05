@@ -21,7 +21,8 @@
     "db:down": "docker compose down",
     "db:migrate": "tsx src/scripts/migrate.ts",
     "ingest:solsec": "tsx src/scripts/ingest-solsec.ts",
-    "eval:predict": "tsx src/scripts/eval-predict.ts"
+    "eval:predict": "tsx src/scripts/eval-predict.ts",
+    "export:vuln-catalog": "tsx src/scripts/export-vuln-catalog.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.2.4",
