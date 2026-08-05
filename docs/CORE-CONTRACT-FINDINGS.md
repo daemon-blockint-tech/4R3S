@@ -228,6 +228,67 @@ anything was scanned at all.
 
 
 
+## ORC2-F7 — detection hypotheses are generated and then discarded
+
+**Severity:** highest impact of any finding here — it accounts for a measured
+F1 of 0.0000 across 159 targets
+**File:** `core/crates/ares-cli/src/commands/scan.rs`
+
+```rust
+let hypotheses = generate_initial_hypotheses(&program_graph);   // line 82
+info!("Generated {} vulnerability hypotheses", hypotheses.len()); // line 83
+```
+
+`hypotheses` is never referenced again. The producing function (`scan.rs:442`)
+is labelled `/// Generate initial vulnerability hypotheses (Phase 1 stub)` and
+returns `Vec<String>` — plain strings, never converted into `Finding` values.
+
+Findings that reach the report come only from `cross_analysis::analyze()`
+(line 96 → 110) and two fuzzing paths (lines 152, 168) that `--fuzz false`
+skips entirely.
+
+**Verified:** ran the full EVAL-2 chain (stage → scan → convert → score) over
+159 staged targets. The converter reported `no findings across any staged
+target`; the scorer reported F1 0.0000 with 170 false negatives and zero
+predictions. Individual scan logs show the mechanism directly:
+
+```
+Generated 1 vulnerability hypotheses      ← a static rule did fire
+Cross-instruction analysis: 0 findings    ← but only this path fills `findings`
+Suppressed: 0                             ← nothing was filtered out either
+SCAN COMPLETE  Critical: 0  High: 0 ...   ← zero
+```
+
+`Suppressed: 0` is decisive. Had a hypothesis become a finding and then been
+rejected by the semantic validator, local judge, or LLM judge, that counter
+would be non-zero. Zero in both places means the hypotheses never became
+findings — they were dropped, not suppressed.
+
+**Scale:** `generate_initial_hypotheses` covers missing signer authorization,
+missing ownership check, arbitrary CPI, and arithmetic overflow. Against the
+170-row ground truth used in that run, those four classes account for
+**125 rows — 73.5%**:
+
+| Category | Rows |
+|---|---|
+| `missing-owner-check` | 62 |
+| `integer-overflow-underflow` | 48 |
+| `arbitrary-cpi` | 13 |
+| `missing-signer-check` | 2 |
+
+**Why it matters:** this is not a threshold to tune or a rule to refine. The
+code path that would emit findings for nearly three quarters of the ground truth
+terminates at a log statement. Full detail in
+`docs/EVAL-2-REPRODUCTION-REPORT.md`.
+
+**Interaction with ORC2-F3:** fixing the arbitrary-CPI substring bug alone would
+change nothing — its hypothesis would still be discarded at `scan.rs:83`. The
+two have to be addressed together for either to have an observable effect.
+
+---
+
+## Deliberately not included
+
 `datasets/README.md` describes a different dataset family (`sealevel-attacks`,
 Neodyme workshop, incident reproductions — EVAL-3's scope) than the ARES-v3
 benchmark dataset that carries the 0.94 claim
