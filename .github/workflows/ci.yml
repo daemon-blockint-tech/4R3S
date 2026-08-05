@@ -131,8 +131,8 @@ jobs:
   auditor-api:
     # Without this job, apps/auditor-api's Python is never executed in CI: the
     # existing jobs cover root src/ (npm) and eval/ (pytest) only, so a green
-    # run would mean "not checked", not "correct" — the same false signal
-    # CLAUDE.md warns about for `pnpm -r test` matching zero projects.
+    # run would mean "not checked", not "correct" — a false pass over a suite
+    # that never ran.
     name: auditor-api (python)
     runs-on: ubuntu-latest
     steps:
