@@ -46,8 +46,17 @@ describe("VULN_CATALOG integrity", () => {
     }
   });
 
-  it("has at least 20 entries", () => {
-    expect(VULN_CATALOG.length).toBeGreaterThanOrEqual(20);
+  it("has at least 34 entries", () => {
+    expect(VULN_CATALOG.length).toBeGreaterThanOrEqual(34);
+  });
+
+  it("has the corrected CWE assignments from ENG-2", () => {
+    expect(getVuln("non-canonical-bump")!.cwe).toBe("CWE-345");
+    expect(getVuln("reentrancy-risk")!.cwe).toBe("CWE-367");
+    expect(getVuln("pda-privileges")!.cwe).toBe("CWE-863");
+    expect(getVuln("missing-revalidation")!.cwe).toBe("CWE-367");
+    expect(getVuln("fuzzing-crash")!.cwe).toBe("CWE-248");
+    expect(getVuln("state-transition-gap")!.cwe).toBe("CWE-696");
   });
 });
 
@@ -114,5 +123,19 @@ describe("rules/solana.yml ↔ catalog contract", () => {
     for (const id of ruleIds) {
       expect(isVulnId(id), `rule "${id}" is not a VULN_CATALOG id`).toBe(true);
     }
+  });
+});
+
+describe("vuln-catalog.generated.json freshness", () => {
+  // The Rust engine embeds this file at compile time (ares-core's
+  // include_str!, ENG-2) to check its enum against VULN_CATALOG. If this
+  // drifts from the live catalog, Rust is validating against stale data
+  // without knowing it — this test is the only thing that would catch that.
+  it("matches the live VULN_CATALOG exactly", () => {
+    const generatedPath = fileURLToPath(
+      new URL("./vuln-catalog.generated.json", import.meta.url),
+    );
+    const generated = JSON.parse(readFileSync(generatedPath, "utf8"));
+    expect(generated).toEqual(JSON.parse(JSON.stringify(VULN_CATALOG)));
   });
 });

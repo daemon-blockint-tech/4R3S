@@ -3,6 +3,12 @@
  * analyzers. Each entry is a vulnerability class with detection hints and
  * remediation guidance. The catalog is injected into analyzer prompts as a
  * checklist, and every finding is tagged with a catalog `id` as its `category`.
+ *
+ * `vuln-catalog.generated.json` in this directory is a checked-in export of
+ * VULN_CATALOG consumed by the Rust engine at compile time (ENG-2) — run
+ * `npm run export:vuln-catalog` after editing this file. The eventual home
+ * for this catalog is `packages/knowledge` per CLAUDE.md; that package
+ * doesn't exist yet, so it stays here for now.
  */
 import type { Severity } from "./finding.js";
 
@@ -100,7 +106,7 @@ export const VULN_CATALOG: VulnEntry[] = [
     title: "Non-Canonical PDA Bump Seed",
     category: "pda",
     defaultSeverity: "medium",
-    cwe: "CWE-347",
+    cwe: "CWE-345",
     description:
       "The program accepts a PDA with a non-canonical bump seed (not the highest valid bump), which can lead to address collisions or unexpected behavior.",
     detectionHints:
@@ -515,6 +521,76 @@ export const VULN_CATALOG: VulnEntry[] = [
       "https://docs.rs/solana-program/latest/solana_program/sysvar/instructions/",
       "https://github.com/coral-xyz/sealevel-attacks",
     ],
+  },
+  {
+    id: "pda-privileges",
+    title: "PDA Used as Authority Without Domain Separation",
+    category: "pda",
+    defaultSeverity: "high",
+    cwe: "CWE-863",
+    description:
+      "A Program Derived Address (PDA) signs on behalf of the program via `invoke_signed`, but its seeds are weak, predictable, or not domain-separated, and/or it's used as an authority without `has_one`/`constraint` checks — letting an attacker predict, squat, or misuse the PDA's signing power.",
+    detectionHints:
+      "Look for `find_program_address`/`invoke_signed` where seeds don't include an attacker-unpredictable value (unique nonce, counter, or similar), and for PDAs used as an authority without a corresponding `has_one` or `constraint` check in the Anchor account struct.",
+    remediation:
+      "Include a genuinely unpredictable, unique component in PDA seeds (not just a user pubkey alone). Where a PDA acts as an authority, pair it with an explicit `has_one`/`constraint` check rather than trusting the derivation alone.",
+    references: [],
+  },
+  {
+    id: "reentrancy-risk",
+    title: "CPI Re-Entry Without State Re-Validation",
+    category: "cpi",
+    defaultSeverity: "high",
+    cwe: "CWE-367",
+    description:
+      "Solana has no native reentrancy, but a CPI back into a PDA the program itself owns can simulate it: account state is read, a CPI is issued, and the same state is read again afterward without re-validation or reloading — letting the CPI's side effects go unnoticed.",
+    detectionHints:
+      "Look for a program CPI-ing into a PDA it owns and re-entering its own instructions, or account state read → CPI issued → same state read again with no `AccountReload`/re-borrow in between.",
+    remediation:
+      "After any CPI that could mutate an account you continue to rely on, explicitly reload/re-deserialize it (Anchor's `reload()` or equivalent) before trusting its state again.",
+    references: [],
+  },
+  {
+    id: "missing-revalidation",
+    title: "Written Account State Used Without Re-Validation",
+    category: "logic",
+    defaultSeverity: "medium",
+    cwe: "CWE-367",
+    description:
+      "An account is written, created, or closed earlier in the instruction flow, and its resulting state is used later without being re-validated — an intervening effect can invalidate assumptions made before the write.",
+    detectionHints:
+      "Trace whether an account appears as a write/create/close target and is then referenced again downstream without a fresh check.",
+    remediation:
+      "Re-check any state-dependent condition (balance, ownership, discriminator) immediately before it's relied upon, rather than assuming a value read earlier in the instruction still holds.",
+    references: [],
+  },
+  {
+    id: "state-transition-gap",
+    title: "Account Written Without Confirming Prior Initialization",
+    category: "initialization",
+    defaultSeverity: "medium",
+    cwe: "CWE-696",
+    description:
+      "An account is created by one instruction and later written by a different instruction, but that writer never confirms the account was actually initialized first — an intervening or reordered call sequence can write to an account whose initialization step never ran or was skipped.",
+    detectionHints:
+      "Trace accounts across instruction boundaries: does every instruction that writes to an account (other than its creator) verify an initialization flag/discriminator on that account before writing?",
+    remediation:
+      "Before writing to an account you don't create yourself, verify its initialization state explicitly (discriminator check, an `is_initialized` flag, or Anchor's typed `Account<'info, T>` which enforces this).",
+    references: [],
+  },
+  {
+    id: "fuzzing-crash",
+    title: "Unhandled Panic or Crash Found via Fuzzing",
+    category: "availability",
+    defaultSeverity: "high",
+    cwe: "CWE-248",
+    description:
+      "The program panicked, aborted, or hit an unhandled error path during property-based fuzz testing — commonly arithmetic overflow/underflow, out-of-bounds account data access, or a broken internal invariant triggered by malformed input.",
+    detectionHints:
+      "Surfaced directly by the fuzzing harness (`core/crates/ares-trident`), not by static analysis — the finding's root cause needs manual triage to confirm production exploitability via a crafted transaction.",
+    remediation:
+      "Root-cause the specific panic (overflow, bounds, invariant) and fix that underlying issue — the fix is inherently case-by-case, not a single generic remediation.",
+    references: [],
   },
 ];
 
