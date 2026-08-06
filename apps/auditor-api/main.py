@@ -78,7 +78,7 @@ class AuditAccepted(BaseModel):
 
 class AuditStatus(BaseModel):
     job_id: str
-    status: str  # queued | running | done | failed
+    status: str  # queued | running | done | failed | payment_required
     report: str | None = None
     error: str | None = None
 

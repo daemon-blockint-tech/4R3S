@@ -227,6 +227,64 @@ class TestWorkerNeverLeavesJobStuck:
         assert "PermissionError" in redis.writes[-1]["error"]
 
 
+class TestBillingExitCodeDistinction:
+    """src/index.ts exits 2 specifically for InsufficientCreditsError, distinct
+    from exit 1 for a generic audit failure — see the NOTE this replaced in
+    worker.py. Before this, both looked identical to any caller polling the
+    API: a bare "failed" status with no way to tell "out of credits" apart
+    from "the audit itself broke"."""
+
+    class _RecordingRedis:
+        def __init__(self):
+            self.writes: list[dict] = []
+
+        async def set(self, key, value, ex=None):
+            self.writes.append(json.loads(value))
+
+    class _FakeProc:
+        def __init__(self, returncode: int, stdout: bytes, stderr: bytes):
+            self.returncode = returncode
+            self._stdout = stdout
+            self._stderr = stderr
+
+        async def communicate(self):
+            return self._stdout, self._stderr
+
+    def _stderr_line(self, err: str) -> bytes:
+        return (json.dumps({"level": "error", "component": "ares", "err": err}) + "\n").encode()
+
+    def test_exit_code_2_is_recorded_as_payment_required_not_failed(self, monkeypatch):
+        redis = self._RecordingRedis()
+        stderr = self._stderr_line("Insufficient credits: need 500, have 120 (on-demand exhausted or disabled)")
+
+        async def fake_exec(*args, **kwargs):
+            return self._FakeProc(returncode=2, stdout=b"", stderr=stderr)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+        asyncio.run(worker.run_audit({"redis": redis}, "job-1", "target.rs"))
+
+        statuses = [w["status"] for w in redis.writes]
+        assert statuses == ["running", "payment_required"]
+        assert "Insufficient credits" in redis.writes[-1]["error"]
+
+    def test_exit_code_1_is_still_a_generic_failed_not_payment_required(self, monkeypatch):
+        # The regression this guards against: accidentally widening the
+        # returncode == 2 check to catch exit 1 too, collapsing the very
+        # distinction this whole change exists to make.
+        redis = self._RecordingRedis()
+        stderr = self._stderr_line("some unrelated analyzer crash")
+
+        async def fake_exec(*args, **kwargs):
+            return self._FakeProc(returncode=1, stdout=b"", stderr=stderr)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+        asyncio.run(worker.run_audit({"redis": redis}, "job-1", "target.rs"))
+
+        statuses = [w["status"] for w in redis.writes]
+        assert statuses == ["running", "failed"]
+        assert "unrelated analyzer crash" in redis.writes[-1]["error"]
 class TestCveSnapshotInfo:
     """GET /cve/snapshot reports the manifest of whichever advisory DB
     revision is actually loaded, so a report generated from a /cve/scan call
