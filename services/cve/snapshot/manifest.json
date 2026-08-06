@@ -1,0 +1,21 @@
+{
+  "advisories_sha256": "1d739083560b0d91b3925125acb0d9ecd3fb0280b755774f4d07a9016e36f5a8",
+  "advisory_count": 1169,
+  "generated_by": "services/cve/refresh_snapshot.py",
+  "license": {
+    "default": "CC0-1.0",
+    "exception": "20 of 1169 advisories carry an explicit license = \"CC-BY-4.0\" front-matter field, marking content imported from the GitHub Security Advisory database. Per advisory-db's LICENSE.txt, that subset requires attribution to the GitHub Security Advisory Database; the rest is CC0-1.0 (public domain).",
+    "not_checked_by_ci": "core/deny.toml and scripts/check-licenses.mjs inspect only npm/cargo dependency metadata, never committed data files -- this license was confirmed by reading LICENSE.txt directly, not by any repo gate.",
+    "verified_by_hand": true
+  },
+  "notes": [
+    "Vendored as one normalized advisories.json, not as the original per-file .md sources, so the digest above covers the FULL advisory set as a single unit rather than per-file, unlike the eval/ convention of per-source-row sha256 digests. See services/cve/README.md for why (there is no per-file original kept in this repo to re-digest against).",
+    "13 advisories are formally withdrawn by RustSec; the matcher (match.py) excludes them from results but counts the exclusion rather than deleting them from this snapshot.",
+    "457 advisories are informational only (unmaintained/unsound/notice) rather than a specific version range vulnerability -- these still produce matches, tagged with their informational kind.",
+    "519 of 1169 advisories carry a CVE-* alias; the remainder have only a RUSTSEC-* id and/or a GHSA-* alias. RustSec advisories are the primary key everywhere in this service -- CVE is surfaced when present, never synthesized.",
+    "Refreshing this snapshot changes match results for every future scan against the same lockfile. There is no mechanism in this service (or in eval/) that reproduces a PAST scan's result after a refresh -- only the manifest's revision field tells a reader which snapshot a stored result came from."
+  ],
+  "revision": "6d7aef354b4144c1ede046034adfd00246d3b0c0",
+  "revision_date": "2026-08-04T11:27:20+02:00",
+  "source": "https://github.com/rustsec/advisory-db.git"
+}
