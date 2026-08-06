@@ -26,8 +26,11 @@ Authoritative specs are in `docs/`: `PRD.md` (what we build), `DEVELOPMENT_PLAN.
 ```
 core/         Rust cargo workspace ROOT — deterministic engine (ARES-v3, landed via ENG-1)
               ├─ crates/ ares-cli · ares-core · ares-mapper · ares-trident · ares-policy · ares-orchestrator · ares-report
+src/          the shipping TS auditor TODAY (single root npm package) — graph · knowledge · retrieval ·
+              memory · llm · persistence · billing · config · tools. PLAT-1 splits these into packages/*.
 services/     detector & data services (from ARES-AGENT) — risk · cve · family · evidence   [Rust/Py]
-packages/     shared PERMISSIVE TS packages
+packages/     shared PERMISSIVE TS packages — PLAT-1 TARGET, still README stubs. Source→target
+              mapping + migration plan: docs/PLAT-1-MIGRATION-MAP.md
               ├─ knowledge (canonical vuln catalog + memory + retrieval)
               ├─ report · orchestration · billing · config · ui (shared design system)
 apps/
