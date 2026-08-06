@@ -1,0 +1,10 @@
+# services/cve runtime + test dependencies.
+#
+# Runtime is deliberately stdlib-only: Cargo.lock is TOML, and CI runs
+# Python 3.12+ where `tomllib` is built in, so no toml-parsing package is
+# pinned here. This mirrors the absence-is-justified convention in
+# apps/auditor-api/requirements.txt (which documents why LiteLLM is NOT
+# pinned) rather than leaving the omission unexplained.
+#
+# Test-only:
+pytest==9.1.1

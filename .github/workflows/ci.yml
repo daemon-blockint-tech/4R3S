@@ -88,6 +88,8 @@ jobs:
         run: |
           pip install pip-audit
           pip-audit -r eval/requirements.txt
+          pip-audit -r services/cve/requirements.txt
+          pip-audit -r apps/auditor-api/requirements.txt
 
       # GOLDEN RULE 1: no strong-copyleft third-party dependency in a published
       # artifact. CLAUDE.md asserted "CI checks both" long before either half
@@ -154,6 +156,34 @@ jobs:
       # exercising it from here is what catches the path depth being wrong.
       - name: Test
         working-directory: apps/auditor-api
+        run: python -m pytest -q
+
+  services-cve:
+    # Same rationale as the auditor-api job above: without this job,
+    # services/cve's Python is never executed in CI, so a green run would
+    # mean "not checked", not "correct". This suite's load-bearing test
+    # (test_snapshot_integrity.py) runs the version-range parser against
+    # every range in the real committed snapshot, not just hand-written
+    # fixtures — it is what would catch a bad refresh_snapshot.py run before
+    # merge.
+    name: services-cve (python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/cve/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r services/cve/requirements.txt
+
+      - name: Test
+        working-directory: services/cve
         run: python -m pytest -q
 
   verify-claims:
