@@ -132,7 +132,7 @@
     "@types/inquirer": "^9.0.10",
     "@types/node": "^26.1.2",
     "eslint": "^10.8.0",
-    "typescript": "^7.0.2",
+    "typescript": "~6.0.3",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"
   },

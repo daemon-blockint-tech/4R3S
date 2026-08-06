@@ -40,14 +40,14 @@ def make_finding(category="type-cosplay", confidence=0.95, severity="Critical"):
     }
 
 
-def test_category_mapping_covers_all_20_rust_variants():
+def test_category_mapping_covers_all_21_rust_variants():
     expected = {
         "type-cosplay", "ownership-check", "signer-authorization", "arbitrary-cpi",
         "initialization-frontrunning", "reentrancy-risk", "duplicate-mutable-accounts",
         "arithmetic-overflow", "close-account", "account-reloading", "re-initialization",
         "revival-attack", "account-data-matching", "pda-privileges", "fuzzing-crash",
         "invariant-violation", "missing-signer", "missing-revalidation", "unchecked-cast",
-        "generic",
+        "state-transition-gap", "generic",
     }
     assert set(CATEGORY_MAPPING["categories"].keys()) == expected
 
@@ -58,13 +58,24 @@ def test_map_category_exact_matches():
     assert map_category("account-data-matching", CATEGORY_MAPPING) == "account-data-matching"
 
 
+def test_map_category_now_exact_matches():
+    # ENG-2 gave these Rust categories real VULN_CATALOG entries; they were
+    # previously unmapped and scored as "other" (see
+    # test_map_category_unmapped_becomes_other below, which used to assert
+    # pda-privileges landed on "other" -- it no longer does).
+    assert map_category("pda-privileges", CATEGORY_MAPPING) == "pda-privileges"
+    assert map_category("reentrancy-risk", CATEGORY_MAPPING) == "reentrancy-risk"
+    assert map_category("missing-revalidation", CATEGORY_MAPPING) == "missing-revalidation"
+    assert map_category("fuzzing-crash", CATEGORY_MAPPING) == "fuzzing-crash"
+    assert map_category("state-transition-gap", CATEGORY_MAPPING) == "state-transition-gap"
+
+
 def test_map_category_semantic_mismatch_handled():
     # Rust's plural vs Python's singular -- this is the whole point of the mapping file.
     assert map_category("duplicate-mutable-accounts", CATEGORY_MAPPING) == "duplicate-mutable-account"
 
 
 def test_map_category_unmapped_becomes_other():
-    assert map_category("pda-privileges", CATEGORY_MAPPING) == "other"
     assert map_category("generic", CATEGORY_MAPPING) == "other"
 
 

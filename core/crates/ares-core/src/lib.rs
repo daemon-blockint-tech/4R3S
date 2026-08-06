@@ -68,6 +68,7 @@ pub enum VulnerabilityCategory {
     MissingSigner,
     MissingRevalidation,
     UncheckedCast,
+    StateTransitionGap,
     Generic,
 }
 
@@ -94,6 +95,7 @@ impl VulnerabilityCategory {
             Self::MissingSigner,
             Self::MissingRevalidation,
             Self::UncheckedCast,
+            Self::StateTransitionGap,
             Self::Generic,
         ]
     }
@@ -119,6 +121,7 @@ impl VulnerabilityCategory {
             "invariant-violation" | "invariant" => Some(Self::InvariantViolation),
             "missing-revalidation" => Some(Self::MissingRevalidation),
             "unchecked-cast" => Some(Self::UncheckedCast),
+            "state-transition-gap" => Some(Self::StateTransitionGap),
             "generic" => Some(Self::Generic),
             _ => None,
         }
@@ -147,6 +150,7 @@ impl fmt::Display for VulnerabilityCategory {
             Self::MissingSigner => "missing-signer",
             Self::MissingRevalidation => "missing-revalidation",
             Self::UncheckedCast => "unchecked-cast",
+            Self::StateTransitionGap => "state-transition-gap",
             Self::Generic => "generic",
         };
         write!(f, "{}", s)
@@ -423,7 +427,8 @@ mod tests {
         assert!(all.contains(&VulnerabilityCategory::TypeCosplay));
         assert!(all.contains(&VulnerabilityCategory::OwnershipCheck));
         assert!(all.contains(&VulnerabilityCategory::Generic));
-        assert_eq!(all.len(), 20);
+        assert!(all.contains(&VulnerabilityCategory::StateTransitionGap));
+        assert_eq!(all.len(), 21);
     }
 
     #[test]
@@ -446,6 +451,7 @@ mod tests {
             VulnerabilityCategory::InvariantViolation,
             VulnerabilityCategory::MissingRevalidation,
             VulnerabilityCategory::UncheckedCast,
+            VulnerabilityCategory::StateTransitionGap,
             VulnerabilityCategory::Generic,
         ];
         for cat in &unique_cats {
@@ -500,6 +506,74 @@ mod tests {
             VulnerabilityCategory::from_str_checked("unknown-category"),
             None
         );
+    }
+
+    #[test]
+    fn test_state_transition_gap_display_and_roundtrip() {
+        assert_eq!(
+            VulnerabilityCategory::StateTransitionGap.to_string(),
+            "state-transition-gap"
+        );
+        assert_eq!(
+            VulnerabilityCategory::from_str_checked("state-transition-gap"),
+            Some(VulnerabilityCategory::StateTransitionGap)
+        );
+    }
+
+    #[test]
+    fn test_vulnerability_category_matches_ts_catalog() {
+        // ENG-2: every VulnerabilityCategory variant (except the documented
+        // "generic" fallback) must resolve, via the hand-maintained
+        // reconciliation mapping, to a real VULN_CATALOG entry. This can't be
+        // a literal Display-string-equals-catalog-id check: several variants
+        // (e.g. OwnershipCheck -> missing-owner-check) are intentional
+        // semantic collapses onto a differently-named catalog entry, not
+        // exact matches -- the mapping file is the source of truth for how
+        // those resolve, not this test. Both JSON files are checked-in
+        // snapshots (the catalog one regenerated via
+        // `npm run export:vuln-catalog`); solana-vulns.test.ts's freshness
+        // test keeps the catalog snapshot from silently drifting.
+        let mapping_json = include_str!("../../../../eval/mappings/ares-core-categories.json");
+        let mapping: serde_json::Value = serde_json::from_str(mapping_json).unwrap();
+        let categories = mapping["categories"].as_object().unwrap();
+
+        let catalog_json = include_str!("../../../../src/knowledge/vuln-catalog.generated.json");
+        let catalog: serde_json::Value = serde_json::from_str(catalog_json).unwrap();
+        let catalog_ids: std::collections::HashSet<&str> = catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+
+        for cat in VulnerabilityCategory::all() {
+            let s = cat.to_string();
+            let entry = categories.get(s.as_str()).unwrap_or_else(|| {
+                panic!(
+                    "VulnerabilityCategory::{:?} (\"{}\") has no entry in \
+                     eval/mappings/ares-core-categories.json",
+                    cat, s
+                )
+            });
+            match entry["vuln_catalog_id"].as_str() {
+                Some(catalog_id) => assert!(
+                    catalog_ids.contains(catalog_id),
+                    "VulnerabilityCategory::{:?} (\"{}\") maps to catalog id \
+                     \"{}\" per ares-core-categories.json, but that id does not \
+                     exist in vuln-catalog.generated.json",
+                    cat,
+                    s,
+                    catalog_id
+                ),
+                None => assert_eq!(
+                    s, "generic",
+                    "VulnerabilityCategory::{:?} (\"{}\") has a null vuln_catalog_id \
+                     in ares-core-categories.json but is not the documented \
+                     \"generic\" exception",
+                    cat, s
+                ),
+            }
+        }
     }
 
     #[test]

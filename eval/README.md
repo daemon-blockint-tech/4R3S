@@ -259,14 +259,18 @@ inspects its output or exit code — a no-op stub (e.g. a `trident.bat`
 printing anything) fully satisfies this for the static-only path; real
 Trident/Anchor/Solana installs are not needed here.
 
-**Category vocabulary gap, the biggest source of measurement noise**: only 3
-of the Rust engine's 20 `VulnerabilityCategory` values match `VULN_CATALOG`'s
-29 ids verbatim (`type-cosplay`, `arbitrary-cpi`, `account-data-matching`).
+**Category vocabulary gap, the biggest source of measurement noise**: 8 of
+the Rust engine's 21 `VulnerabilityCategory` values match `VULN_CATALOG`'s
+34 ids verbatim (`type-cosplay`, `arbitrary-cpi`, `account-data-matching`,
+`pda-privileges`, `reentrancy-risk`, `missing-revalidation`, `fuzzing-crash`,
+`state-transition-gap` — the last 5 added by ENG-2, which merged the two
+catalogs' previously-unmapped categories into one canonical vocabulary).
 The rest are mapped via `eval/mappings/ares-core-categories.json` — a human
 judgement call, same `notes`-array honesty discipline as the dataset
 mappings above. Categories with no defensible equivalent are mapped to the
 literal string `"other"` (a guaranteed false positive against ground truth,
-never silently dropped). **A first measurement's precision is expected to be
+never silently dropped) — after ENG-2, only Rust's `generic` fallback still
+falls into this bucket. **A first measurement's precision is expected to be
 pulled down by this vocabulary gap, not necessarily by wrong findings** —
 `convert_ares_core_reports.py` prints an "N/total mapped to other" coverage
 line specifically so this is visible immediately, not buried in the CSV.
