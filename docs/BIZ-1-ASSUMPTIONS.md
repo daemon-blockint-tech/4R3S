@@ -47,6 +47,33 @@ Added `TestBillingExitCodeDistinction` with two tests:
 - Exit code 1 → still `failed` (guards specifically against the fix
   accidentally widening to swallow generic failures too)
 
+## A real, separate bug found while smoke-testing — also fixed here
+
+Doing a genuine end-to-end smoke test on an actual Windows machine (real
+Docker Redis, real Arq worker, real FastAPI, real HTTP calls) surfaced a
+pre-existing bug in `worker.py`, unrelated to the exit-code change above:
+`create_subprocess_exec("npm", ...)` can never find `npm` on Windows,
+since Windows only ever installs it as `npm.cmd` — there's no bare `npm`
+file for a shell-less exec call to match. This isn't something the
+exit-code fix caused; it would have broken *any* real audit request on
+Windows, always, regardless of billing status. It just hadn't been
+caught yet because nobody had run this on a real Windows machine before.
+
+**Fix:** `NPM_BIN = shutil.which("npm") or "npm"` — resolves the correct,
+real executable path on every platform (walks Windows' extension search
+without needing a shell at all). Deliberately did *not* switch to
+`create_subprocess_shell` instead, even though that would also "work" —
+`source` is user-controlled (from the API request body), and safely
+escaping it against `cmd.exe`'s notoriously tricky quoting rules is a real
+risk not worth taking when `shutil.which` solves it cleanly with zero
+shell involvement.
+
+**Verified:** regression-tested on Linux first (23/23 still passing,
+same suite), then confirmed live on the actual Windows machine — the
+exact same real end-to-end smoke test now correctly returns
+`payment_required` instead of failing with `[WinError 2] The system
+cannot find the file specified`.
+
 ## Verified
 
 - `apps/auditor-api`: full pytest suite, 23/23 passing (21 pre-existing +

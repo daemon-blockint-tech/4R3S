@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from pathlib import Path
 
 from arq.connections import RedisSettings
@@ -17,6 +18,8 @@ from arq.connections import RedisSettings
 REPO_ROOT = Path(__file__).resolve().parents[2]  # apps/auditor-api/worker.py -> 4R3S/
 AUDIT_TIMEOUT_SECS = 600  # observed ~123s/target with source injection; generous margin
 MAX_CONCURRENT_AUDITS = 2  # daily LLM quota is the real constraint, not CPU
+
+NPM_BIN = shutil.which("npm") or "npm"
 
 
 async def run_audit(ctx, job_id: str, source: str) -> None:
@@ -49,7 +52,7 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
     caller can wrap every failure path in one place."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "npm", "run", "audit", "--", "--source", source,
+            NPM_BIN, "run", "audit", "--", "--source", source,
             cwd=REPO_ROOT,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -153,3 +156,4 @@ class WorkerSettings:
     functions = [run_audit]
     redis_settings = RedisSettings()
     max_jobs = MAX_CONCURRENT_AUDITS
+
