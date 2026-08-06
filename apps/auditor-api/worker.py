@@ -91,15 +91,20 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
         await _set_status(redis, job_id, status="done", report=report)
         return
 
-    # NOTE: src/index.ts currently exits 1 for both a real audit failure and a
-    # billing-settlement failure (InsufficientCreditsError) — it does not yet
-    # distinguish them with a separate exit code. Distinguishing those two
-    # cases would require a change to src/index.ts itself, which is out of
-    # scope for ORC-1 (Home: apps/auditor-api) — that CLI is a separate,
-    # already-shipping product surface and changing its contract is its own
-    # task, not bundled here. This worker therefore reports every nonzero
-    # exit as a generic failure for now; see docs/KR-1-FINDINGS.md-style
-    # follow-up if the billing/failure distinction becomes needed later.
+    if proc.returncode == 2:
+        # src/index.ts now exits 2 specifically for InsufficientCreditsError
+        # (exit 1 remains a generic audit failure). The actual message —
+        # "Insufficient credits: need X, have Y..." — already reaches stderr
+        # via logger.error there, so _last_error_line finds it unchanged;
+        # this branch only needs to pick the right *status* label for it.
+        await _set_status(
+            redis, job_id, status="payment_required",
+            error=_last_error_line(stderr_text),
+        )
+        return
+
+    # NOTE: this used to be the only path for any nonzero exit, before
+    # src/index.ts distinguished billing failures with exit code 2 above.
     await _set_status(
         redis, job_id, status="failed", error=_last_error_line(stderr_text)
     )
