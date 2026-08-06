@@ -34,7 +34,13 @@ We aim to acknowledge reports within a few business days.
   `--metrics=off`, never `--config auto`, which would resolve rules from the
   Semgrep registry over the network on every scan and report usage telemetry —
   an outbound disclosure about a client's unreleased program that this bullet
-  would otherwise have promised did not happen.
+  would otherwise have promised did not happen. The CVE enrichment service
+  (`services/cve/`, `POST /cve/scan` in `apps/auditor-api`) holds the same
+  guarantee the same way: it matches a submitted `Cargo.lock` against a
+  snapshot of the RustSec advisory database that is committed to the repo,
+  never fetched at request time. Only `services/cve/refresh_snapshot.py`
+  touches the network, and it is run manually by a human to regenerate that
+  snapshot — it is not imported by, and never runs on, any request path.
 
 ## Known dependency advisories
 
@@ -108,10 +114,15 @@ for advisories, not API needs — raise them when a later advisory lands, and do
 not lower them to widen resolution. Note `pyarrow >=23` requires Python >=3.10;
 CI runs 3.12.
 
+`services/cve/requirements.txt` has no third-party runtime dependency at all
+— `Cargo.lock` parsing uses the stdlib `tomllib` (Python 3.11+), and CI runs
+3.12 — so there is no floor to track there beyond the test-only `pytest` pin.
+
 ### Audit gate
 
 CI runs a blocking **`dependency audit`** job: `npm audit --audit-level=high`
-plus `pip-audit` over `eval/requirements.txt`. This gate was previously absent
+plus `pip-audit` over `eval/requirements.txt`, `services/cve/requirements.txt`,
+and `apps/auditor-api/requirements.txt`. This gate was previously absent
 because the unfixable `bigint-buffer` advisory would have made every build red
 for no actionable reason; with that advisory cleared at the root, the gate can
 hold the line. If it goes red, fix the dependency or record a justified
