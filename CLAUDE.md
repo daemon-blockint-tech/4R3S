@@ -42,7 +42,7 @@ docs/         PRD.md · DEVELOPMENT_PLAN.md · BACKLOG.xlsx
 ## Tech stack
 
 - **Rust** (stable) — `core/`, most of `services/`. Cargo workspace at root.
-- **TypeScript** (pnpm + turbo) — `packages/*`, `apps/auditor-web`, `apps/ares-sec`.
+- **TypeScript** (npm) — root `src/`, `packages/*` (stubs), `apps/ares-sec`. `apps/auditor-web` is a standalone **pnpm** app with its own lockfile.
 - **Python** — `apps/auditor-api`, parts of `services/` (CVE, family, eval).
 - **Data:** Postgres, Supabase (pgvector), Neo4j — all optional; the engine runs without them.
 
@@ -63,13 +63,12 @@ Phases: **P0** = consolidation/licensing gate (do first) · **P1** = Auditor MVP
 ## Commands
 
 **What actually works today.** The shipping auditor is the TypeScript agent at
-root `src/`, built with **npm** — not pnpm. `pnpm-workspace.yaml`
-globs `packages/*` and `apps/*`, but `packages/*` are still README stubs (the
+root `src/`, built with **npm**. `packages/*` are still README stubs (the
 `src/*` migration hasn't happened), so the Auditor's real suites live under root
-`src/` and run via `npm test` — **not** pnpm. (`apps/ares-sec` has its own
-`package.json` + separate `npm` CI in `ares-sec-ci.yml`.) An agent that "passes"
-by running `pnpm -r test` on the stubs would report success while testing nothing
-real. CI is authoritative and uses `npm ci`.
+`src/` and run via `npm test`. (`apps/ares-sec` has its own `package.json` +
+separate `npm` CI in `ares-sec-ci.yml`; `apps/auditor-web` is a self-contained
+**pnpm** app with its own lockfile — the only pnpm in the repo.) CI is
+authoritative and uses `npm ci`.
 
 ```bash
 # TS auditor (root src/) — this is the real build

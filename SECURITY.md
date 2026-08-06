@@ -57,19 +57,19 @@ note at the end of this section for why. The current tracked advisories:
 
 - **`sharp` < 0.35.0 — libvips vulnerabilities** (`GHSA-f88m-g3jw-g9cj`, High).
   Reached transitively through `next` (optional dependency on `sharp@0.34.x`).
-  Resolved with a root [`pnpm.overrides`](package.json) entry forcing
-  `sharp >= 0.35.0` across the workspace lockfile (currently `0.35.3` / libvips
-  8.18.3).
+  Resolved with a [`pnpm.overrides`](apps/auditor-web/package.json) entry in
+  `apps/auditor-web` forcing `sharp >= 0.35.0` in its lockfile (currently `0.35.3`
+  / libvips 8.18.3).
 
 - **`postcss` — path traversal / arbitrary file read via `sourceMappingURL`**
   (`GHSA-6g55-p6wh-862q`, High, CVE-2026-45623; `GHSA-r28c-9q8g-f849`, High).
   Reached transitively through `next` (pinned to `postcss@8.4.31`). Resolved with
-  a root [`pnpm.overrides`](package.json) entry forcing `postcss >= 8.5.23`
-  across the workspace lockfile (currently `8.5.25`).
+  a [`pnpm.overrides`](apps/auditor-web/package.json) entry in `apps/auditor-web`
+  forcing `postcss >= 8.5.23` in its lockfile (currently `8.5.25`).
 
 - **`dompurify` — XSS bypass** (Dependabot #98). Reached transitively through
-  `streamdown`. Resolved with a root [`pnpm.overrides`](package.json) entry
-  forcing `dompurify >= 3.4.12`.
+  `streamdown`. Resolved with a [`pnpm.overrides`](apps/auditor-web/package.json)
+  entry in `apps/auditor-web` forcing `dompurify >= 3.4.12`.
 
 - **`uuid` < 11.1.1 — missing buffer bounds check** (`GHSA-w5hq-g745-h8pq`,
   Moderate). Pulled in transitively through `jayson` (a `@solana/web3.js`
