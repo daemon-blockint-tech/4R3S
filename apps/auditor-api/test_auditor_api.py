@@ -47,10 +47,23 @@ class TestSourcePathResolution:
         assert (REPO_ROOT / "package.json").exists()
         assert REPO_ROOT.name != "apps"
 
-    def test_absolute_path_is_accepted_unchanged(self, tmp_path):
+    def test_absolute_path_inside_the_root_is_accepted(self, tmp_path, monkeypatch):
+        # An absolute path is still fine — but only inside the allowed root.
+        # This test used to assert that ANY absolute path passed through
+        # unchanged, which is the behaviour that let an unauthenticated caller
+        # name any directory on the host. The containment check replaced it.
+        monkeypatch.setattr(main, "REPO_ROOT", tmp_path)
         target = tmp_path / "target.rs"
         target.write_text("// fixture")
         assert AuditRequest(source=str(target)).source == str(target)
+
+    def test_absolute_path_outside_the_root_is_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "REPO_ROOT", tmp_path / "allowed")
+        (tmp_path / "allowed").mkdir()
+        outside = tmp_path / "someone-elses-repo"
+        outside.mkdir()
+        with pytest.raises(ValidationError, match="outside the allowed root"):
+            AuditRequest(source=str(outside))
 
     def test_missing_path_is_rejected_before_it_reaches_the_queue(self):
         # A queue slot spent on a target that cannot succeed is a slot stolen
@@ -225,3 +238,48 @@ class TestWorkerNeverLeavesJobStuck:
         statuses = [w["status"] for w in redis.writes]
         assert statuses == ["running", "failed"]
         assert "PermissionError" in redis.writes[-1]["error"]
+
+
+# --- source containment ------------------------------------------------------
+# `source` was validated for existence only, so an unauthenticated caller could
+# name any absolute path on the host; the worker then walked every .rs file under
+# it into an LLM prompt and served the output back from GET /audits/<id>.
+
+
+def test_source_outside_the_allowed_root_is_rejected(tmp_path):
+    import main
+
+    outside = tmp_path / "someone-elses-repo"
+    outside.mkdir()
+    with pytest.raises(ValidationError):
+        main.AuditRequest(source=str(outside))
+
+
+def test_parent_traversal_out_of_the_root_is_rejected():
+    import main
+
+    with pytest.raises(ValidationError):
+        main.AuditRequest(source="../../..")
+
+
+def test_a_path_inside_the_root_is_still_accepted():
+    import main
+
+    # eval/ is committed, so this exercises the accept path without a fixture.
+    accepted = main.AuditRequest(source="eval")
+    assert accepted.source.endswith("/eval")
+
+
+def test_a_symlink_pointing_out_of_the_root_is_rejected(tmp_path, monkeypatch):
+    import main
+
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    link = main.REPO_ROOT / ".ares-test-escape-link"
+    try:
+        link.symlink_to(secret, target_is_directory=True)
+        with pytest.raises(ValidationError):
+            main.AuditRequest(source=str(link))
+    finally:
+        if link.is_symlink():
+            link.unlink()

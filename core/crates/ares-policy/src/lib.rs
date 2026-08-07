@@ -260,31 +260,47 @@ impl PolicyEngine {
     }
 
     /// Check if scanning a target program is allowed.
+    /// Both the target and the configured boundary paths are canonicalized
+    /// (`~` expanded, `.`/`..` resolved, made absolute) before comparison, and
+    /// the decision is default-deny: a target matching no allowed read path is
+    /// rejected even if it also matches no blocked path.
     pub fn check_scan_permission(&self, target_path: &Path) -> AresResult<()> {
-        let target_str = target_path.to_string_lossy();
+        let target = canonicalize_policy_path(target_path);
+        let target_str = target.to_string_lossy();
 
-        // Check if target is within allowed boundaries
+        // Blocked paths take precedence over every allow rule.
+        let blocked = self
+            .sandbox_boundary
+            .blocked_paths
+            .iter()
+            .map(|p| canonicalize_policy_path(p))
+            .any(|b| target.starts_with(&b));
+
+        if blocked {
+            error!("POLICY VIOLATION: Scanning blocked path: {}", target_str);
+            return Err(AresError::PolicyViolation(format!(
+                "Scanning blocked path: {}",
+                target_str
+            )));
+        }
+
+        // Default-deny: the target must sit under an explicitly allowed read path.
         let allowed = self
             .sandbox_boundary
             .allowed_read_paths
             .iter()
-            .any(|p| target_str.starts_with(&p.to_string_lossy().to_string()));
+            .map(|p| canonicalize_policy_path(p))
+            .any(|a| target.starts_with(&a));
 
         if !allowed {
-            // Check if it's explicitly blocked
-            let blocked = self
-                .sandbox_boundary
-                .blocked_paths
-                .iter()
-                .any(|p| target_str.contains(&p.to_string_lossy().to_string()));
-
-            if blocked {
-                error!("POLICY VIOLATION: Scanning blocked path: {}", target_str);
-                return Err(AresError::PolicyViolation(format!(
-                    "Scanning blocked path: {}",
-                    target_str
-                )));
-            }
+            error!(
+                "POLICY VIOLATION: Path outside allowed read paths: {}",
+                target_str
+            );
+            return Err(AresError::PolicyViolation(format!(
+                "Path is outside the allowed read paths: {}",
+                target_str
+            )));
         }
 
         info!("Policy check passed: scan authorized for {}", target_str);
@@ -339,5 +355,153 @@ impl PolicyEngine {
             reason: reason.to_string(),
         };
         self.audit_log.push(log_entry);
+    }
+}
+
+/// Expand a leading `~` to the user's home directory.
+fn expand_tilde(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if s == "~" || s.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            let rest = s.strip_prefix('~').unwrap_or("").trim_start_matches('/');
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Canonicalize a policy path without touching the filesystem: expand `~`,
+/// make it absolute against the current directory, and lexically resolve
+/// `.` / `..` components (works for paths that do not exist).
+fn canonicalize_policy_path(path: &Path) -> PathBuf {
+    let expanded = expand_tilde(path);
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(expanded)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    // Lexical normalisation alone does not make this path safe to compare against
+    // the sandbox roots. It rewrites `..` textually and never touches symlinks, so
+    // a link *inside* the sandbox reads anything on the host: an audited
+    // repository containing `docs/config.rs -> /Users/victim/.ssh/id_rsa`
+    // normalises to `<cwd>/docs/config.rs`, which `starts_with` the allowed root,
+    // and the subsequent `fs::read_to_string` follows the link. Git stores and
+    // checks out symlinks, so the repository under audit chooses this.
+    //
+    // `fs::canonicalize` resolves every link, but fails outright on a path that
+    // does not exist yet — and write destinations legitimately do not. So resolve
+    // the deepest ancestor that *does* exist and re-attach the remainder: the
+    // existing part is where a symlink could hide, and the missing tail cannot
+    // redirect anything.
+    let mut prefix: &Path = &normalized;
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(real) = prefix.canonicalize() {
+            let mut resolved = real;
+            for component in tail.iter().rev() {
+                resolved.push(component);
+            }
+            return resolved;
+        }
+        match (prefix.file_name(), prefix.parent()) {
+            (Some(name), Some(parent)) => {
+                tail.push(name.to_os_string());
+                prefix = parent;
+            }
+            // Reached the root without resolving anything (or the path has no
+            // parent). Fall back to the lexical form — it is no worse than before
+            // and cannot silently widen access, because a path that resolves to
+            // nothing still has to pass the allow-list check below.
+            _ => return normalized,
+        }
+    }
+}
+
+#[cfg(test)]
+mod symlink_escape_tests {
+    use super::*;
+    use std::fs;
+
+    /// A symlink inside the sandbox must not become a read of the link target.
+    ///
+    /// The audited repository controls its own files, and git checks symlinks out
+    /// verbatim, so `docs/config.rs -> ~/.ssh/id_rsa` is a file the target ships.
+    /// With lexical-only normalisation the policy saw `<sandbox>/docs/config.rs`,
+    /// allowed it, and the read followed the link off the sandbox entirely.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlink_out_of_the_sandbox_is_rejected() {
+        let tmp = std::env::temp_dir().join(format!("ares-policy-{}", std::process::id()));
+        let sandbox = tmp.join("sandbox");
+        let secret_dir = tmp.join("outside");
+        fs::create_dir_all(&sandbox).unwrap();
+        fs::create_dir_all(&secret_dir).unwrap();
+        let secret = secret_dir.join("id_rsa");
+        fs::write(&secret, b"PRIVATE KEY").unwrap();
+
+        let link = sandbox.join("config.rs");
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+        let resolved = canonicalize_policy_path(&link);
+        let allowed = canonicalize_policy_path(&sandbox);
+
+        assert!(
+            !resolved.starts_with(&allowed),
+            "symlink escaped the sandbox: {resolved:?} still matched {allowed:?}"
+        );
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// The other direction: resolving links must not break ordinary allowed reads.
+    #[test]
+    fn a_real_file_inside_the_sandbox_is_still_allowed() {
+        let tmp = std::env::temp_dir().join(format!("ares-policy-ok-{}", std::process::id()));
+        let sandbox = tmp.join("sandbox");
+        fs::create_dir_all(&sandbox).unwrap();
+        let real = sandbox.join("lib.rs");
+        fs::write(&real, b"fn main() {}").unwrap();
+
+        assert!(canonicalize_policy_path(&real).starts_with(canonicalize_policy_path(&sandbox)));
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Write destinations do not exist yet; `canonicalize` fails on them, so the
+    /// deepest-existing-ancestor fallback has to keep them inside the sandbox.
+    #[test]
+    fn a_not_yet_created_file_resolves_inside_its_existing_parent() {
+        let tmp = std::env::temp_dir().join(format!("ares-policy-new-{}", std::process::id()));
+        let sandbox = tmp.join("sandbox");
+        fs::create_dir_all(&sandbox).unwrap();
+        let unborn = sandbox.join("nested/does-not-exist.json");
+
+        assert!(canonicalize_policy_path(&unborn).starts_with(canonicalize_policy_path(&sandbox)));
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// `..` must not climb out even when every component exists.
+    #[test]
+    fn parent_traversal_leaves_the_sandbox_visibly() {
+        let tmp = std::env::temp_dir().join(format!("ares-policy-dd-{}", std::process::id()));
+        let sandbox = tmp.join("sandbox");
+        fs::create_dir_all(sandbox.join("sub")).unwrap();
+        let escaped = sandbox.join("sub/../../outside.txt");
+
+        assert!(!canonicalize_policy_path(&escaped).starts_with(canonicalize_policy_path(&sandbox)));
+        fs::remove_dir_all(&tmp).ok();
     }
 }

@@ -15,6 +15,7 @@ building on top of it.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -28,6 +29,23 @@ app = FastAPI(title="ares-auditor-api")
 REDIS_SETTINGS = RedisSettings()  # host/port from env via arq defaults
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # apps/auditor-api/main.py -> 4R3S/
+
+# Every audit target must resolve inside this root. Default-deny, matching the
+# Rust engine's policy boundary (`core/crates/ares-policy`). Override with
+# ARES_ALLOWED_SOURCE_ROOT when the deployment stages checkouts elsewhere.
+#
+# NOTE, unresolved: this route is still UNAUTHENTICATED. Containment bounds what
+# an anonymous caller can reach; it does not stop them from queueing work and
+# spending LLM quota. Putting auth in front of it is a deployment-level decision
+# (who the callers are, which scheme), so it is flagged here rather than guessed.
+# Resolved per call, not captured at import: the root is derived from REPO_ROOT,
+# and binding it once would freeze whatever the module saw first — which both
+# defeats the env override for a process started before it was set, and silently
+# ignores a REPO_ROOT a test relocates.
+def allowed_source_root() -> Path:
+    return Path(
+        os.environ.get("ARES_ALLOWED_SOURCE_ROOT", str(REPO_ROOT))
+    ).expanduser()
 
 
 class AuditRequest(BaseModel):
@@ -50,7 +68,24 @@ class AuditRequest(BaseModel):
         # LLM quota, not by compute, so wasted slots are expensive.
         if not resolved.exists():
             raise ValueError(f"source path does not exist: {resolved}")
-        return str(resolved)
+
+        # Containment. Existence was the only check, so `{"source":
+        # "/Users/me/some-client-repo"}` — or `../../.ssh` — was accepted and the
+        # worker then walked every `.rs` file under it into an LLM prompt and
+        # served the result back from `GET /audits/<id>`. This route has no
+        # authentication (see the module note below), so that was an unauthenticated
+        # read of arbitrary host directories.
+        #
+        # `.resolve()` follows symlinks, which matters for the same reason it does
+        # in `core/crates/ares-policy`: a link inside the allowed root otherwise
+        # redirects the read anywhere on the host.
+        root = allowed_source_root().resolve()
+        real = resolved.resolve()
+        if real != root and root not in real.parents:
+            raise ValueError(
+                f"source path is outside the allowed root {root}: {real}"
+            )
+        return str(real)
 
 
 class AuditAccepted(BaseModel):
