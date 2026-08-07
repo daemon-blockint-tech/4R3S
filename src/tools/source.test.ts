@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -76,6 +76,39 @@ describe("loadSource", () => {
   });
 });
 
+describe("coverage gaps are disclosed, not swallowed", () => {
+  // `discovered` counts what the walk FOUND. Anything it could not open is
+  // absent from both sides of the `files.length of discovered.length` ratio the
+  // report prints, so a swallowed failure reads as complete coverage of a tree
+  // whose real size was never learned.
+  it("counts a symlink it refused to follow", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ares-links-"));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "real.rs"), "pub fn a() {}");
+    // Not chmod 0o000: this repo ships a Docker image, and root reads anything,
+    // so a permission-based test would pass vacuously in CI.
+    symlinkSync(join(dir, "src", "real.rs"), join(dir, "src", "linked.rs"));
+
+    const res = await loadSource(dir);
+    expect(res.skippedLinks).toBe(1);
+    expect(res.discovered).not.toContain(join("src", "linked.rs"));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reports zero gaps for a clean tree", async () => {
+    const res = await loadSource(root);
+    expect(res.unreadable).toBe(0);
+    expect(res.skippedLinks).toBe(0);
+  });
+
+  it("a single named file reports no walk gaps", async () => {
+    const res = await loadSource(join(root, "src", "instructions", "withdraw.rs"));
+    expect(res.available).toBe(true);
+    expect(res.unreadable).toBe(0);
+    expect(res.skippedLinks).toBe(0);
+  });
+});
+
 describe("citesLoadedFile", () => {
   it("accepts a citation into a file that was actually read", async () => {
     const res = await loadSource(root);
@@ -103,6 +136,54 @@ describe("citesLoadedFile", () => {
     expect(citesLoadedFile("my_withdraw.rs:2", res)).toBe(false);
     expect(citesLoadedFile("xwithdraw.rs", res)).toBe(false);
     expect(citesLoadedFile("src/instructions/not_withdraw.rs:9", res)).toBe(false);
+  });
+
+  // `canBeConfirmed` uses this predicate as the mechanical evidence behind
+  // `confirmed`, and REMEMBER persists only confirmed findings. The path check
+  // above refuses a file nothing read; these refuse a LINE nothing read, which is
+  // the same claim one field over. `f.lines` is counted from the truncated
+  // content, so it is exactly what the model was shown.
+  it("rejects a line beyond the extent of the file that was read", async () => {
+    const res = await loadSource(root);
+    const file = res.files.find((f) => f.path.endsWith("withdraw.rs"));
+    expect(file).toBeDefined();
+    const beyond = file!.lines + 1;
+    expect(citesLoadedFile(`withdraw.rs:${beyond}`, res)).toBe(false);
+    expect(citesLoadedFile(`withdraw.rs:99999`, res)).toBe(false);
+  });
+
+  it("accepts the first and last line that were actually read", async () => {
+    const res = await loadSource(root);
+    const file = res.files.find((f) => f.path.endsWith("withdraw.rs"))!;
+    expect(citesLoadedFile("withdraw.rs:1", res)).toBe(true);
+    expect(citesLoadedFile(`withdraw.rs:${file.lines}`, res)).toBe(true);
+  });
+
+  it("rejects line zero and a negative line", async () => {
+    const res = await loadSource(root);
+    expect(citesLoadedFile("withdraw.rs:0", res)).toBe(false);
+    expect(citesLoadedFile("withdraw.rs:-5", res)).toBe(false);
+  });
+
+  it("keeps a bare path legal — on-chain findings carry no line", async () => {
+    const res = await loadSource(root);
+    // `analyze-onchain` sets no line, and those findings are deterministic; a
+    // mandatory line here would reject citations this predicate never judges.
+    expect(citesLoadedFile("withdraw.rs", res)).toBe(true);
+    expect(citesLoadedFile("withdraw.rs:", res)).toBe(true);
+  });
+
+  it("keeps a non-numeric line suffix legal rather than silently failing it", async () => {
+    const res = await loadSource(root);
+    // Models emit `file.rs:fn_name` and ranges. Treat an unparseable line as
+    // "no line stated" — refusing it would demote real citations for a
+    // formatting difference, which is the opposite of what this guard is for.
+    expect(citesLoadedFile("withdraw.rs:someFunction", res)).toBe(true);
+  });
+
+  it("rejects a fractional line", async () => {
+    const res = await loadSource(root);
+    expect(citesLoadedFile("withdraw.rs:2.5", res)).toBe(false);
   });
 
   it("still accepts a real file cited from a different root", async () => {
