@@ -141,29 +141,57 @@ impl TridentTool {
     }
 
     /// Parse Trident fuzz output into structured results.
-    fn parse_fuzz_output(&self, stdout: &str, _stderr: &str) -> FuzzRunResult {
+    ///
+    /// Two things this must get right, both of which it previously got wrong in
+    /// the same direction that reaches a client report:
+    ///
+    /// **It has to read stderr.** A Rust panic — the single most important thing
+    /// a fuzzer can find — is printed to stderr as
+    /// `thread '<unnamed>' panicked at ...`. The old parser looped over `stdout`
+    /// only and took `_stderr` as an ignored argument, so a harness that genuinely
+    /// crashed was reported as a clean run whenever its wrapper still exited 0.
+    ///
+    /// **A count is not an event.** The old parser pushed any line containing
+    /// `crash`, `panic` or `ERROR` into `crashes`. Trident's own summary line
+    /// `Total crashes: 0` contains "crash", and a startup line like
+    /// `[ERROR] no corpus found, starting empty` contains "ERROR" — so a clean run
+    /// produced crash entries. `scan.rs` turns each of those into a
+    /// `Severity::High` finding at confidence 0.85 whose description is the raw
+    /// line, and the economic scorer then attaches extractable value to it. A
+    /// scan of a healthy target published "Crash in fuzz target" with the body
+    /// "Total crashes: 0".
+    ///
+    /// So: summary counts are parsed as counts, and only genuine crash evidence
+    /// is recorded as a crash.
+    fn parse_fuzz_output(&self, stdout: &str, stderr: &str) -> FuzzRunResult {
         let mut crashes = Vec::new();
         let mut invariant_violations = Vec::new();
         let mut iterations_ran = 0u64;
+        // `None` when the run never printed a summary at all, which is different
+        // from printing zero.
+        let mut reported_crashes: Option<u64> = None;
 
-        for line in stdout.lines() {
-            if line.contains("iterations:") {
-                if let Some(n) = line.split(':').nth(1).and_then(|s| s.trim().parse().ok()) {
-                    iterations_ran = n;
-                }
+        for line in stdout.lines().chain(stderr.lines()) {
+            if let Some(n) = labelled_count(line, "iterations") {
+                iterations_ran = n;
             }
-            if line.contains("crash") || line.contains("panic") || line.contains("ERROR") {
-                crashes.push(line.to_string());
+            if let Some(n) = labelled_count(line, "crashes") {
+                // A tally, not an occurrence. Recorded so `success` can still
+                // reflect it, but never pushed as a crash of its own.
+                reported_crashes = Some(reported_crashes.unwrap_or(0).max(n));
+                continue;
             }
-            if line.contains("invariant violated")
-                || line.contains("assertion failed")
-                || line.contains("CHECK FAILED")
-            {
-                invariant_violations.push(line.to_string());
+            if is_crash_evidence(line) {
+                crashes.push(line.trim().to_string());
+            }
+            if is_invariant_violation(line) {
+                invariant_violations.push(line.trim().to_string());
             }
         }
 
-        let success = crashes.is_empty() && invariant_violations.is_empty();
+        let success = crashes.is_empty()
+            && invariant_violations.is_empty()
+            && reported_crashes.unwrap_or(0) == 0;
 
         FuzzRunResult {
             iterations_ran,
@@ -172,7 +200,7 @@ impl TridentTool {
             invariant_violations,
             coverage_percent: None,
             raw_stdout: stdout.to_string(),
-            raw_stderr: _stderr.to_string(),
+            raw_stderr: stderr.to_string(),
         }
     }
 
@@ -197,6 +225,56 @@ pub struct FuzzRunResult {
     pub coverage_percent: Option<f64>,
     pub raw_stdout: String,
     pub raw_stderr: String,
+}
+
+/// Read `label: N` out of a summary line, whatever prefixes it.
+///
+/// Matches `crashes: 3`, `Total crashes: 0` and `  Iterations: 1200` alike. The
+/// label must end on a word boundary so `crashes_recovered: 2` does not read as
+/// a crash tally.
+fn labelled_count(line: &str, label: &str) -> Option<u64> {
+    let lower = line.to_ascii_lowercase();
+    let at = lower.find(label)?;
+    let after = &lower[at + label.len()..];
+    let rest = after.trim_start();
+    let rest = rest.strip_prefix(':')?;
+    rest.split_whitespace()
+        .next()?
+        .trim_end_matches(|c: char| !c.is_ascii_digit())
+        .parse()
+        .ok()
+}
+
+/// True when the line is evidence that something actually crashed.
+///
+/// Deliberately narrower than "mentions the word crash". Bare `ERROR` is gone:
+/// fuzzers log recoverable errors (missing corpus, unreadable seed) at that level
+/// constantly, and treating them as crashes is what filled reports with findings
+/// whose body was a log line.
+fn is_crash_evidence(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    // The Rust panic itself — on stderr, which is why stderr must be scanned.
+    lower.contains("panicked at")
+        // Fatal signals a harness can die on. `segv` rather than `sigsegv`:
+        // sanitizers report `==12345==ERROR: AddressSanitizer: SEGV`, without the
+        // `SIG` prefix, and that line is the crash itself.
+        || lower.contains("segv")
+        || lower.contains("sigabrt")
+        || lower.contains("sanitizer:")
+        || lower.contains("signal: 6")
+        || lower.contains("signal: 11")
+        // Explicit crash reports, as opposed to a tally of them.
+        || lower.contains("crash detected")
+        || lower.contains("crash found")
+        || lower.contains("fuzz target crashed")
+        || lower.contains("artifact written to")
+}
+
+fn is_invariant_violation(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("invariant violated")
+        || lower.contains("assertion failed")
+        || lower.contains("check failed")
 }
 
 /// Generate a Trident fuzz test template for a given vulnerability category.
@@ -439,5 +517,113 @@ impl TridentTool {
             stdout,
             stderr,
         })
+    }
+}
+
+#[cfg(test)]
+mod fuzz_output_parsing_tests {
+    use super::*;
+
+    fn parse(stdout: &str, stderr: &str) -> FuzzRunResult {
+        TridentTool::new(None)
+            .expect("trident tool")
+            .parse_fuzz_output(stdout, stderr)
+    }
+
+    /// The defect that reached client reports. `scan.rs` turns every entry in
+    /// `crashes` into a Severity::High finding at confidence 0.85 whose body is
+    /// the raw line, and the economic scorer attaches extractable value to it —
+    /// so this summary line published "Crash in fuzz target" with the body
+    /// "Total crashes: 0" on a target that never crashed.
+    #[test]
+    fn a_zero_crash_summary_is_not_a_crash() {
+        let r = parse("Iterations: 1000\nTotal crashes: 0\n", "");
+        assert!(r.crashes.is_empty(), "got {:?}", r.crashes);
+        assert!(
+            r.success,
+            "a run reporting zero crashes is a successful run"
+        );
+        assert_eq!(r.iterations_ran, 1000);
+    }
+
+    /// Fuzzers log recoverable problems at ERROR constantly. Treating the level
+    /// as crash evidence is what filled reports with log lines.
+    #[test]
+    fn a_recoverable_error_log_line_is_not_a_crash() {
+        let r = parse("[ERROR] no corpus found, starting empty\n", "");
+        assert!(r.crashes.is_empty(), "got {:?}", r.crashes);
+        assert!(r.success);
+    }
+
+    /// The other half: a real panic is printed to STDERR, which the parser did
+    /// not read at all. A genuinely crashing harness was reported clean.
+    #[test]
+    fn a_panic_on_stderr_is_detected() {
+        let r = parse(
+            "Iterations: 42\n",
+            "thread '<unnamed>' panicked at fuzz_target.rs:42:9:\nattempt to subtract with overflow\n",
+        );
+        assert_eq!(r.crashes.len(), 1, "got {:?}", r.crashes);
+        assert!(r.crashes[0].contains("panicked at"));
+        assert!(!r.success, "a panic must fail the run");
+    }
+
+    #[test]
+    fn fatal_signals_are_crashes() {
+        for line in [
+            "process didn't exit successfully: signal: 11",
+            "==12345==ERROR: AddressSanitizer: SEGV",
+            "harness aborted with SIGABRT",
+        ] {
+            let r = parse("", line);
+            assert!(!r.crashes.is_empty(), "{line:?} should be crash evidence");
+            assert!(!r.success);
+        }
+    }
+
+    /// A non-zero tally still fails the run even when no individual crash line
+    /// was matched — the count is believed, it is just not itself a finding.
+    #[test]
+    fn a_nonzero_crash_count_fails_the_run_without_inventing_a_finding() {
+        let r = parse("Total crashes: 3\n", "");
+        assert!(
+            r.crashes.is_empty(),
+            "the tally must not masquerade as a crash entry: {:?}",
+            r.crashes
+        );
+        assert!(!r.success, "3 crashes is not a successful run");
+    }
+
+    #[test]
+    fn invariant_violations_are_still_detected() {
+        let r = parse("CHECK FAILED: total supply decreased\n", "");
+        assert_eq!(r.invariant_violations.len(), 1);
+        assert!(!r.success);
+    }
+
+    #[test]
+    fn a_clean_run_is_clean() {
+        let r = parse("Iterations: 5000\nTotal crashes: 0\nDone.\n", "");
+        assert!(r.success);
+        assert!(r.crashes.is_empty() && r.invariant_violations.is_empty());
+    }
+
+    // ---- labelled_count boundaries ----
+
+    #[test]
+    fn labelled_count_reads_a_tally_whatever_prefixes_it() {
+        assert_eq!(labelled_count("Total crashes: 7", "crashes"), Some(7));
+        assert_eq!(
+            labelled_count("  Iterations:  1200", "iterations"),
+            Some(1200)
+        );
+        assert_eq!(labelled_count("crashes: 0", "crashes"), Some(0));
+    }
+
+    #[test]
+    fn labelled_count_ignores_a_different_label_that_merely_contains_it() {
+        // Would otherwise read as a crash tally of 2.
+        assert_eq!(labelled_count("crashes_recovered 2", "crashes"), None);
+        assert_eq!(labelled_count("no crashes here", "crashes"), None);
     }
 }
