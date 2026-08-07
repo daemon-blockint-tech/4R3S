@@ -105,6 +105,73 @@ describe("analyzeOnchain outcome reporting", () => {
     expect(out.coverage).toEqual(["missing-signer-check"]);
   });
 
+  it("reports degraded when the upgrade authority could not be read", async () => {
+    // The gap this closes: `loadProgram` sets no `error` and `exists` stays
+    // true when the ProgramData read times out, so every existing guard passes
+    // and `authorityFindings` returns [] — byte-identical to a program whose
+    // authority is genuinely renounced. Reporting `ok` there publishes a live
+    // hot upgrade key as a clean on-chain review, in a report that tells the
+    // reader on-chain silence is evidence.
+    loadProgram.mockResolvedValue({
+      address: state.programAddress,
+      exists: true,
+      executable: true,
+      owner: "BPFLoaderUpgradeab1e11111111111111111111111",
+      loader: "upgradeable",
+      dataLen: 36,
+      upgradeAuthorityUnresolved: "AbortError: The operation was aborted",
+    });
+    const node = makeAnalyzeOnchainNode(
+      deps(chatReturning(JSON.stringify({ findings: [], checked: [] }))),
+    );
+    const out = await node(state);
+
+    const report = (out.analyzers as Array<{ outcome: string; detail?: string }>)[0]!;
+    expect(report.outcome).toBe("degraded");
+    expect(report.detail).toContain("upgrade authority could not be read");
+    expect(report.detail).toContain("not evidence there is none");
+  });
+
+  it("an unresolved authority outranks a parseable model response", async () => {
+    // Ordering matters: the model parsing fine says nothing about whether the
+    // chain was read. A clean parse must not restore `ok`.
+    loadProgram.mockResolvedValue({
+      address: state.programAddress,
+      exists: true,
+      executable: true,
+      loader: "upgradeable",
+      dataLen: 36,
+      upgradeAuthorityUnresolved: "ProgramData account returned no data",
+    });
+    const node = makeAnalyzeOnchainNode(
+      deps(chatReturning(JSON.stringify({ findings: [], checked: ["missing-signer-check"] }))),
+    );
+    const out = await node(state);
+
+    expect((out.analyzers as Array<{ outcome: string }>)[0]!.outcome).toBe("degraded");
+  });
+
+  it("a renounced authority is still ok — resolved, and genuinely none", async () => {
+    // The other side: `degraded` must not fire for a program that was read
+    // successfully and simply has no upgrade authority, or the banner would
+    // print on every immutable program forever and stop meaning anything.
+    loadProgram.mockResolvedValue({
+      address: state.programAddress,
+      exists: true,
+      executable: true,
+      loader: "upgradeable",
+      dataLen: 36,
+      upgradeAuthority: null,
+      upgradeAuthorityKind: "renounced",
+    });
+    const node = makeAnalyzeOnchainNode(
+      deps(chatReturning(JSON.stringify({ findings: [], checked: [] }))),
+    );
+    const out = await node(state);
+
+    expect((out.analyzers as Array<{ outcome: string }>)[0]!.outcome).toBe("ok");
+  });
+
   it("reports degraded when the model response does not parse", async () => {
     loadProgram.mockResolvedValue({
       address: state.programAddress,

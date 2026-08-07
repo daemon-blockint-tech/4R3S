@@ -197,12 +197,26 @@ export function makeAnalyzeOnchainNode(deps: GraphDeps) {
       findings,
       coverage,
       iterations: 1,
-      analyzers: parsed
-        ? status("ok")
-        : status(
+      // `ok` means "ran against real input and completed; silence here is
+      // evidence" (state.ts). An upgrade-authority read that failed is the one
+      // case where that sentence is false while every existing guard passes:
+      // `loadProgram` sets no `error` and `exists` stays true, so the node
+      // reaches here with zero deterministic findings — indistinguishable from a
+      // program whose authority is genuinely renounced. Claiming `ok` there
+      // publishes a hot upgrade key as a clean on-chain review. `degraded` is in
+      // UNTRUSTWORTHY_SILENCE, so the report's assurance banner fires and the
+      // reader is told not to describe the target as clean.
+      analyzers: program.upgradeAuthorityUnresolved
+        ? status(
             "degraded",
-            "model response was not valid JSON; no findings extracted",
-          ),
+            `upgrade authority could not be read (${program.upgradeAuthorityUnresolved}) — absence of an authority finding is not evidence there is none`,
+          )
+        : parsed
+          ? status("ok")
+          : status(
+              "degraded",
+              "model response was not valid JSON; no findings extracted",
+            ),
     };
   };
 }

@@ -43,7 +43,16 @@ export interface LoadedSource {
 }
 
 /** Directories that never contain auditable program source. */
-const SKIP_DIRS = new Set([
+/**
+ * Exported so the Semgrep invocation can exclude the same directories.
+ *
+ * Two walkers over one tree that disagree about which directories count are two
+ * world models: a hit under `target/` becomes a `static` finding — which
+ * `canBeConfirmed` promotes to `confirmed` unconditionally — about generated
+ * code the loader never read and `citesLoadedFile` would have rejected.
+ * Deriving both from this one definition makes them agree by construction.
+ */
+export const SKIP_DIRS = new Set([
   "node_modules",
   "target",
   ".git",
@@ -299,10 +308,23 @@ export function citesLoadedFile(location: string, source: LoadedSource): boolean
   // `programs/vault/src/lib.rs` for a loaded `src/lib.rs` is describing the same
   // file from a different root. The separator is what distinguishes that from a
   // different file whose name merely ends the same way.
-  return source.files.some(
-    (f) =>
-      f.path === cited ||
-      f.path.endsWith(`${sep}${cited}`) ||
-      cited.endsWith(`${sep}${f.path}`),
-  );
+  return source.files.some((f) => pathsMatch(cited, f.path));
+}
+
+/**
+ * True when two paths name the same file, allowing either to be rooted deeper.
+ *
+ * Both suffix directions must land on a path separator. Without that boundary
+ * `endsWith` compares raw characters and a file that was never read matches one
+ * that was: `my_vault.rs` against a loaded `vault.rs`, `xlib.rs` against
+ * `lib.rs`. Citing a *longer* path stays legal on purpose — the loader stores
+ * paths relative to the audit root, so `programs/vault/src/lib.rs` and a loaded
+ * `src/lib.rs` are the same file seen from different roots.
+ *
+ * Exported so the Semgrep reconciliation in `analyze-static` compares its
+ * scanned set against loaded files by this same rule rather than reimplementing
+ * it — one definition, so the boundary cannot regress in only one of them.
+ */
+export function pathsMatch(a: string, b: string): boolean {
+  return a === b || a.endsWith(`${sep}${b}`) || b.endsWith(`${sep}${a}`);
 }
