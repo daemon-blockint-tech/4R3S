@@ -29,19 +29,6 @@ intended packages as if they existed is how an agent ends up "testing" an empty
 workspace and reporting success.
 
 ```
-src/          ***THE SHIPPING AUDITOR*** — TS agent, LangGraph pipeline        [real, npm]
-              ├─ graph/ (nodes + proof chain) · knowledge/ · memory/ · retrieval/
-              ├─ billing/ · llm/ · persistence/ · tools/ (semgrep, source, cua)
-core/         Rust cargo workspace ROOT — deterministic engine (ENG-1)         [real, cargo]
-              ├─ crates/ ares-cli · ares-core · ares-mapper · ares-trident
-              │          ares-policy · ares-orchestrator · ares-report
-              ├─ PoC generation: crates/ares-cli/src/poc.rs
-              └─ fork confirmation: crates/ares-cli/src/commands/confirm.rs
-              NOT yet wired into the src/ pipeline — that is ORC-2.
-services/     detector & data services — risk · cve · family · evidence     [planned, README]
-packages/     shared PERMISSIVE TS packages                                 [planned, README]
-              The code these were to hold currently lives under src/
-              (knowledge · billing · retrieval · memory). No migration yet.
 core/         Rust cargo workspace ROOT — deterministic engine (ARES-v3, landed via ENG-1)
               ├─ crates/ ares-cli · ares-core · ares-mapper · ares-trident · ares-policy · ares-orchestrator · ares-report
 src/          the shipping TS auditor TODAY (single root npm package) — graph · knowledge · retrieval ·
@@ -62,10 +49,7 @@ docs/         PRD.md · DEVELOPMENT_PLAN.md · BACKLOG.xlsx
 
 ## Tech stack
 
-- **Rust** (stable) — `core/`. The cargo workspace root is `core/`, **not** the repo root; every cargo command needs `cd core` first.
-- **TypeScript** — root `src/` on **npm** (this is the shipping auditor); `apps/auditor-web` and `apps/ares-sec` each have their own `package.json` and CI. `pnpm-workspace.yaml` globs `packages/*` and `apps/*`, but `packages/*` holds no packages — see Commands before reaching for pnpm.
-- **Python** — `apps/auditor-api` (FastAPI + Arq, own CI job) and `eval/` (pytest).
-- **Rust** (stable) — `core/`, most of `services/`. Cargo workspace at root.
+- **Rust** (stable) — `core/`, most of `services/`. The cargo workspace root is `core/`, **not** the repo root — every cargo command needs `cd core` first.
 - **TypeScript** (npm) — root `src/`, `packages/*` (stubs), `apps/ares-sec`. `apps/auditor-web` is a standalone **pnpm** app with its own lockfile.
 - **Python** — `apps/auditor-api`, parts of `services/` (CVE, family, eval).
 - **Data:** Postgres, Supabase (pgvector), Neo4j — all optional; the engine runs without them.

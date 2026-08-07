@@ -256,7 +256,8 @@ impl TaintEngine {
                 // will happily derive a PDA from *any* bump byte, including
                 // one an attacker chose, whereas find_program_address always
                 // returns the one canonical bump for a given seed set.
-                let is_create_program_address = func_name_compact.contains("create_program_address")
+                let is_create_program_address = func_name_compact
+                    .contains("create_program_address")
                     && !func_name_compact.contains("find_program_address");
                 if is_create_program_address {
                     for arg in &call.args {

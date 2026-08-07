@@ -283,6 +283,8 @@ def test_a_symlink_pointing_out_of_the_root_is_rejected(tmp_path, monkeypatch):
     finally:
         if link.is_symlink():
             link.unlink()
+
+
 class TestBillingExitCodeDistinction:
     """src/index.ts exits 2 specifically for InsufficientCreditsError, distinct
     from exit 1 for a generic audit failure — see the NOTE this replaced in

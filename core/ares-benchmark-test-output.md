@@ -12,8 +12,8 @@ These curated 50–150 LOC reproduction stubs are designed to isolate and reprod
 |----------|---------------------|-------------|---------------|----------|---------------|
 | type-cosplay-stub | 1 | **1/1 (100%)** | N/A | N/A | N/A |
 | ownership-check-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
-| signer-auth-stub | 1 | **1/1 (100%)** | N/A | N/A | N/A |
-| arbitrary-cpi-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
+| signer-auth-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
+| arbitrary-cpi-stub | 1 | **1/1 (100%)** | N/A | N/A | N/A |
 | init-frontrunning-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
 | reentrancy-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
 | dup-mutable-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |

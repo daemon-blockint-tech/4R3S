@@ -364,7 +364,13 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
 
                     if should_be_validated {
                         self.scanner.findings.push(AstFinding {
-                            category: "signer-authorization".to_string(),
+                            // ENG-3 renamed this category to the canonical
+                            // catalog id (src/knowledge/solana-vulns.ts) at the
+                            // handler-param site but missed this Solitaire-field
+                            // site, so it emitted a category no catalog entry
+                            // matches -- the finding degrades to `other`
+                            // downstream despite being Critical.
+                            category: "missing-signer-check".to_string(),
                             severity: "Critical".to_string(),
                             file: self.path.clone(),
                             line: 0,
@@ -995,9 +1001,113 @@ mod tests {
             "#,
         );
         assert!(
-            categories(&s).contains(&"signer-authorization".to_string()),
-            "expected signer-authorization, got {:?}",
+            categories(&s).contains(&"missing-signer-check".to_string()),
+            "expected missing-signer-check, got {:?}",
             categories(&s)
+        );
+    }
+
+    #[test]
+    fn is_signer_check_suppresses_signer_authorization() {
+        let s = scan(
+            r#"
+            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
+                if !authority.is_signer { return Err(ProgramError::MissingRequiredSignature); }
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            !categories(&s).contains(&"missing-signer-check".to_string()),
+            "an explicit is_signer check must suppress the finding, got {:?}",
+            categories(&s)
+        );
+    }
+
+    #[test]
+    fn non_entry_point_helper_is_not_treated_as_an_instruction() {
+        // `is_entry_point` gates arbitrary-cpi. A private helper that happens to
+        // call invoke is not an instruction boundary, so flagging it would report
+        // an attack surface that no transaction can reach.
+        let s = scan(
+            r#"
+            fn helper_transfer(accounts: &[AccountInfo]) -> ProgramResult {
+                invoke(&ix, accounts)?;
+                Ok(())
+            }
+            "#,
+        );
+        // ENG-3 added a second, taint-based arbitrary-cpi detector that flags
+        // unvalidated accounts reaching invoke regardless of entry-point status.
+        // That is intentional and correct, so assert specifically on the
+        // entry-point-gated finding rather than on the category as a whole.
+        assert!(
+            !s.findings.iter().any(|f| f.category == "arbitrary-cpi"
+                && f.description.contains("Instruction `helper_transfer`")),
+            "helper without process_ prefix must not be treated as an instruction \
+             boundary; got {:?}",
+            s.findings
+                .iter()
+                .map(|f| &f.description)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // ---- entry-point classification ---------------------------------------
+
+    #[test]
+    fn solitaire_detection_does_not_key_on_the_whole_function_body() {
+        // `is_solitaire_handler` is computed as:
+        //     quote::quote!(#node.sig.inputs.first()).to_string()
+        // In `quote!`, `#node` interpolates the ItemFn and `.sig.inputs.first()`
+        // is emitted as *literal tokens* — it is never evaluated. The string
+        // therefore holds the entire function, so ANY two-parameter function that
+        // merely mentions ExecutionContext anywhere — including in a comment-free
+        // body or an unrelated local — is classified as a Solitaire entry point.
+        //
+        // Entry-point status gates arbitrary-cpi and signer-authorization, both
+        // Critical, so a misclassification here manufactures Critical findings on
+        // code that is not an instruction boundary at all.
+        let s = scan(
+            r#"
+            fn not_an_entry_point(a: u64, b: u64) -> ProgramResult {
+                let note = "ExecutionContext";
+                invoke(&ix, accounts)?;
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            !categories(&s).contains(&"arbitrary-cpi".to_string()),
+            "a plain 2-arg helper that only mentions ExecutionContext in its body \
+             must not be classified as a Solitaire entry point; got {:?}",
+            categories(&s)
+        );
+    }
+
+    #[test]
+    fn genuine_solitaire_handler_is_still_an_entry_point() {
+        // The other half of the fix above: narrowing to the first parameter must
+        // not cost real Solitaire detection. Signature per the Solitaire pattern
+        // `fn(ctx: &ExecutionContext, accs: &mut Accounts, data: D)`.
+        let s = scan(
+            r#"
+            fn transfer_native(ctx: &ExecutionContext, accs: &mut TransferAccounts) -> Result<()> {
+                invoke(&ix, accounts)?;
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            categories(&s).contains(&"arbitrary-cpi".to_string()),
+            "a real Solitaire handler taking &ExecutionContext first must still be \
+             an entry point; got {:?}",
+            categories(&s)
+        );
+    }
+}
+
+#[cfg(test)]
 mod eng3_taint_sources_sinks {
     //! ENG-3: real test coverage for all 6 taint classes this task covers,
     //! against the canonical catalog IDs from Gilbert's ENG-2 merge
@@ -1135,92 +1245,6 @@ mod eng3_taint_sources_sinks {
     }
 
     #[test]
-    fn is_signer_check_suppresses_signer_authorization() {
-        let s = scan(
-            r#"
-            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
-                if !authority.is_signer { return Err(ProgramError::MissingRequiredSignature); }
-                Ok(())
-            }
-            "#,
-        );
-        assert!(
-            !categories(&s).contains(&"signer-authorization".to_string()),
-            "an explicit is_signer check must suppress the finding, got {:?}",
-            categories(&s)
-        );
-    }
-
-    #[test]
-    fn non_entry_point_helper_is_not_treated_as_an_instruction() {
-        // `is_entry_point` gates arbitrary-cpi. A private helper that happens to
-        // call invoke is not an instruction boundary, so flagging it would report
-        // an attack surface that no transaction can reach.
-        let s = scan(
-            r#"
-            fn helper_transfer(accounts: &[AccountInfo]) -> ProgramResult {
-                invoke(&ix, accounts)?;
-                Ok(())
-            }
-            "#,
-        );
-        assert!(
-            !categories(&s).contains(&"arbitrary-cpi".to_string()),
-            "helper without process_ prefix must not be an entry point, got {:?}",
-            categories(&s)
-        );
-    }
-
-    // ---- entry-point classification ---------------------------------------
-
-    #[test]
-    fn solitaire_detection_does_not_key_on_the_whole_function_body() {
-        // `is_solitaire_handler` is computed as:
-        //     quote::quote!(#node.sig.inputs.first()).to_string()
-        // In `quote!`, `#node` interpolates the ItemFn and `.sig.inputs.first()`
-        // is emitted as *literal tokens* — it is never evaluated. The string
-        // therefore holds the entire function, so ANY two-parameter function that
-        // merely mentions ExecutionContext anywhere — including in a comment-free
-        // body or an unrelated local — is classified as a Solitaire entry point.
-        //
-        // Entry-point status gates arbitrary-cpi and signer-authorization, both
-        // Critical, so a misclassification here manufactures Critical findings on
-        // code that is not an instruction boundary at all.
-        let s = scan(
-            r#"
-            fn not_an_entry_point(a: u64, b: u64) -> ProgramResult {
-                let note = "ExecutionContext";
-                invoke(&ix, accounts)?;
-                Ok(())
-            }
-            "#,
-        );
-        assert!(
-            !categories(&s).contains(&"arbitrary-cpi".to_string()),
-            "a plain 2-arg helper that only mentions ExecutionContext in its body \
-             must not be classified as a Solitaire entry point; got {:?}",
-            categories(&s)
-        );
-    }
-
-    #[test]
-    fn genuine_solitaire_handler_is_still_an_entry_point() {
-        // The other half of the fix above: narrowing to the first parameter must
-        // not cost real Solitaire detection. Signature per the Solitaire pattern
-        // `fn(ctx: &ExecutionContext, accs: &mut Accounts, data: D)`.
-        let s = scan(
-            r#"
-            fn transfer_native(ctx: &ExecutionContext, accs: &mut TransferAccounts) -> Result<()> {
-                invoke(&ix, accounts)?;
-                Ok(())
-            }
-            "#,
-        );
-        assert!(
-            categories(&s).contains(&"arbitrary-cpi".to_string()),
-            "a real Solitaire handler taking &ExecutionContext first must still be \
-             an entry point; got {:?}",
-            categories(&s)
     fn account_reinitialization_does_not_fire_when_is_initialized_is_checked() {
         let src = r#"
             fn initialize_vault(vault: AccountInfo) {
@@ -1295,11 +1319,12 @@ mod eng3_smoke_test_real_fixture {
         // pre-existing check as arbitrary-cpi, not one of ENG-3's four new
         // additions — the point here is confirming the *fix* generalizes to
         // real code, not re-testing logic already covered above.
-        let scanner = analyze_file(
-            std::path::Path::new("cashio-2022.rs"),
-            CASHIO_FIXTURE,
-        );
-        let categories: Vec<&str> = scanner.findings.iter().map(|f| f.category.as_str()).collect();
+        let scanner = analyze_file(std::path::Path::new("cashio-2022.rs"), CASHIO_FIXTURE);
+        let categories: Vec<&str> = scanner
+            .findings
+            .iter()
+            .map(|f| f.category.as_str())
+            .collect();
         assert!(
             categories.contains(&"type-cosplay"),
             "expected type-cosplay on the real Cashio fixture, got categories: {:?}",
