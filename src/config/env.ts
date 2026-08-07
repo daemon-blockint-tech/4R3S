@@ -141,7 +141,66 @@ function loadEnv(): AresEnv {
   return parsed.data;
 }
 
+/**
+ * Loopback hosts, where an API key is a placeholder the server ignores.
+ *
+ * LM Studio, Ollama and llama.cpp all accept any string — their own docs tell
+ * you to send `lm-studio` or `not-needed`.
+ */
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
+
+/**
+ * True when the model endpoint and the key can never work together.
+ *
+ * A remote endpoint reached with a local placeholder key is not a judgement
+ * call — it is a guaranteed 401. The combination arises from exactly the edit
+ * that produced it here: a `.env` carrying both an OpenRouter block and an
+ * LM Studio block, where one of the two `OPENROUTER_BASE_URL` lines is removed
+ * or commented out and the key from the *other* block survives. Nothing then
+ * reports the pairing until an LLM node dies several layers down, as
+ * `401 Missing Authentication header` — a message about the request, not about
+ * the configuration that built it.
+ *
+ * Deliberately narrow, and a warning rather than a failure: only a NON-loopback
+ * host with a key outside the `sk-` family trips it. A real OpenRouter or OpenAI
+ * key passes; every local placebo (`lm-studio`, `local`, `none`, `not-needed`)
+ * fails. A rule that fired on anything less certain would be noise, and this
+ * codebase has already retired two checks for exactly that.
+ */
+export function modelEndpointMismatch(
+  baseUrl: string,
+  apiKey: string,
+): string | undefined {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return `OPENROUTER_BASE_URL is not a valid URL: ${baseUrl}`;
+  }
+  if (LOOPBACK.has(host)) return undefined;
+  if (apiKey.startsWith("sk-")) return undefined;
+  return (
+    `OPENROUTER_BASE_URL points at ${host} (remote) but OPENROUTER_API_KEY is ` +
+    `${JSON.stringify(apiKey.slice(0, 12))} — a local placeholder, not a remote ` +
+    `key. This pairing always fails with 401. Point the base URL at your local ` +
+    `server, or supply the key for ${host}.`
+  );
+}
+
 export const env = loadEnv();
+
+/**
+ * The mismatch for the loaded config, or undefined.
+ *
+ * Computed here but NOT logged here: `config/logger.ts` imports this module, so
+ * importing the logger back would be a cycle. Callers report it — see
+ * `logStartupConfig` in `index.ts`, which prints the effective endpoint anyway.
+ */
+export const modelEndpointWarning = modelEndpointMismatch(
+  env.OPENROUTER_BASE_URL,
+  env.OPENROUTER_API_KEY,
+);
+
 
 /**
  * Postgres connection string built from individual env vars.
