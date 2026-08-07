@@ -146,7 +146,7 @@ pub fn analyze_file(path: &Path, content: &str) -> AstScanner {
         for param in &handler.params {
             if param.is_account_info && !handler.has_signer_check {
                 scanner.findings.push(AstFinding {
-                    category: "signer-authorization".to_string(),
+                    category: "missing-signer-check".to_string(),
                     severity: "Critical".to_string(),
                     file: path.to_path_buf(),
                     line: 0,
@@ -193,6 +193,16 @@ pub fn analyze_file(path: &Path, content: &str) -> AstScanner {
                     taint.mark_param(&param_name, &ty_str);
                 }
             }
+            // Walk the function body — without this, TaintEngine's Visit impl
+            // (and everything in process_stmt/process_expr: arbitrary-cpi,
+            // type-cosplay, owner-assignment, arithmetic, casts) never runs at
+            // all. Params were being tainted correctly, but nothing was ever
+            // checked against a sink — taint.findings stayed permanently empty.
+            taint.visit_item_fn(func);
+
+            // Function-level guards (reinit, close-revival) — these aren't a
+            // dataflow chain, so they're checked once per function directly.
+            taint.check_function_level_patterns(&func.sig.ident.to_string(), &func.block);
         }
     }
 
@@ -988,6 +998,139 @@ mod tests {
             categories(&s).contains(&"signer-authorization".to_string()),
             "expected signer-authorization, got {:?}",
             categories(&s)
+mod eng3_taint_sources_sinks {
+    //! ENG-3: real test coverage for all 6 taint classes this task covers,
+    //! against the canonical catalog IDs from Gilbert's ENG-2 merge
+    //! (src/knowledge/solana-vulns.ts) — sealevel-attacks style: a
+    //! vulnerable case per class, and a guarded/safe case where a
+    //! meaningful negative is actually possible.
+    use super::*;
+
+    fn findings_for(src: &str) -> Vec<AstFinding> {
+        analyze_file(std::path::Path::new("test.rs"), src).findings
+    }
+
+    fn has_category(findings: &[AstFinding], category: &str) -> bool {
+        findings.iter().any(|f| f.category == category)
+    }
+
+    // --- missing-signer-check --------------------------------------------
+
+    #[test]
+    fn missing_signer_check_fires_on_unchecked_account_info() {
+        let src = r#"
+            fn withdraw(admin: AccountInfo, amount: u64) {
+                let _ = amount;
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "missing-signer-check"),
+            "expected missing-signer-check, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn missing_signer_check_does_not_fire_when_is_signer_is_checked() {
+        let src = r#"
+            fn withdraw(admin: AccountInfo, amount: u64) {
+                if !admin.is_signer {
+                    return;
+                }
+                let _ = amount;
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            !has_category(&findings, "missing-signer-check"),
+            "did not expect missing-signer-check once is_signer is checked, got: {:?}",
+            findings
+        );
+    }
+
+    // --- missing-owner-check ----------------------------------------------
+
+    #[test]
+    fn missing_owner_check_fires_when_owner_assigned_from_tainted_source() {
+        let src = r#"
+            fn set_config(new_owner: AccountInfo) {
+                config.owner = new_owner;
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "missing-owner-check"),
+            "expected missing-owner-check, got: {:?}",
+            findings
+        );
+    }
+
+    // --- non-canonical-bump ------------------------------------------------
+
+    #[test]
+    fn non_canonical_bump_fires_on_create_program_address_with_tainted_arg() {
+        let src = r#"
+            fn derive_pda(data: &[u8], seed: &[u8]) {
+                let pda = create_program_address(&[seed, data], &program_id);
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "non-canonical-bump"),
+            "expected non-canonical-bump, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn non_canonical_bump_does_not_fire_on_find_program_address() {
+        // find_program_address is the safe API — always derives the one
+        // canonical bump itself, rather than trusting a caller-supplied one.
+        let src = r#"
+            fn derive_pda(data: &[u8], seed: &[u8]) {
+                let pda = find_program_address(&[seed, data], &program_id);
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            !has_category(&findings, "non-canonical-bump"),
+            "did not expect non-canonical-bump for find_program_address, got: {:?}",
+            findings
+        );
+    }
+
+    // --- arbitrary-cpi -------------------------------------------------------
+
+    #[test]
+    fn arbitrary_cpi_fires_when_invoke_receives_tainted_data() {
+        let src = r#"
+            fn withdraw(target_program: AccountInfo, data: &[u8]) {
+                invoke(target_program, data);
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "arbitrary-cpi"),
+            "expected arbitrary-cpi, got: {:?}",
+            findings
+        );
+    }
+
+    // --- account-reinitialization --------------------------------------------
+
+    #[test]
+    fn account_reinitialization_fires_when_init_never_checks_is_initialized() {
+        let src = r#"
+            fn initialize_vault(vault: AccountInfo) {
+                let _ = vault;
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "account-reinitialization"),
+            "expected account-reinitialization, got: {:?}",
+            findings
         );
     }
 
@@ -1078,6 +1221,89 @@ mod tests {
             "a real Solitaire handler taking &ExecutionContext first must still be \
              an entry point; got {:?}",
             categories(&s)
+    fn account_reinitialization_does_not_fire_when_is_initialized_is_checked() {
+        let src = r#"
+            fn initialize_vault(vault: AccountInfo) {
+                if vault.is_initialized {
+                    return;
+                }
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            !has_category(&findings, "account-reinitialization"),
+            "did not expect account-reinitialization once is_initialized is checked, got: {:?}",
+            findings
+        );
+    }
+
+    // --- account-close-revival ------------------------------------------------
+
+    #[test]
+    fn account_close_revival_fires_when_lamports_zeroed_but_data_is_not() {
+        let src = r#"
+            fn close_account(account: AccountInfo) {
+                **account.lamports.borrow_mut() = 0;
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "account-close-revival"),
+            "expected account-close-revival, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn account_close_revival_does_not_fire_when_data_is_also_zeroed() {
+        let src = r#"
+            fn close_account(account: AccountInfo) {
+                **account.lamports.borrow_mut() = 0;
+                let mut data = account.data.borrow_mut();
+                data.fill(0);
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            !has_category(&findings, "account-close-revival"),
+            "did not expect account-close-revival once data is also zeroed, got: {:?}",
+            findings
+        );
+    }
+}
+
+#[cfg(test)]
+mod eng3_smoke_test_real_fixture {
+    //! Everything above uses small, synthetic snippets written specifically
+    //! to exercise each check — useful, but it's still code shaped around
+    //! the implementation. This runs the real, independently-authored
+    //! Cashio incident-repro fixture (eval/fixtures/rs/incident-repros/) —
+    //! a stylized reproduction of the real ~$52M Cashio exploit, not
+    //! written with this taint engine in mind at all — as a genuine smoke
+    //! test that the wiring fix generalizes beyond my own test cases.
+    use super::*;
+
+    const CASHIO_FIXTURE: &str =
+        include_str!("../../../../eval/fixtures/rs/incident-repros/cashio-2022.rs");
+
+    #[test]
+    fn wiring_fix_detects_type_cosplay_in_the_real_cashio_fixture() {
+        // Cashio's real bug: `Bank::try_from_slice(&bank.data.borrow())` on a
+        // raw, untyped AccountInfo with no owner/discriminator check first —
+        // exactly the type-cosplay sink this engine already had logic for,
+        // which was dead code before the wiring fix. This is the same
+        // pre-existing check as arbitrary-cpi, not one of ENG-3's four new
+        // additions — the point here is confirming the *fix* generalizes to
+        // real code, not re-testing logic already covered above.
+        let scanner = analyze_file(
+            std::path::Path::new("cashio-2022.rs"),
+            CASHIO_FIXTURE,
+        );
+        let categories: Vec<&str> = scanner.findings.iter().map(|f| f.category.as_str()).collect();
+        assert!(
+            categories.contains(&"type-cosplay"),
+            "expected type-cosplay on the real Cashio fixture, got categories: {:?}",
+            categories
         );
     }
 }

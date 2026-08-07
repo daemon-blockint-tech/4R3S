@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from pathlib import Path
 
 from arq.connections import RedisSettings
@@ -17,6 +18,8 @@ from arq.connections import RedisSettings
 REPO_ROOT = Path(__file__).resolve().parents[2]  # apps/auditor-api/worker.py -> 4R3S/
 AUDIT_TIMEOUT_SECS = 600  # observed ~123s/target with source injection; generous margin
 MAX_CONCURRENT_AUDITS = 2  # daily LLM quota is the real constraint, not CPU
+
+NPM_BIN = shutil.which("npm") or "npm"
 
 
 async def run_audit(ctx, job_id: str, source: str) -> None:
@@ -49,7 +52,7 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
     caller can wrap every failure path in one place."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "npm", "run", "audit", "--", "--source", source,
+            NPM_BIN, "run", "audit", "--", "--source", source,
             cwd=REPO_ROOT,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -91,15 +94,20 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
         await _set_status(redis, job_id, status="done", report=report)
         return
 
-    # NOTE: src/index.ts currently exits 1 for both a real audit failure and a
-    # billing-settlement failure (InsufficientCreditsError) — it does not yet
-    # distinguish them with a separate exit code. Distinguishing those two
-    # cases would require a change to src/index.ts itself, which is out of
-    # scope for ORC-1 (Home: apps/auditor-api) — that CLI is a separate,
-    # already-shipping product surface and changing its contract is its own
-    # task, not bundled here. This worker therefore reports every nonzero
-    # exit as a generic failure for now; see docs/KR-1-FINDINGS.md-style
-    # follow-up if the billing/failure distinction becomes needed later.
+    if proc.returncode == 2:
+        # src/index.ts now exits 2 specifically for InsufficientCreditsError
+        # (exit 1 remains a generic audit failure). The actual message —
+        # "Insufficient credits: need X, have Y..." — already reaches stderr
+        # via logger.error there, so _last_error_line finds it unchanged;
+        # this branch only needs to pick the right *status* label for it.
+        await _set_status(
+            redis, job_id, status="payment_required",
+            error=_last_error_line(stderr_text),
+        )
+        return
+
+    # NOTE: this used to be the only path for any nonzero exit, before
+    # src/index.ts distinguished billing failures with exit code 2 above.
     await _set_status(
         redis, job_id, status="failed", error=_last_error_line(stderr_text)
     )
@@ -148,3 +156,4 @@ class WorkerSettings:
     functions = [run_audit]
     redis_settings = RedisSettings()
     max_jobs = MAX_CONCURRENT_AUDITS
+

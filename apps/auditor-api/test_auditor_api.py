@@ -283,3 +283,187 @@ def test_a_symlink_pointing_out_of_the_root_is_rejected(tmp_path, monkeypatch):
     finally:
         if link.is_symlink():
             link.unlink()
+class TestBillingExitCodeDistinction:
+    """src/index.ts exits 2 specifically for InsufficientCreditsError, distinct
+    from exit 1 for a generic audit failure — see the NOTE this replaced in
+    worker.py. Before this, both looked identical to any caller polling the
+    API: a bare "failed" status with no way to tell "out of credits" apart
+    from "the audit itself broke"."""
+
+    class _RecordingRedis:
+        def __init__(self):
+            self.writes: list[dict] = []
+
+        async def set(self, key, value, ex=None):
+            self.writes.append(json.loads(value))
+
+    class _FakeProc:
+        def __init__(self, returncode: int, stdout: bytes, stderr: bytes):
+            self.returncode = returncode
+            self._stdout = stdout
+            self._stderr = stderr
+
+        async def communicate(self):
+            return self._stdout, self._stderr
+
+    def _stderr_line(self, err: str) -> bytes:
+        return (json.dumps({"level": "error", "component": "ares", "err": err}) + "\n").encode()
+
+    def test_exit_code_2_is_recorded_as_payment_required_not_failed(self, monkeypatch):
+        redis = self._RecordingRedis()
+        stderr = self._stderr_line("Insufficient credits: need 500, have 120 (on-demand exhausted or disabled)")
+
+        async def fake_exec(*args, **kwargs):
+            return self._FakeProc(returncode=2, stdout=b"", stderr=stderr)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+        asyncio.run(worker.run_audit({"redis": redis}, "job-1", "target.rs"))
+
+        statuses = [w["status"] for w in redis.writes]
+        assert statuses == ["running", "payment_required"]
+        assert "Insufficient credits" in redis.writes[-1]["error"]
+
+    def test_exit_code_1_is_still_a_generic_failed_not_payment_required(self, monkeypatch):
+        # The regression this guards against: accidentally widening the
+        # returncode == 2 check to catch exit 1 too, collapsing the very
+        # distinction this whole change exists to make.
+        redis = self._RecordingRedis()
+        stderr = self._stderr_line("some unrelated analyzer crash")
+
+        async def fake_exec(*args, **kwargs):
+            return self._FakeProc(returncode=1, stdout=b"", stderr=stderr)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+        asyncio.run(worker.run_audit({"redis": redis}, "job-1", "target.rs"))
+
+        statuses = [w["status"] for w in redis.writes]
+        assert statuses == ["running", "failed"]
+        assert "unrelated analyzer crash" in redis.writes[-1]["error"]
+class TestCveSnapshotInfo:
+    """GET /cve/snapshot reports the manifest of whichever advisory DB
+    revision is actually loaded, so a report generated from a /cve/scan call
+    can cite exactly which snapshot produced it (services/cve/README.md:
+    refreshing the snapshot changes future results with no other record of
+    which revision a past result came from)."""
+
+    def test_returns_the_real_committed_snapshots_manifest(self):
+        client = TestClient(main.app)
+        resp = client.get("/cve/snapshot")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["advisory_count"] > 1000  # real snapshot has 1169 at plan time
+        assert body["source"] == "https://github.com/rustsec/advisory-db.git"
+
+    def test_snapshot_load_failure_is_503_not_a_crash(self, monkeypatch):
+        # A missing/corrupt services/cve/snapshot/ must degrade this endpoint,
+        # never the unrelated /audits endpoints in the same process — see
+        # _get_advisory_db's docstring for why the load is lazy, not
+        # module-import-time.
+        monkeypatch.setattr(main, "_ADVISORY_DB", None)
+        monkeypatch.setattr(main, "_ADVISORY_DB_LOAD_ERROR", None)
+
+        def blow_up(*args, **kwargs):
+            raise main.SnapshotError("simulated missing snapshot")
+
+        monkeypatch.setattr(main.AdvisoryDB, "load", staticmethod(blow_up))
+        client = TestClient(main.app)
+        resp = client.get("/cve/snapshot")
+        assert resp.status_code == 503
+        assert "simulated missing snapshot" in resp.json()["detail"]
+
+
+class TestCveScanNoLockfileIsSkippedNotFailed:
+    """An on-chain (`--program <ADDRESS>`) target has no Cargo.lock at all.
+    That must read as `skipped` — deliberately not applicable — never as an
+    empty `ok` (which would look identical to "scanned, found nothing") and
+    never as `failed` (which would look like a broken request)."""
+
+    def test_absent_lockfield_is_skipped(self):
+        client = TestClient(main.app)
+        resp = client.post("/cve/scan", json={})
+        assert resp.status_code == 200
+        assert resp.json()["outcome"] == "skipped"
+
+    def test_null_lockfile_is_skipped(self):
+        client = TestClient(main.app)
+        resp = client.post("/cve/scan", json={"lockfile": None})
+        assert resp.json()["outcome"] == "skipped"
+
+    def test_blank_lockfile_is_skipped_not_failed(self):
+        client = TestClient(main.app)
+        resp = client.post("/cve/scan", json={"lockfile": "   "})
+        assert resp.json()["outcome"] == "skipped"
+
+
+class TestCveScanMalformedLockfileFailsLoudly:
+    def test_garbage_input_is_failed_with_a_detail(self):
+        client = TestClient(main.app)
+        resp = client.post("/cve/scan", json={"lockfile": "{ not toml or json"})
+        body = resp.json()
+        assert body["outcome"] == "failed"
+        assert body["error"]
+
+    def test_oversized_lockfile_is_rejected_before_parsing(self):
+        # Content-in (not a path) means the request body itself must be
+        # bounded, or a large POST could burn parse time before validation.
+        client = TestClient(main.app)
+        huge = "x" * (main._MAX_LOCKFILE_BYTES + 1)
+        resp = client.post("/cve/scan", json={"lockfile": huge})
+        assert resp.status_code == 422
+
+
+class TestCveScanEmptyPackageArrayIsDegraded:
+    def test_no_package_array_at_all_is_failed_not_degraded(self):
+        # Distinct from an empty [] array below: this document isn't even
+        # shaped like a lockfile, so it's a parse failure, not a clean scan
+        # that happened to find zero dependencies.
+        client = TestClient(main.app)
+        resp = client.post("/cve/scan", json={"lockfile": "version = 4\n"})
+        body = resp.json()
+        assert body["outcome"] == "failed"
+
+    def test_empty_package_array_is_degraded(self):
+        client = TestClient(main.app)
+        # A syntactically valid lockfile with a package array that resolved
+        # to zero entries -- distinct from "not a lockfile" above.
+        lockfile_text = "version = 4\npackage = []\n"
+        resp = client.post("/cve/scan", json={"lockfile": lockfile_text})
+        body = resp.json()
+        assert body["outcome"] == "degraded"
+
+
+class TestCveScanAgainstTheRealCommittedLockfile:
+    """Ground truth: scan the repo's own core/Cargo.lock through the real
+    HTTP surface, rather than only unit-testing match.py in isolation. This
+    caught the exact 4 RustSec advisories core-ci.yml's `cargo audit --ignore
+    ...` step already lists as accepted risk (RUSTSEC-2026-0187/0194/0195/
+    0204), confirming this service reproduces that existing gate's findings
+    independently rather than by construction."""
+
+    def test_scanning_core_cargo_lock_finds_the_known_accepted_advisories(self):
+        lockfile_path = REPO_ROOT / "core" / "Cargo.lock"
+        if not lockfile_path.exists():
+            pytest.skip("core/Cargo.lock not present in this checkout")
+        client = TestClient(main.app)
+        resp = client.post("/cve/scan", json={"lockfile": lockfile_path.read_text(encoding="utf-8")})
+        body = resp.json()
+        assert body["outcome"] == "ok"
+        found_ids = {m["advisory_id"] for m in body["matches"]}
+        for accepted in (
+            "RUSTSEC-2026-0187",
+            "RUSTSEC-2026-0194",
+            "RUSTSEC-2026-0195",
+            "RUSTSEC-2026-0204",
+        ):
+            assert accepted in found_ids
+
+    def test_workspace_local_crates_are_excluded_from_the_scanned_count(self):
+        lockfile_path = REPO_ROOT / "core" / "Cargo.lock"
+        if not lockfile_path.exists():
+            pytest.skip("core/Cargo.lock not present in this checkout")
+        client = TestClient(main.app)
+        resp = client.post("/cve/scan", json={"lockfile": lockfile_path.read_text(encoding="utf-8")})
+        body = resp.json()
+        assert body["dependencies_skipped_local"] >= 7  # ares-core, ares-mapper, etc.

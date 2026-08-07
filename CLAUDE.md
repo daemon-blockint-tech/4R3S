@@ -42,6 +42,15 @@ services/     detector & data services — risk · cve · family · evidence    
 packages/     shared PERMISSIVE TS packages                                 [planned, README]
               The code these were to hold currently lives under src/
               (knowledge · billing · retrieval · memory). No migration yet.
+core/         Rust cargo workspace ROOT — deterministic engine (ARES-v3, landed via ENG-1)
+              ├─ crates/ ares-cli · ares-core · ares-mapper · ares-trident · ares-policy · ares-orchestrator · ares-report
+src/          the shipping TS auditor TODAY (single root npm package) — graph · knowledge · retrieval ·
+              memory · llm · persistence · billing · config · tools. PLAT-1 splits these into packages/*.
+services/     detector & data services (from ARES-AGENT) — risk · cve · family · evidence   [Rust/Py]
+packages/     shared PERMISSIVE TS packages — PLAT-1 TARGET, still README stubs. Source→target
+              mapping + migration plan: docs/PLAT-1-MIGRATION-MAP.md
+              ├─ knowledge (canonical vuln catalog + memory + retrieval)
+              ├─ report · orchestration · billing · config · ui (shared design system)
 apps/
   auditor-api/   agent plane — FastAPI + Arq worker            [real, own CI job]      [Py]
   auditor-web/   dashboard + landing                           [real, own CI workflow] [Next]
@@ -56,6 +65,9 @@ docs/         PRD.md · DEVELOPMENT_PLAN.md · BACKLOG.xlsx
 - **Rust** (stable) — `core/`. The cargo workspace root is `core/`, **not** the repo root; every cargo command needs `cd core` first.
 - **TypeScript** — root `src/` on **npm** (this is the shipping auditor); `apps/auditor-web` and `apps/ares-sec` each have their own `package.json` and CI. `pnpm-workspace.yaml` globs `packages/*` and `apps/*`, but `packages/*` holds no packages — see Commands before reaching for pnpm.
 - **Python** — `apps/auditor-api` (FastAPI + Arq, own CI job) and `eval/` (pytest).
+- **Rust** (stable) — `core/`, most of `services/`. Cargo workspace at root.
+- **TypeScript** (npm) — root `src/`, `packages/*` (stubs), `apps/ares-sec`. `apps/auditor-web` is a standalone **pnpm** app with its own lockfile.
+- **Python** — `apps/auditor-api`, parts of `services/` (CVE, family, eval).
 - **Data:** Postgres, Supabase (pgvector), Neo4j — all optional; the engine runs without them.
 
 ## How work maps to tasks
@@ -75,13 +87,12 @@ Phases: **P0** = consolidation/licensing gate (do first) · **P1** = Auditor MVP
 ## Commands
 
 **What actually works today.** The shipping auditor is the TypeScript agent at
-root `src/`, built with **npm** — not pnpm. `pnpm-workspace.yaml`
-globs `packages/*` and `apps/*`, but `packages/*` are still README stubs (the
+root `src/`, built with **npm**. `packages/*` are still README stubs (the
 `src/*` migration hasn't happened), so the Auditor's real suites live under root
-`src/` and run via `npm test` — **not** pnpm. (`apps/ares-sec` has its own
-`package.json` + separate `npm` CI in `ares-sec-ci.yml`.) An agent that "passes"
-by running `pnpm -r test` on the stubs would report success while testing nothing
-real. CI is authoritative and uses `npm ci`.
+`src/` and run via `npm test`. (`apps/ares-sec` has its own `package.json` +
+separate `npm` CI in `ares-sec-ci.yml`; `apps/auditor-web` is a self-contained
+**pnpm** app with its own lockfile — the only pnpm in the repo.) CI is
+authoritative and uses `npm ci`.
 
 ```bash
 # TS auditor (root src/) — this is the real build
