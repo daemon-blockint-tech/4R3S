@@ -1,0 +1,28 @@
+# Keep the build context small and, more importantly, keep secrets and foreign
+# build outputs out of the image. `.env` holds live API keys — it is supplied at
+# run time via --env-file, never baked in.
+.env
+.env.*
+!.env.example
+
+.git
+.github
+node_modules
+dist
+target
+.pytest_cache
+
+# Other products in the monorepo: not part of the Auditor image.
+apps
+core
+services
+packages
+eval
+datasets
+docs
+supabase
+
+**/*.test.ts
+**/__tests__
+*.md
+!README.md
