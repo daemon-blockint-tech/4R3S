@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+# crates.io rejects an upload with "missing or empty metadata fields:
+# description", and ares-core is published first — without this the release
+# job dies on its very first command, after the GitHub release is already public.
+description = "Shared domain types, findings model, and errors for ARES V3"
 
 [dependencies]
 thiserror = { workspace = true }

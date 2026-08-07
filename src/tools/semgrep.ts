@@ -13,6 +13,7 @@
  * `failed`/`degraded` analyzer outcome so the report can say so.
  */
 import { spawn } from "node:child_process";
+import { SKIP_DIRS } from "./source.js";
 import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -65,6 +66,16 @@ export interface SemgrepResult {
    * analyzer degrades so the report says coverage was partial.
    */
   partial?: string;
+  /**
+   * Files semgrep actually opened.
+   *
+   * This was parsed and thrown away, so nothing downstream could ask the one
+   * question that matters about a scanner whose file set the AUDITED PARTY can
+   * influence: which code did it really read? A committed `.semgrepignore` (which
+   * `--no-git-ignore` does NOT disable) hides files while leaving `scanned`
+   * non-empty, so the zero-file guard never fires and the analyzer reports `ok`.
+   */
+  scanned?: string[];
 }
 
 interface SemgrepJson {
@@ -149,6 +160,13 @@ export async function runSemgrep(
           // analyzer used to render as `ok` — a clean audit of code nobody
           // scanned. The audited party controls that file.
           "--no-git-ignore",
+          // Same directory list the source loader skips, from the same
+          // definition. Without this the two walkers disagree: semgrep opens
+          // `target/`, which SKIP_DIRS excludes, so a hit in generated code
+          // becomes a `static` finding — and `canBeConfirmed` promotes those
+          // unconditionally, past the `citesLoadedFile` check that would have
+          // rejected a path the loader never read.
+          ...[...SKIP_DIRS].flatMap((d) => ["--exclude", d]),
           "--config",
           config,
           // End-of-options: a target path starting with "-" must not be
@@ -307,7 +325,7 @@ export async function runSemgrep(
             "Semgrep completed with parse warnings; findings kept, coverage partial",
           );
         }
-        finish({ available: true, findings, partial });
+        finish({ available: true, findings, partial, scanned });
       } catch (err) {
         logger.warn(
           { component: "semgrep", err: String(err) },

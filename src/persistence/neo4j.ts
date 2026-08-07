@@ -5,7 +5,12 @@
  * configured. Downstream code treats `undefined` as "graph layer unavailable"
  * and skips graph expansion, so the agent runs fine without Neo4j.
  */
-import neo4j, { type Driver, type Session, type SessionMode } from "neo4j-driver";
+import neo4j, {
+  type Driver,
+  type QueryResult,
+  type Session,
+  type SessionMode,
+} from "neo4j-driver";
 
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
@@ -63,39 +68,68 @@ export function hasNeo4j(): boolean {
  */
 export const NEO4J_TX_CONFIG = { timeout: env.NEO4J_TIMEOUT_MS };
 
-/** Run `fn` with a fresh session in `mode`, always closing it afterward. */
+/**
+ * The session surface callers get: `run`, with the deadline already applied.
+ *
+ * Handing out the raw driver `Session` made the deadline above opt-in, and
+ * three of the four call sites opted out by simply not passing a third
+ * argument — including the REMEMBER writeback (`knowledge-writer.ts`) that the
+ * driver comment names as the reason deadlines exist here at all. A stalled
+ * write on that path never settles, so the `try/catch` around it never fires
+ * and the audit hangs after VERIFY with no further log line. Narrowing the type
+ * is what makes forgetting impossible rather than merely discouraged.
+ */
+export interface Neo4jSession {
+  run(cypher: string, params?: Record<string, unknown>): Promise<QueryResult>;
+}
+
+/** Bind `NEO4J_TX_CONFIG` to a session's `run`. */
+export function deadlined(session: Pick<Session, "run">): Neo4jSession {
+  return {
+    run: (cypher, params) => session.run(cypher, params, NEO4J_TX_CONFIG),
+  };
+}
+
+/**
+ * Run `fn` with a fresh session, always closing it afterward. Returns
+ * `undefined` when the driver is not configured.
+ */
 async function withSession<T>(
   mode: SessionMode,
-  fn: (session: Session) => Promise<T>,
+  fn: (session: Neo4jSession) => Promise<T>,
 ): Promise<T | undefined> {
   const driver = getNeo4jDriver();
   if (!driver) return undefined;
   const session = driver.session({ defaultAccessMode: mode });
   try {
-    return await fn(session);
+    return await fn(deadlined(session));
   } finally {
     await session.close();
   }
 }
 
-/**
- * Run `fn` with a fresh READ session. Returns `undefined` when the driver is
- * not configured.
- */
+/** Read-only session (queries, traversals). Routed to a replica in a cluster. */
 export async function withNeo4jSession<T>(
-  fn: (session: Session) => Promise<T>,
+  fn: (session: Neo4jSession) => Promise<T>,
 ): Promise<T | undefined> {
   return withSession(neo4j.session.READ, fn);
 }
 
 /**
- * As `withNeo4jSession`, but WRITE mode, for MERGE/DDL statements. A write
- * issued on a READ-mode session is rejected by servers that enforce access
- * modes, and the callers treat write failures as non-fatal — so graph memory
- * would silently never persist at all.
+ * Write session, for `MERGE` and DDL. Routed to the leader.
+ *
+ * The mode is not an optimisation. Neo4j routes READ sessions to replicas, and
+ * a replica REJECTS writes — so a `MERGE` issued on a READ session fails against
+ * any clustered deployment while passing silently on a single instance, where
+ * every session is the leader. Collapsing both into one READ helper therefore
+ * breaks writeback exactly where it is hardest to notice: in production, not in
+ * local testing.
+ *
+ * Callers that mutate the graph: `knowledge-writer` (the REMEMBER writeback),
+ * `scripts/migrate`, `scripts/ingest-solsec`.
  */
 export async function withNeo4jWriteSession<T>(
-  fn: (session: Session) => Promise<T>,
+  fn: (session: Neo4jSession) => Promise<T>,
 ): Promise<T | undefined> {
   return withSession(neo4j.session.WRITE, fn);
 }

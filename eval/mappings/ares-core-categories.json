@@ -1,16 +1,17 @@
 {
   "mapping_kind": "category-vocabulary",
-  "source": "core::ares_core::VulnerabilityCategory (Rust, core/crates/ares-core/src/lib.rs:51-72) -- 20 variants, verified by direct read, not by count in a prior summary",
+  "source": "core::ares_core::VulnerabilityCategory (Rust, core/crates/ares-core/src/lib.rs:51-73) -- 21 variants, verified by direct read, not by count in a prior summary",
   "target": "VULN_CATALOG ids (TypeScript, src/knowledge/solana-vulns.ts)",
   "notes": [
-    "Two independently-evolved vocabularies -- 20 Rust variants vs. 29 VULN_CATALOG ids -- with only 3 verbatim string matches: type-cosplay, arbitrary-cpi, account-data-matching. Everything else below is a human judgement call, not a formal equivalence. Read this before quoting any precision/recall number derived through this mapping.",
+    "Two independently-evolved vocabularies -- 21 Rust variants vs. 34 VULN_CATALOG ids -- with 8 verbatim string matches: type-cosplay, arbitrary-cpi, account-data-matching, pda-privileges, reentrancy-risk, missing-revalidation, fuzzing-crash, state-transition-gap (the last 5 added by ENG-2, which also added matching catalog entries for categories that previously had none). Everything else below is a human judgement call, not a formal equivalence. Read this before quoting any precision/recall number derived through this mapping.",
     "duplicate-mutable-accounts (Rust, plural) vs duplicate-mutable-account (Python/TS, singular) look like a typo-level mismatch but are two independently spelled strings in two independently maintained files. Without this explicit mapping entry, score_detections.py's default exact-match category key would silently score every true positive on this category as a miss.",
     "close-account and revival-attack (two distinct Rust variants) both plausibly map to the single VULN_CATALOG id account-close-revival -- a many-to-one collapse. This means the Rust vocabulary is finer-grained here, not that it is redundant; both still map, since the ground truth only ever asks for account-close-revival.",
     "signer-authorization and missing-signer (two distinct Rust enum variants, lib.rs:54,68) both plausibly mean 'missing signer check' in practice -- both map to missing-signer-check.",
     "account-reloading, re-initialization, and revival-attack are handled distinctly in Rust's from_str_checked/Display (lib.rs:106-125) even though they alias together in Rust's own parser in one spot -- this mapping keeps them as three separate Rust source categories mapped to three separate VULN_CATALOG ids (missing-reload-after-cpi, account-reinitialization, account-close-revival) since that is the finer distinction the catalog actually supports; only close-account collapses together with revival-attack per the note above.",
-    "fuzzing-crash and invariant-violation are engine-internal categories that (per this repo's own scope) can only be produced by a --fuzz run. The scan-only pass this mapping was built for (--fuzz false) should never emit fuzzing-crash in practice; its entry here is informational, not exercised, for a first measurement. invariant-violation is mapped to business-logic-error as a coarse stretch since it can also surface from cross-instruction static analysis, not only fuzzing.",
+    "fuzzing-crash and invariant-violation are engine-internal categories that (per this repo's own scope) can only be produced by a --fuzz run. The scan-only pass this mapping was built for (--fuzz false) should never emit fuzzing-crash in practice; ENG-2 gave it a real catalog id (its own name, exact match) so it now scores correctly whenever a --fuzz pass does emit it. invariant-violation is mapped to business-logic-error as a coarse stretch since it can also surface from cross-instruction static analysis, not only fuzzing.",
+    "state-transition-gap (added by ENG-2) is emitted by ares-mapper's cross_analysis::find_state_transition_gaps but, before ENG-2, had no Rust enum variant at all -- scan.rs's from_str_checked(...).unwrap_or(InvariantViolation) silently mislabeled every one of these findings as invariant-violation. Both the Rust variant and this mapping entry are new; it maps to itself, exact confidence.",
     "Rust categories with no defensible VULN_CATALOG equivalent are mapped to null and scored downstream as the literal string 'other' -- by design. Forcing a bad mapping to inflate recall/precision would defeat the point of measuring anything. An unmapped category genuinely has no ground-truth correspondence to be credited against.",
-    "generic is Rust's catch-all/fallback category (lib.rs:71) with no defensible single VULN_CATALOG equivalent -- mapped to null/other, same as the other unmapped entries, not given special treatment.",
+    "generic is Rust's catch-all/fallback category (lib.rs:72) with no defensible single VULN_CATALOG equivalent -- mapped to null/other, same as the other unmapped entries, not given special treatment. ENG-2 deliberately excluded it from the catalog rather than forcing a misleading CWE onto plumbing that isn't a real vulnerability class.",
     "'confidence' field below is this mapping's own quality flag on the TRANSLATION (exact | semantic | semantic-plural-mismatch | coarse-stretch | not-applicable-static-scan | unmapped), unrelated to Finding.confidence (a float on the Rust side) or the CSV 'confidence' column (low/medium/high bucket of that float) -- three different things named similarly across three different files; do not conflate them when reading this file or the converter script."
   ],
   "categories": {
@@ -29,10 +30,11 @@
     "unchecked-cast": { "vuln_catalog_id": "unsafe-type-cast", "confidence": "semantic" },
     "invariant-violation": { "vuln_catalog_id": "business-logic-error", "confidence": "coarse-stretch" },
     "initialization-frontrunning": { "vuln_catalog_id": "insecure-init-order", "confidence": "coarse-stretch" },
-    "pda-privileges": { "vuln_catalog_id": null, "confidence": "unmapped" },
-    "reentrancy-risk": { "vuln_catalog_id": null, "confidence": "unmapped" },
-    "missing-revalidation": { "vuln_catalog_id": null, "confidence": "unmapped" },
-    "fuzzing-crash": { "vuln_catalog_id": null, "confidence": "not-applicable-static-scan" },
+    "pda-privileges": { "vuln_catalog_id": "pda-privileges", "confidence": "exact" },
+    "reentrancy-risk": { "vuln_catalog_id": "reentrancy-risk", "confidence": "exact" },
+    "missing-revalidation": { "vuln_catalog_id": "missing-revalidation", "confidence": "exact" },
+    "state-transition-gap": { "vuln_catalog_id": "state-transition-gap", "confidence": "exact" },
+    "fuzzing-crash": { "vuln_catalog_id": "fuzzing-crash", "confidence": "exact" },
     "generic": { "vuln_catalog_id": null, "confidence": "unmapped" }
   }
 }

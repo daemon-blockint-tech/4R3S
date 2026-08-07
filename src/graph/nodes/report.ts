@@ -178,7 +178,18 @@ export function makeReportNode(deps: GraphDeps) {
         ? `Source read: ${state.source.files.length} of ${state.source.discovered.length} discovered file(s)` +
           (state.source.truncated
             ? " — TRUNCATED at the context budget. State in Scope & Methodology that the unread files were not examined."
-            : ".")
+            : ".") +
+          // `discovered` counts what the walk FOUND, so an unopenable directory
+          // is missing from both sides of that ratio and it reads as full
+          // coverage of a tree whose real size was never learned. Counts only —
+          // the paths come from a tree the audited party controls and belong in
+          // the log, not in a prompt.
+          (state.source.unreadable > 0
+            ? ` ${state.source.unreadable} path(s) could NOT be read and are absent from that count — coverage is unknown, not complete.`
+            : "") +
+          (state.source.skippedLinks > 0
+            ? ` ${state.source.skippedLinks} symlink(s) were not followed by policy and went unexamined.`
+            : "")
         : "Source read: NONE — this was a black-box review. State plainly in Scope & Methodology that no program source was analyzed and that findings are pattern-based hypotheses, not observations.",
       "",
       `Coverage (ANALYZER-ASSERTED, not measured): the analyzers reported` +

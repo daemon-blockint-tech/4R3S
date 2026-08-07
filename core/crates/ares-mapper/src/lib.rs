@@ -16,6 +16,13 @@ pub struct ProgramGraph {
     pub modules: Vec<ModuleNode>,
     pub instructions: Vec<InstructionNode>,
     pub accounts: Vec<AccountNode>,
+    /// Every `struct` in the program, whether or not Anchor manages it.
+    ///
+    /// `accounts` holds only `#[derive(Accounts)]` context structs. A program's
+    /// *data* structs — the ones whose bytes live in an account — carry no such
+    /// attribute, so nothing in the graph could see them, and the type-cosplay
+    /// class had zero predictions across the whole eval corpus.
+    pub data_structs: Vec<DataStructNode>,
     pub cpi_calls: Vec<CpiCall>,
     pub dependencies: Vec<String>,
     pub all_source_files: Vec<PathBuf>,
@@ -30,6 +37,15 @@ pub struct ModuleNode {
 }
 
 /// Effect an instruction has on a specific account.
+///
+/// `extract_account_effects` is the only producer, and it emits `Read`, `Write`
+/// and `CpiPass` only. **`Create` and `Close` are never constructed**: both come
+/// from Anchor `init`/`close` constraints, which live on the accounts struct's
+/// fields, while effects are read out of the instruction *body*. Treat any code
+/// that branches on them as unreachable until the graph links a `Context<T>`
+/// parameter to `T`'s per-field constraints — `find_state_transition_gaps` was
+/// deleted (see cross_analysis.rs) because it read as a live detector and could
+/// not fire.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AccountEffect {
     /// The instruction reads the account (e.g., `ctx.accounts.x.load()`).
@@ -37,8 +53,10 @@ pub enum AccountEffect {
     /// The instruction writes / mutates the account (e.g., `ctx.accounts.x.data = ...`).
     Write,
     /// The instruction creates / initializes the account (e.g., `init` constraint).
+    /// Not produced today — see the type-level note.
     Create,
     /// The instruction closes the account (e.g., `close` constraint).
+    /// Not produced today — see the type-level note.
     Close,
     /// The instruction passes this account into a CPI call.
     CpiPass,
@@ -52,11 +70,42 @@ pub struct InstructionNode {
     pub has_owner_check: Option<bool>,
     pub has_cpi_program_id_check: bool,
     pub uses_cpi: bool,
+    /// True when the body performs arithmetic at all — including the *safe*
+    /// `checked_*` forms. On its own this is not a vulnerability signal; see
+    /// `has_unchecked_arithmetic`.
     pub has_arithmetic: bool,
+    /// True when the body mutates with `+=`/`-=`/`*=`/`/=` and shows no
+    /// `checked_*` call anywhere.
+    ///
+    /// `has_arithmetic` cannot answer this: it is set by `.checked_add(` too, so
+    /// a handler that carefully guards every operation looks identical to one
+    /// that guards none. The only consumer of `has_arithmetic` was the
+    /// hypothesis generator, which therefore proposed "potential arithmetic
+    /// overflow" for correctly-guarded code — the same failure that retired the
+    /// `anchor-constraint-gap` rule (README, Detection accuracy), where 50% of
+    /// hits already carried the constraint the rule asked for.
+    pub has_unchecked_arithmetic: bool,
     pub file_path: PathBuf,
     pub line_number: Option<u32>,
     /// Data-flow effects this instruction has on specific accounts by name.
     pub effects: Vec<(String, AccountEffect)>,
+}
+
+/// A plain `struct` and what it carries to distinguish its own type.
+///
+/// Type cosplay is deserializing one account's bytes as another type. Anchor's
+/// `#[account]` prepends an 8-byte discriminator that makes that fail; a bare
+/// struct has nothing, so any account of the same size decodes cleanly as it.
+#[derive(Debug, Clone, Default)]
+pub struct DataStructNode {
+    pub name: String,
+    /// `#[account]` — Anchor writes and checks an 8-byte type discriminator.
+    pub has_anchor_account_attr: bool,
+    /// A leading field that names the type (`key: Key`, `discriminator`, `tag`).
+    /// The manual equivalent of Anchor's discriminator; Metaplex uses `key: Key`.
+    pub has_discriminator_field: bool,
+    pub field_count: usize,
+    pub file_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -77,6 +126,104 @@ pub struct CpiCall {
     pub instruction: String,
     pub file_path: PathBuf,
     pub line_number: u32,
+}
+
+/// A field whose name says which type the bytes are.
+///
+/// Anchor's `#[account]` writes an 8-byte discriminator; programs that predate
+/// it, or avoid it, put the tag in a field instead — Metaplex uses `key: Key`.
+/// Either one makes deserializing the wrong type fail, which is what type
+/// cosplay needs to be absent.
+fn is_discriminator_field(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "key" | "discriminator" | "account_type" | "tag" | "variant" | "kind" | "state_type"
+    )
+}
+
+/// Collect every `struct` declaration and whether it can identify its own type.
+///
+/// Line-based, matching the rest of this walker: the input is one Solana program
+/// and the shapes are declaration-level, so a full parse buys nothing here that
+/// `ast_scanner` does not already do on the paths that need it.
+fn collect_data_structs(content: &str, path: &Path, out: &mut Vec<DataStructNode>) {
+    let lines: Vec<&str> = content.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if !(trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ")) {
+            continue;
+        }
+        let name = trimmed
+            .trim_start_matches("pub ")
+            .trim_start_matches("struct ")
+            .trim()
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+
+        // Attributes sit above the declaration. Walk back over attribute and
+        // comment lines only, so an unrelated earlier struct's attributes are
+        // never attributed to this one.
+        let mut has_anchor_account_attr = false;
+        let mut j = i;
+        while j > 0 {
+            let above = lines[j - 1].trim();
+            if above.starts_with("#[") {
+                if above.contains("#[account") {
+                    has_anchor_account_attr = true;
+                }
+                j -= 1;
+            } else if above.starts_with("//") || above.is_empty() {
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+
+        // Body up to the closing brace, or the end of the file for a tuple
+        // struct / a truncated snippet.
+        let mut body = String::new();
+        let mut depth = 0usize;
+        for l in lines.iter().skip(i) {
+            depth += l.matches('{').count();
+            body.push_str(l);
+            body.push('\n');
+            if depth > 0 && l.contains('}') {
+                break;
+            }
+        }
+
+        let mut field_count = 0usize;
+        let mut has_discriminator_field = false;
+        for field in body.lines().skip(1) {
+            let f = field.trim();
+            if f.starts_with("//") || f.starts_with("#[") {
+                continue;
+            }
+            if let Some((lhs, _)) = f.split_once(':') {
+                let fname = lhs.trim().trim_start_matches("pub ").trim();
+                if fname.is_empty() || fname.contains(' ') {
+                    continue;
+                }
+                field_count += 1;
+                if is_discriminator_field(fname) {
+                    has_discriminator_field = true;
+                }
+            }
+        }
+
+        out.push(DataStructNode {
+            name,
+            has_anchor_account_attr,
+            has_discriminator_field,
+            field_count,
+            file_path: path.to_path_buf(),
+        });
+    }
 }
 
 impl MapperAgent {
@@ -141,6 +288,14 @@ impl MapperAgent {
                 });
             }
 
+            // Every `struct` in the file, with what it carries to identify its
+            // own type. Collected separately from `accounts` because that list
+            // only holds `#[derive(Accounts)]` context structs — a program's
+            // *data* structs carry no attribute at all, so nothing in the graph
+            // could see them and the type-cosplay class produced zero findings
+            // across the whole eval corpus.
+            collect_data_structs(&content, path, &mut graph.data_structs);
+
             // Detect instructions (functions in #[program] modules)
             for (line_no, line) in content.lines().enumerate() {
                 let line_num = (line_no + 1) as u32;
@@ -196,6 +351,25 @@ impl MapperAgent {
                             || b.contains(" /= ")
                     });
 
+                    // Mutating arithmetic with no `checked_*` guard anywhere in the
+                    // body. Deliberately conservative at the body level rather than
+                    // per-expression: a handler that uses `checked_add` for one
+                    // operation and `+=` for another will not be flagged here. That
+                    // is the right trade for a *hypothesis* — a missed guard is
+                    // recoverable by the later analyzers, whereas flagging guarded
+                    // code trains reviewers to ignore the category entirely.
+                    let has_unchecked_arithmetic = body.as_ref().is_some_and(|b| {
+                        let mutating = b.contains(" += ")
+                            || b.contains(" -= ")
+                            || b.contains(" *= ")
+                            || b.contains(" /= ");
+                        let guarded = b.contains(".checked_")
+                            || b.contains(".saturating_")
+                            || b.contains(".wrapping_")
+                            || b.contains(".overflowing_");
+                        mutating && !guarded
+                    });
+
                     let effects = extract_account_effects(body.as_deref());
 
                     graph.instructions.push(InstructionNode {
@@ -206,6 +380,7 @@ impl MapperAgent {
                         has_cpi_program_id_check: has_cpi_check,
                         uses_cpi,
                         has_arithmetic,
+                        has_unchecked_arithmetic,
                         file_path: path.to_path_buf(),
                         line_number: Some(line_num),
                         effects,
@@ -213,28 +388,30 @@ impl MapperAgent {
                 }
 
                 // Detect account structs (#[derive(Accounts)])
-                if line.contains("#[derive(Accounts)") || line.contains("#[derive(Accounts<") {
-                    // Look for struct definition on next non-blank line
-                    let struct_line = content
+                if derives_accounts(line) {
+                    // The struct is the next line that is neither blank, nor an
+                    // attribute, nor a comment. It used to have to be the next
+                    // non-blank line and to start with `pub struct `, which drops
+                    // the canonical Anchor PDA form outright — `#[instruction(..)]`
+                    // is *mandatory* between the derive and the struct whenever a
+                    // `seeds` constraint references an instruction argument, and a
+                    // doc comment does the same. The struct was then skipped in
+                    // silence: no AccountNode, no warning, and `anchor_field_count`
+                    // / `unchecked_fields` under-count, which is what LocalJudge
+                    // uses to decide whether to suppress findings.
+                    let struct_at = content
                         .lines()
+                        .enumerate()
                         .skip(line_no + 1)
-                        .find(|l| !l.trim().is_empty());
-                    if let Some(sline) = struct_line {
-                        if sline.trim().starts_with("pub struct ") {
-                            let name = sline
-                                .trim()
-                                .strip_prefix("pub struct ")
-                                .and_then(|s| s.split_whitespace().next())
-                                .unwrap_or("UnknownAccounts")
-                                .trim_end_matches("<'info>")
-                                .to_string();
-
-                            // Find the struct body
-                            let rest = &content
-                                .lines()
-                                .skip(line_no + 1)
-                                .collect::<Vec<_>>()
-                                .join("\n");
+                        .find(|(_, l)| {
+                            let t = l.trim();
+                            !t.is_empty() && !t.starts_with('#') && !t.starts_with("//")
+                        });
+                    if let Some((sidx, sline)) = struct_at {
+                        if let Some(name) = struct_name(sline) {
+                            // Find the struct body — from the struct line, not from
+                            // the derive: anything skipped above may carry braces.
+                            let rest = &content.lines().skip(sidx).collect::<Vec<_>>().join("\n");
                             let struct_body = extract_struct_body(rest);
 
                             let is_initialized = struct_body.as_ref().map(|b| {
@@ -436,6 +613,45 @@ fn extract_function_body(text: &str) -> Option<String> {
 /// Extract struct body from text starting at struct declaration.
 fn extract_struct_body(text: &str) -> Option<String> {
     extract_function_body(text)
+}
+
+/// True when `line` is a derive attribute listing `Accounts`.
+///
+/// Compares whole derive entries rather than substrings: `#[derive(Accounts,
+/// Clone)]` is ordinary Anchor and must match, while Solitaire's
+/// `#[derive(FromAccounts)]` is a different framework's macro and must not. The
+/// previous `contains("#[derive(Accounts)")` excluded the multi-derive form,
+/// which is why a Clone-deriving Accounts struct was mapped as if absent.
+fn derives_accounts(line: &str) -> bool {
+    let Some(open) = line.find("#[derive(") else {
+        return false;
+    };
+    let inner = &line[open + "#[derive(".len()..];
+    let inner = inner.split(')').next().unwrap_or("");
+    inner.split(',').any(|d| d.trim() == "Accounts")
+}
+
+/// Struct name from a `struct` declaration line, or `None` if it is not one.
+///
+/// Cuts at the first character that cannot appear in an identifier, so
+/// `pub struct Withdraw<'info> {` yields `Withdraw` for any lifetime name — the
+/// previous `trim_end_matches("<'info>")` left `Withdraw<'a>` intact whenever a
+/// program used a different one.
+fn struct_name(line: &str) -> Option<String> {
+    let t = line.trim();
+    let rest = t
+        .strip_prefix("pub struct ")
+        .or_else(|| t.strip_prefix("struct "))?;
+    let name: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Heuristic extraction of per-account effects from an instruction function body.
@@ -643,5 +859,283 @@ mod tests {
         assert!(!sp.is_anchor_heavy);
         assert_eq!(sp.unchecked_fields, 0);
         assert!(sp.write_accounts.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod accounts_struct_detection_tests {
+    //! `#[derive(Accounts)]` structs were only found when the struct declaration
+    //! was the very next non-blank line and the derive list held nothing else.
+    //! Both assumptions break on ordinary Anchor code, and the failure is silent:
+    //! the struct simply never reaches `graph.accounts`, so every consumer —
+    //! `anchor_field_count`, `unchecked_fields`, `is_anchor_heavy`, the hypothesis
+    //! generator — reasons about a program it believes has no account structs.
+    use super::*;
+    use std::fs;
+
+    async fn accounts_for(src: &str) -> Vec<AccountNode> {
+        let root = std::env::temp_dir().join(format!(
+            "ares-accts-{}-{}",
+            std::process::id(),
+            // distinct per source so parallel test threads do not share a dir
+            src.len() * 31 + src.bytes().map(|b| b as usize).sum::<usize>()
+        ));
+        let dir = root.join("src");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("lib.rs"), src).unwrap();
+        let g = MapperAgent::new(&root).analyze().await.unwrap();
+        fs::remove_dir_all(&root).ok();
+        g.accounts
+    }
+
+    /// `#[instruction(..)]` is not optional decoration: Anchor requires it
+    /// whenever a `seeds` constraint references an instruction argument, so this
+    /// is the canonical PDA struct, not an edge case.
+    #[tokio::test]
+    async fn instruction_attribute_between_derive_and_struct_is_skipped_over() {
+        let accounts = accounts_for(
+            "#[derive(Accounts)]\n\
+             #[instruction(vault_bump: u8)]\n\
+             pub struct Withdraw<'info> {\n\
+             \x20   #[account(mut, seeds = [b\"vault\"], bump = vault_bump)]\n\
+             \x20   pub vault: Account<'info, Vault>,\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(
+            accounts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["Withdraw"],
+            "the seeds-from-argument form must still be mapped"
+        );
+        assert!(
+            accounts[0].seeds.is_some(),
+            "seeds must come from the struct body, not from whatever line \
+             followed the derive"
+        );
+    }
+
+    #[tokio::test]
+    async fn doc_comment_between_derive_and_struct_is_skipped_over() {
+        let accounts = accounts_for(
+            "#[derive(Accounts)]\n\
+             /// Accounts for the withdraw instruction.\n\
+             pub struct Withdraw<'info> {\n\
+             \x20   pub vault: Account<'info, Vault>,\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(accounts.len(), 1, "got {accounts:?}");
+    }
+
+    #[tokio::test]
+    async fn multi_derive_lists_still_count_as_accounts_structs() {
+        let accounts = accounts_for(
+            "#[derive(Accounts, Clone)]\n\
+             pub struct Withdraw<'info> {\n\
+             \x20   pub vault: Account<'info, Vault>,\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(accounts.len(), 1, "got {accounts:?}");
+    }
+
+    /// Solitaire's `FromAccounts` is a different framework's macro; treating it
+    /// as an Anchor Accounts struct would inflate `anchor_field_count`, which
+    /// LocalJudge uses to decide when to *suppress* findings.
+    #[tokio::test]
+    async fn from_accounts_derive_is_not_an_anchor_accounts_struct() {
+        let accounts = accounts_for(
+            "#[derive(FromAccounts)]\n\
+             pub struct Withdraw<'b> {\n\
+             \x20   pub vault: Info<'b>,\n\
+             }\n",
+        )
+        .await;
+        assert!(accounts.is_empty(), "got {accounts:?}");
+    }
+
+    /// A lifetime other than `'info` used to survive into the name, so the struct
+    /// was recorded as `Withdraw<'a>` and never matched by name anywhere.
+    #[tokio::test]
+    async fn struct_name_excludes_any_lifetime_parameter() {
+        let accounts = accounts_for(
+            "#[derive(Accounts)]\n\
+             pub struct Withdraw<'a> {\n\
+             \x20   pub vault: Account<'a, Vault>,\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(
+            accounts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["Withdraw"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod unchecked_arithmetic_tests {
+    use super::*;
+    use std::fs;
+
+    /// Build a one-instruction Anchor-ish program and return its graph.
+    async fn graph_for(body: &str) -> ProgramGraph {
+        let root =
+            std::env::temp_dir().join(format!("ares-arith-{}-{}", std::process::id(), body.len()));
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            format!(
+                "#[program]\npub mod p {{\n    use super::*;\n    pub fn withdraw(ctx: Context<W>) -> Result<()> {{\n{body}\n        Ok(())\n    }}\n}}\n"
+            ),
+        )
+        .unwrap();
+        let mut m = MapperAgent::new(&root);
+        let g = m.analyze().await.unwrap();
+        fs::remove_dir_all(&root).ok();
+        g
+    }
+
+    /// The defect this field exists to fix: `has_arithmetic` is set by
+    /// `.checked_add(` itself, so the hypothesis generator proposed "potential
+    /// arithmetic overflow" for code that guards every operation. Flagging
+    /// already-correct code is what retired `anchor-constraint-gap`.
+    #[tokio::test]
+    async fn checked_arithmetic_is_not_reported_as_unchecked() {
+        let g = graph_for("        vault.total = vault.total.checked_add(amount).unwrap();").await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            !i.has_unchecked_arithmetic,
+            "checked_add must not read as unchecked arithmetic"
+        );
+    }
+
+    #[tokio::test]
+    async fn saturating_and_wrapping_also_count_as_guarded() {
+        for guard in ["saturating_add", "wrapping_add", "overflowing_add"] {
+            let g = graph_for(&format!(
+                "        vault.total = vault.total.{guard}(amount);"
+            ))
+            .await;
+            let i = g.instructions.first().expect("one instruction");
+            assert!(!i.has_unchecked_arithmetic, "{guard} must count as guarded");
+        }
+    }
+
+    #[tokio::test]
+    async fn bare_compound_assignment_is_unchecked() {
+        let g = graph_for("        vault.total += amount;").await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            i.has_unchecked_arithmetic,
+            "`+= ` with no guard in the body is the case worth reporting"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_body_with_no_arithmetic_at_all_is_clean() {
+        let g = graph_for("        msg!(\"noop\");").await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(!i.has_unchecked_arithmetic);
+        assert!(!i.has_arithmetic);
+    }
+}
+
+#[cfg(test)]
+mod data_struct_tests {
+    use super::*;
+
+    fn structs_in(src: &str) -> Vec<DataStructNode> {
+        let mut out = Vec::new();
+        collect_data_structs(src, Path::new("lib.rs"), &mut out);
+        out
+    }
+
+    /// The vulnerable shape: no `#[account]`, no type field. Nothing
+    /// distinguishes these bytes from any other account of the same size.
+    #[test]
+    fn a_bare_struct_carries_no_discriminator() {
+        let s = structs_in(
+            "pub struct PayoutTicket {\n    pub recipient: Pubkey,\n    pub amount_paid: u64,\n}\n",
+        );
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].name, "PayoutTicket");
+        assert!(!s[0].has_anchor_account_attr);
+        assert!(!s[0].has_discriminator_field);
+        assert_eq!(s[0].field_count, 2);
+    }
+
+    /// Anchor writes and checks an 8-byte discriminator, so this is safe and
+    /// must not be flagged — the whole point of the attribute.
+    #[test]
+    fn an_anchor_account_attribute_is_recognised() {
+        let s = structs_in("#[account]\npub struct Vault {\n    pub total: u64,\n}\n");
+        assert_eq!(s.len(), 1);
+        assert!(s[0].has_anchor_account_attr);
+    }
+
+    #[test]
+    fn an_anchor_attribute_survives_a_doc_comment_between_it_and_the_struct() {
+        // `#[account]` / `/// docs` / `pub struct` is ordinary Anchor style.
+        let s =
+            structs_in("#[account]\n/// The vault.\npub struct Vault {\n    pub total: u64,\n}\n");
+        assert!(
+            s[0].has_anchor_account_attr,
+            "doc comment must not detach the attribute"
+        );
+    }
+
+    /// The manual equivalent: Metaplex tags its accounts with a leading `key`.
+    #[test]
+    fn a_leading_type_field_counts_as_a_discriminator() {
+        for field in [
+            "key: Key",
+            "discriminator: u64",
+            "account_type: AccountType",
+            "tag: u8",
+        ] {
+            let s = structs_in(&format!(
+                "pub struct S {{\n    pub {field},\n    pub owner: Pubkey,\n}}\n"
+            ));
+            assert!(s[0].has_discriminator_field, "{field} should count");
+        }
+    }
+
+    /// The attribute belongs to the struct it precedes, not to a later one.
+    /// Getting this wrong marks an undiscriminated struct as safe.
+    #[test]
+    fn an_earlier_structs_attribute_does_not_attach_to_a_later_one() {
+        let s = structs_in(
+            "#[account]\npub struct Safe {\n    pub a: u64,\n}\n\npub struct Unsafe {\n    pub b: u64,\n}\n",
+        );
+        assert_eq!(s.len(), 2);
+        assert!(s[0].has_anchor_account_attr);
+        assert!(
+            !s[1].has_anchor_account_attr,
+            "the attribute is not inherited"
+        );
+    }
+
+    #[test]
+    fn field_count_ignores_comments_and_attributes() {
+        let s = structs_in(
+            "pub struct S {\n    // a note\n    #[serde(skip)]\n    pub a: u64,\n    pub b: Pubkey,\n}\n",
+        );
+        assert_eq!(s[0].field_count, 2);
+    }
+
+    #[test]
+    fn a_tuple_struct_and_an_empty_struct_report_no_fields() {
+        assert_eq!(
+            structs_in("pub struct AmountRange(pub u64, pub u64);\n")[0].field_count,
+            0
+        );
+        assert_eq!(structs_in("pub struct Marker {}\n")[0].field_count, 0);
+    }
+
+    #[test]
+    fn a_generic_or_lifetime_parameter_is_not_part_of_the_name() {
+        let s = structs_in("pub struct Ctx<'info> {\n    pub a: u64,\n}\n");
+        assert_eq!(s[0].name, "Ctx");
     }
 }

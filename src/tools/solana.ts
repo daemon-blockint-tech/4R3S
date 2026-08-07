@@ -49,6 +49,19 @@ export interface ProgramInfo {
   upgradeAuthority?: string | null;
   /** How `upgradeAuthority` is held. Undefined when it could not be resolved. */
   upgradeAuthorityKind?: AuthorityKind;
+  /**
+   * Why `upgradeAuthorityKind` is undefined, when the reason is a failed read
+   * rather than a program that has none.
+   *
+   * Without this the two are indistinguishable. `loadProgram` returns
+   * `{exists: true, executable: true, loader: "upgradeable"}` with no `error`
+   * whether the ProgramData read succeeded and found a renounced authority, or
+   * timed out against a rate-limited RPC — and `authorityFindings` returns `[]`
+   * for both. The caller then reports `ok`, which the report defines as "ran
+   * against real input; silence here is evidence". A program whose upgrade
+   * authority is a live hot key gets published as clean.
+   */
+  upgradeAuthorityUnresolved?: string;
   /** Owner of the upgrade-authority account, when it is `program-controlled`. */
   upgradeAuthorityOwner?: string;
   programDataAddress?: string;
@@ -108,12 +121,34 @@ export async function loadProgram(address: string): Promise<ProgramInfo> {
 
     // For upgradeable programs, the account data points at a ProgramData
     // account holding the bytecode + upgrade authority.
-    if (loader === "upgradeable" && acct.data.length >= 36) {
+    //
+    // `executable` gates the decode because three account kinds share this
+    // owner — Program (executable), ProgramData and Buffer (neither) — and only
+    // Program has the layout read below. On a ProgramData account bytes 4..36
+    // are slot + option + the first 23 bytes of the authority, and `new
+    // PublicKey` accepts any 32 bytes rather than rejecting them, so the decode
+    // could not fail: it emitted a base58 address belonging to no account at
+    // all. `analyze-onchain` branches only on `error` and `exists`, both fine
+    // here, and JSON.stringify's the record into the analyzer prompt under "On-
+    // chain program metadata (tool output)" — an invented address presented as
+    // an observed on-chain fact. Pasting a ProgramData address is a normal
+    // mistake; every explorer shows one on the page for an upgradeable program.
+    if (loader === "upgradeable" && !acct.executable) {
+      info.upgradeAuthorityUnresolved =
+        "account is owned by the upgradeable loader but is not executable, so it is a ProgramData or Buffer account rather than a program";
+    } else if (loader === "upgradeable" && acct.data.length < 36) {
+      info.upgradeAuthorityUnresolved = `program account is ${acct.data.length} bytes, too short to point at a ProgramData account`;
+    } else if (loader === "upgradeable") {
       try {
         const programDataKey = new PublicKey(acct.data.subarray(4, 36));
         info.programDataAddress = programDataKey.toBase58();
         const programData = await conn.getAccountInfo(programDataKey);
-        if (programData && programData.data.length >= 45) {
+        if (!programData) {
+          info.upgradeAuthorityUnresolved =
+            "ProgramData account returned no data";
+        } else if (programData.data.length < 45) {
+          info.upgradeAuthorityUnresolved = `ProgramData account is ${programData.data.length} bytes, too short to hold an authority`;
+        } else {
           // Layout: [0..4] enum, [4..12] slot, [12] option, [13..45] authority.
           const hasAuthority = programData.data[12] === 1;
           info.upgradeAuthority = hasAuthority
@@ -139,9 +174,12 @@ export async function loadProgram(address: string): Promise<ProgramInfo> {
           }
         }
       } catch (err) {
-        logger.debug(
-          { component: "solana", err: String(err) },
-          "Could not resolve program data account",
+        // Not debug: this is the difference between "no upgrade authority" and
+        // "we never found out", and the caller has to be able to say which.
+        info.upgradeAuthorityUnresolved = String(err);
+        logger.warn(
+          { component: "solana", address, err: String(err) },
+          "Could not resolve upgrade authority; on-chain result is incomplete",
         );
       }
     }

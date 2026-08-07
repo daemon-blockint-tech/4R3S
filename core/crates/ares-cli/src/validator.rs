@@ -1,4 +1,4 @@
-use ares_core::{Finding, Severity, VulnerabilityCategory};
+use ares_core::{Finding, Severity, SuppressedFinding, VulnerabilityCategory};
 use ares_mapper::{AccountEffect, InstructionNode, ProgramGraph};
 use tracing::{info, warn};
 
@@ -30,9 +30,21 @@ impl<'a> SemanticValidator<'a> {
     }
 
     /// Run the full validation pipeline over a list of findings.
-    pub fn validate(&self, findings: Vec<Finding>) -> Vec<Finding> {
+    /// Returns the findings that survive, and the ones this stage removed.
+    ///
+    /// Previously returned only the survivors, so a finding this stage dropped
+    /// left no record anywhere: it was counted in a log line and then gone. The
+    /// report's `suppressed_findings` and its `false_positives_suppressed` counter
+    /// only ever saw the local judge and the LLM judge, so a scan could suppress
+    /// findings and still report `Suppressed: 0`.
+    ///
+    /// That is not cosmetic. EVAL-2 read `Suppressed: 0` as proof that hypotheses
+    /// were never findings at all — the counter was load-bearing evidence in a
+    /// diagnosis, and it could not see this stage. A pipeline whose own accounting
+    /// is blind to one of its filters cannot be audited.
+    pub fn validate(&self, findings: Vec<Finding>) -> (Vec<Finding>, Vec<SuppressedFinding>) {
         let mut validated = Vec::new();
-        let mut suppressed_count = 0usize;
+        let mut suppressed = Vec::new();
 
         let total = findings.len();
         for finding in findings {
@@ -49,12 +61,16 @@ impl<'a> SemanticValidator<'a> {
                     validated.push(f);
                 }
                 ValidationResult {
-                    finding: _,
+                    finding: f,
                     suppressed: true,
                     reason: Some(reason),
                 } => {
-                    suppressed_count += 1;
                     info!("Finding suppressed (FP filter): {}", reason);
+                    suppressed.push(SuppressedFinding {
+                        finding: f,
+                        reason,
+                        suppressed_by: "semantic_validator".to_string(),
+                    });
                 }
                 ValidationResult {
                     finding: f,
@@ -69,20 +85,25 @@ impl<'a> SemanticValidator<'a> {
                     reason: None,
                 } => {
                     // Should not happen in practice (suppressed always has a reason), but handle gracefully
-                    suppressed_count += 1;
                     info!("Finding {} suppressed without stated reason", f.id);
+                    suppressed.push(SuppressedFinding {
+                        finding: f,
+                        reason: "suppressed without stated reason".to_string(),
+                        suppressed_by: "semantic_validator".to_string(),
+                    });
                 }
             }
         }
 
-        if suppressed_count > 0 {
+        if !suppressed.is_empty() {
             info!(
                 "Semantic FP filter: {} of {} findings suppressed",
-                suppressed_count, total
+                suppressed.len(),
+                total
             );
         }
 
-        validated
+        (validated, suppressed)
     }
 
     /// Evaluate a single finding against the graph.

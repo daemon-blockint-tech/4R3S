@@ -34,7 +34,13 @@ We aim to acknowledge reports within a few business days.
   `--metrics=off`, never `--config auto`, which would resolve rules from the
   Semgrep registry over the network on every scan and report usage telemetry —
   an outbound disclosure about a client's unreleased program that this bullet
-  would otherwise have promised did not happen.
+  would otherwise have promised did not happen. The CVE enrichment service
+  (`services/cve/`, `POST /cve/scan` in `apps/auditor-api`) holds the same
+  guarantee the same way: it matches a submitted `Cargo.lock` against a
+  snapshot of the RustSec advisory database that is committed to the repo,
+  never fetched at request time. Only `services/cve/refresh_snapshot.py`
+  touches the network, and it is run manually by a human to regenerate that
+  snapshot — it is not imported by, and never runs on, any request path.
 
 ## Known dependency advisories
 
@@ -56,19 +62,19 @@ Dependencies are monitored by Dependabot. The current tracked advisories:
 
 - **`sharp` < 0.35.0 — libvips vulnerabilities** (`GHSA-f88m-g3jw-g9cj`, High).
   Reached transitively through `next` (optional dependency on `sharp@0.34.x`).
-  Resolved with a root [`pnpm.overrides`](package.json) entry forcing
-  `sharp >= 0.35.0` across the workspace lockfile (currently `0.35.3` / libvips
-  8.18.3).
+  Resolved with a [`pnpm.overrides`](apps/auditor-web/package.json) entry in
+  `apps/auditor-web` forcing `sharp >= 0.35.0` in its lockfile (currently `0.35.3`
+  / libvips 8.18.3).
 
 - **`postcss` — path traversal / arbitrary file read via `sourceMappingURL`**
   (`GHSA-6g55-p6wh-862q`, High, CVE-2026-45623; `GHSA-r28c-9q8g-f849`, High).
   Reached transitively through `next` (pinned to `postcss@8.4.31`). Resolved with
-  a root [`pnpm.overrides`](package.json) entry forcing `postcss >= 8.5.23`
-  across the workspace lockfile (currently `8.5.25`).
+  a [`pnpm.overrides`](apps/auditor-web/package.json) entry in `apps/auditor-web`
+  forcing `postcss >= 8.5.23` in its lockfile (currently `8.5.25`).
 
 - **`dompurify` — XSS bypass** (Dependabot #98). Reached transitively through
-  `streamdown`. Resolved with a root [`pnpm.overrides`](package.json) entry
-  forcing `dompurify >= 3.4.12`.
+  `streamdown`. Resolved with a [`pnpm.overrides`](apps/auditor-web/package.json)
+  entry in `apps/auditor-web` forcing `dompurify >= 3.4.12`.
 
 - **`uuid` < 11.1.1 — missing buffer bounds check** (`GHSA-w5hq-g745-h8pq`,
   Moderate). Pulled in transitively through `jayson` (a `@solana/web3.js`
@@ -114,10 +120,15 @@ for advisories, not API needs — raise them when a later advisory lands, and do
 not lower them to widen resolution. Note `pyarrow >=23` requires Python >=3.10;
 CI runs 3.12.
 
+`services/cve/requirements.txt` has no third-party runtime dependency at all
+— `Cargo.lock` parsing uses the stdlib `tomllib` (Python 3.11+), and CI runs
+3.12 — so there is no floor to track there beyond the test-only `pytest` pin.
+
 ### Audit gate
 
 CI runs a blocking **`dependency audit`** job: `npm audit --audit-level=high`
-plus `pip-audit` over `eval/requirements.txt`. This gate was previously absent
+plus `pip-audit` over `eval/requirements.txt`, `services/cve/requirements.txt`,
+and `apps/auditor-api/requirements.txt`. This gate was previously absent
 because the unfixable `bigint-buffer` advisory would have made every build red
 for no actionable reason; with that advisory cleared at the root, the gate can
 hold the line. If it goes red, fix the dependency or record a justified

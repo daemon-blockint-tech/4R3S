@@ -8,8 +8,9 @@
  *   2. Map Supabase candidates to chunk ids and expand them in Neo4j (1–2 hops)
  *      for relationship-aware enrichment.
  *   3. Merge all sources: normalize each source's scores, weight them, and sum
- *      per fragment id — a fragment surfaced by multiple sources (e.g. a chunk
- *      that is both semantically similar AND graph-adjacent) ranks higher.
+ *      per fragment id, counting each source at most once — a fragment surfaced
+ *      by multiple sources (e.g. a chunk that is both semantically similar AND
+ *      graph-adjacent) ranks higher.
  *
  * Any source that is unconfigured or errors contributes nothing; with only
  * Crystalline present this reduces to plain activation recall. The difference
@@ -120,7 +121,7 @@ export class HybridRetriever implements Retriever {
 
   /**
    * Normalize each source's scores to [0,1], apply the source weight, and sum
-   * per fragment id. Keeps the highest-content variant of each fragment.
+   * per fragment id — at most once per source. Keeps the first variant seen.
    */
   private merge(
     sources: Array<{ weight: number; results: ScoredCrystal[] }>,
@@ -130,7 +131,21 @@ export class HybridRetriever implements Retriever {
     for (const { weight, results } of sources) {
       if (results.length === 0) continue;
       const max = Math.max(...results.map((r) => r.score), 1e-9);
+
+      // Collapse repeats *within* a source before adding anything: the graph
+      // bucket is two queries concatenated (standalone lexical match plus the
+      // expansion of Supabase seeds), so a chunk both of them found would
+      // otherwise bank the graph weight twice and outrank a fragment from a
+      // heavier source that only one query saw. Summing is meant to reward
+      // "several sources agree", not "one source said it several times" — which
+      // is what a duplicate-emitting query silently turns it into.
+      const best = new Map<string, ScoredCrystal>();
       for (const r of results) {
+        const prev = best.get(r.crystal.id);
+        if (!prev || r.score > prev.score) best.set(r.crystal.id, r);
+      }
+
+      for (const r of best.values()) {
         const contribution = (r.score / max) * weight;
         const existing = acc.get(r.crystal.id);
         if (existing) {

@@ -87,7 +87,7 @@ function makeFakeChat(): BaseChatModel {
  */
 function makeTaggedChat(
   tag: { location: string; checked: string },
-  failing: { verify: boolean } = { verify: false },
+  failing: { verify: boolean; analyze?: boolean } = { verify: false },
 ): BaseChatModel {
   return {
     async invoke(messages: Array<{ content: unknown }>) {
@@ -103,6 +103,7 @@ function makeTaggedChat(
         };
       }
       if (sys.includes("ANALYZE")) {
+        if (failing.analyze) throw new Error("simulated interruption");
         return {
           content: JSON.stringify({
             findings: [
@@ -169,6 +170,49 @@ describe("audit graph (state isolation across runs)", () => {
 
     // And the summed iteration counter restarts rather than doubling.
     expect(second.iterations).toBe(first.iterations);
+  });
+
+
+  it("a run that parks before MERGE does not expose the previous audit's verified findings", async () => {
+    // reportParkedRun in index.ts reads `verifiedFindings` (falling back to
+    // `mergedFindings`) to decide what a parked run has to show, and prints a
+    // full report from them — severity table, ids, `Status: confirmed`.
+    //
+    // Those are last-value channels, so the reasoning that resetAccumulators
+    // need not clear them ("their own phase rewrites them every run") holds only
+    // for a run that REACHES that phase. A run that throws before MERGE never
+    // does, so the last COMPLETED audit's results were still sitting there.
+    //
+    // The operator-visible failure: audit a target, fix the bugs, re-audit, and
+    // have the second run park early — and be handed a confirmed-severity report
+    // describing bugs that were fixed before the run began.
+    const store = new InMemoryStore();
+    const crystalline = new CrystallineStore(store);
+    const retriever = new HybridRetriever(new CrystallineRetriever(crystalline));
+    const tag = { location: "ix:run-a", checked: "integer-overflow-underflow" };
+    const failing = { verify: false, analyze: false };
+    const graph = buildAuditGraph({
+      deps: { chat: makeTaggedChat(tag, failing), crystalline, retriever },
+      checkpointer: new MemorySaver(),
+      store,
+    });
+    const config = { configurable: { thread_id: "ares-default" } };
+
+    // Run A completes and leaves verified findings on the thread.
+    const first = await graph.invoke({ request: "audit A" }, config);
+    expect(first.verifiedFindings.map((f) => f.location)).toEqual(["ix:run-a"]);
+
+    // Run B parks before MERGE — the analyzers throw, as a rotated API key or a
+    // rate limit would make them.
+    failing.analyze = true;
+    tag.location = "ix:run-b";
+    await expect(graph.invoke({ request: "audit B" }, config)).rejects.toThrow(
+      "simulated interruption",
+    );
+
+    const parked = await graph.getState(config);
+    expect(parked.values.verifiedFindings).toEqual([]);
+    expect(parked.values.mergedFindings).toEqual([]);
   });
 
   it("keeps the partial findings of an interrupted run when it is resumed", async () => {

@@ -62,10 +62,16 @@ sha2 = "0.11"
 # Testing
 pretty_assertions = "1.4"
 
-# Internal workspace crates
-ares-core = { path = "crates/ares-core" }
-ares-trident = { path = "crates/ares-trident" }
-ares-mapper = { path = "crates/ares-mapper" }
-ares-policy = { path = "crates/ares-policy" }
-ares-orchestrator = { path = "crates/ares-orchestrator" }
-ares-report = { path = "crates/ares-report" }
+# Internal workspace crates.
+# The `version` is not decoration and is not redundant with `path`: `cargo
+# publish` strips path dependencies and hard-errors with "all dependencies must
+# have a version requirement specified when publishing" without it, so a
+# path-only declaration here makes every dependent crate unpublishable. It must
+# stay in step with workspace.package.version above — cargo cannot inherit into
+# workspace.dependencies, so this is the one version that has to be repeated.
+ares-core = { path = "crates/ares-core", version = "0.1.0" }
+ares-trident = { path = "crates/ares-trident", version = "0.1.0" }
+ares-mapper = { path = "crates/ares-mapper", version = "0.1.0" }
+ares-policy = { path = "crates/ares-policy", version = "0.1.0" }
+ares-orchestrator = { path = "crates/ares-orchestrator", version = "0.1.0" }
+ares-report = { path = "crates/ares-report", version = "0.1.0" }
