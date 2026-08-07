@@ -173,6 +173,24 @@ impl TaintEngine {
                 // For now, propagate base taint
                 self.expr_taint(&field_expr.base)
             }
+            Expr::Array(array_expr) => {
+                // e.g. &[seed, data] — the real shape of create_program_address's
+                // seed-list argument. Tainted if any element is; without this,
+                // a tainted seed hidden inside an array literal (the normal way
+                // these calls actually look) was invisible to every sink check
+                // that inspects call arguments, not just non-canonical-bump.
+                for elem in &array_expr.elems {
+                    let elem_taint = self.expr_taint(elem);
+                    if elem_taint.is_tainted {
+                        return elem_taint;
+                    }
+                }
+                TaintState {
+                    is_tainted: false,
+                    source: TaintSource::Clean,
+                    path: vec![],
+                }
+            }
             _ => TaintState {
                 is_tainted: false,
                 source: TaintSource::Clean,
@@ -208,6 +226,7 @@ impl TaintEngine {
             Expr::Call(call) => {
                 let _func_taint = self.expr_taint(&call.func);
                 let func_name = expr_to_string(&call.func);
+                let func_name_compact = func_name.replace(" ", "");
 
                 // Sink: invoke / invoke_signed
                 if func_name.contains("invoke") || func_name.contains("invoke_signed") {
@@ -231,10 +250,38 @@ impl TaintEngine {
                     }
                 }
 
+                // Sink: create_program_address with a tainted (user-supplied)
+                // bump, instead of using find_program_address's own canonical
+                // result. create_program_address is the raw/unsafe API — it
+                // will happily derive a PDA from *any* bump byte, including
+                // one an attacker chose, whereas find_program_address always
+                // returns the one canonical bump for a given seed set.
+                let is_create_program_address = func_name_compact.contains("create_program_address")
+                    && !func_name_compact.contains("find_program_address");
+                if is_create_program_address {
+                    for arg in &call.args {
+                        let arg_taint = self.expr_taint(arg);
+                        if arg_taint.is_tainted {
+                            self.findings.push(TaintFinding {
+                                category: "non-canonical-bump".to_string(),
+                                severity: "High".to_string(),
+                                sink: "create_program_address".to_string(),
+                                tainted_var: format!("bump/seed arg in {}", func_name),
+                                description: format!(
+                                    "`create_program_address` called with a seed/bump derived from {:?}. \
+                                    An attacker-supplied bump can derive a different, non-canonical PDA than \
+                                    `find_program_address` would — use `find_program_address`'s own result instead.",
+                                    arg_taint.source
+                                ),
+                                line: 0,
+                            });
+                        }
+                    }
+                }
+
                 // Sink: try_from_slice without discriminator
                 // Exclude Pubkey::try_from_slice and primitive numeric types — these
                 // parse fixed-format on-chain data, not account type substitution attacks.
-                let func_name_compact = func_name.replace(" ", "");
                 let is_safe_try_from = func_name_compact.contains("Pubkey::try_from_slice")
                     || func_name_compact.contains("u128::try_from_slice")
                     || func_name_compact.contains("u64::try_from_slice")
@@ -268,7 +315,7 @@ impl TaintEngine {
                 // Sink: owner = untrusted
                 if left_str.contains("owner") && right_taint.is_tainted {
                     self.findings.push(TaintFinding {
-                        category: "ownership-check".to_string(),
+                        category: "missing-owner-check".to_string(),
                         severity: "Critical".to_string(),
                         sink: "owner assignment".to_string(),
                         tainted_var: left_str.clone(),
@@ -392,6 +439,67 @@ impl TaintEngine {
     fn process_expr_block(&mut self, block: &Block) {
         for stmt in &block.stmts {
             self.process_stmt(stmt);
+        }
+    }
+
+    /// Function-level checks: some vulnerability classes aren't a classic
+    /// source->sink dataflow chain, they're a *missing guard* somewhere in
+    /// the whole function body. Checked once per function, using the same
+    /// stringify-and-match approach already used elsewhere in this file
+    /// (see the Cast handler's `is_safe_source` checks) rather than
+    /// introducing a second detection style.
+    pub fn check_function_level_patterns(&mut self, fn_name: &str, block: &Block) {
+        let body_str = quote::quote!(#block).to_string();
+        let fn_name_lower = fn_name.to_lowercase();
+
+        // account-reinitialization: an init/initialize instruction that
+        // never checks whether the account is already initialized will
+        // happily re-run on an already-live account, letting an attacker
+        // reset state (e.g. their own balance) at will.
+        if (fn_name_lower.contains("init") || fn_name_lower.contains("initialize"))
+            && !body_str.contains("is_initialized")
+            && !body_str.contains("constraint")
+        {
+            self.findings.push(TaintFinding {
+                category: "account-reinitialization".to_string(),
+                severity: "High".to_string(),
+                sink: fn_name.to_string(),
+                tainted_var: fn_name.to_string(),
+                description: format!(
+                    "`{}` looks like an init/initialize instruction but never checks \
+                    `is_initialized` (or an Anchor `constraint` that the account is empty). \
+                    Without that guard, it can be called again on an already-initialized account.",
+                    fn_name
+                ),
+                line: 0,
+            });
+        }
+
+        // account-close-revival: a close instruction that zeroes/transfers
+        // lamports but never zeroes the account's data leaves the old,
+        // still-valid-looking data in place. If lamports are refunded to the
+        // account before garbage collection, it comes back "alive" with its
+        // stale data intact — a closed account revived.
+        if fn_name_lower.contains("close")
+            && body_str.contains("lamports")
+            && !body_str.contains("zero")
+            && !body_str.contains("fill (0")
+            && !body_str.contains("fill(0")
+        {
+            self.findings.push(TaintFinding {
+                category: "account-close-revival".to_string(),
+                severity: "High".to_string(),
+                sink: fn_name.to_string(),
+                tainted_var: fn_name.to_string(),
+                description: format!(
+                    "`{}` looks like a close instruction that moves lamports but never zeroes \
+                    the account's data. A refunded/re-funded account can be revived with its old \
+                    data still intact — zero the data (or use Anchor's `close = ...` with the \
+                    account marked `zero`) in the same instruction.",
+                    fn_name
+                ),
+                line: 0,
+            });
         }
     }
 }
