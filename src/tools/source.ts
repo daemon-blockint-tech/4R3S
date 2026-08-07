@@ -378,7 +378,27 @@ export function citesLoadedFile(location: string, source: LoadedSource): boolean
   // `programs/vault/src/lib.rs` for a loaded `src/lib.rs` is describing the same
   // file from a different root. The separator is what distinguishes that from a
   // different file whose name merely ends the same way.
-  return source.files.some((f) => pathsMatch(cited, f.path));
+  const matched = source.files.find((f) => pathsMatch(cited, f.path));
+  if (!matched) return false;
+
+  // The path is only half the citation, and this half was lost when LAT-1 and
+  // LAT-2 were merged: both rewrote this function's tail, the merge kept one
+  // side, and the line check went with the other.
+  //
+  // Everything after the first `:` used to be discarded, so `lib.rs:840` passed
+  // against a file this run holds 300 lines of — and `lines` is counted from the
+  // *truncated* content, which is exactly the text the model was shown. A line
+  // beyond that is a line nothing in this run ever read: the same claim the path
+  // check exists to refuse, one field over.
+  //
+  // A missing or non-numeric line stays legal: on-chain findings cite a bare
+  // address and set no line, and models emit `file.rs:fn_name`. Only a line that
+  // is present AND numeric is held to the file's extent.
+  const citedLine = location.split(":")[1]?.trim();
+  if (citedLine === undefined || citedLine === "") return true;
+  const lineNumber = Number(citedLine);
+  if (!Number.isFinite(lineNumber)) return true;
+  return Number.isInteger(lineNumber) && lineNumber >= 1 && lineNumber <= matched.lines;
 }
 
 /**
@@ -397,28 +417,5 @@ export function citesLoadedFile(location: string, source: LoadedSource): boolean
  */
 export function pathsMatch(a: string, b: string): boolean {
   return a === b || a.endsWith(`${sep}${b}`) || b.endsWith(`${sep}${a}`);
-  const matched = source.files.find(
-    (f) =>
-      f.path === cited ||
-      f.path.endsWith(`${sep}${cited}`) ||
-      cited.endsWith(`${sep}${f.path}`),
-  );
-  if (!matched) return false;
-
-  // The path is only half the citation. Everything after the first `:` used to be
-  // discarded, so `lib.rs:840` passed against a file this run holds 300 lines of —
-  // and `f.lines` is counted from the *truncated* content (see `budgetChars`
-  // above), which is exactly the text the model was shown. A line beyond that is
-  // a line nothing in this run ever read, which is the same claim the path check
-  // exists to refuse, one field over.
-  //
-  // A missing or non-numeric line stays legal: on-chain findings cite a bare
-  // address and `analyze-onchain` sets no line at all, so requiring one here
-  // would reject the deterministic findings this predicate is not even consulted
-  // for. Only a line that is present AND numeric is held to the file's extent.
-  const citedLine = location.split(":")[1]?.trim();
-  if (citedLine === undefined || citedLine === "") return true;
-  const lineNumber = Number(citedLine);
-  if (!Number.isFinite(lineNumber)) return true;
-  return Number.isInteger(lineNumber) && lineNumber >= 1 && lineNumber <= matched.lines;
 }
+
