@@ -1,4 +1,4 @@
-numpy>=2.0
+numpy>=2.5.1
 pandas>=2.2
 # Floors below are set by security advisories, not by API needs:
 #   pyarrow >=23.0.1 — PYSEC-2026-113
