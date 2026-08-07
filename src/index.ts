@@ -216,7 +216,10 @@ async function main(): Promise<void> {
           process.stdout.write(
             "[billing] Report withheld until the account balance is settled.\n",
           );
-          process.exitCode = 1;
+          process.exitCode = 2; // distinct from a generic audit failure (1) —
+          // callers such as apps/auditor-api's worker need to tell "out of
+          // credits" apart from "the audit itself failed" (see worker.py's
+          // run_audit, which previously could not make this distinction)
         } else {
           throw err;
         }

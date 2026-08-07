@@ -7,10 +7,14 @@ name: Core CI
 on:
   push:
     branches: [ "main" ]
-    paths: [ "core/**", ".github/workflows/core-ci.yml" ]
+    # ENG-2: the new VulnerabilityCategory<->VULN_CATALOG consistency test in
+    # ares-core reads both files below via include_str!() -- they live
+    # outside core/, so they must be listed explicitly or a PR touching only
+    # one of them would never trigger this workflow.
+    paths: [ "core/**", "src/knowledge/vuln-catalog.generated.json", "eval/mappings/ares-core-categories.json", ".github/workflows/core-ci.yml" ]
   pull_request:
     branches: [ "main" ]
-    paths: [ "core/**", ".github/workflows/core-ci.yml" ]
+    paths: [ "core/**", "src/knowledge/vuln-catalog.generated.json", "eval/mappings/ares-core-categories.json", ".github/workflows/core-ci.yml" ]
   workflow_dispatch:
 
 env:
