@@ -140,6 +140,36 @@ async fn confirm_finding(finding: &mut Finding, project_root: &Path, local_rpc: 
         }
     };
 
+    // A PoC the generator could not wire to the target cannot confirm anything.
+    // `poc.rs` records that as a leading `// ARES-WIRING:` marker: `unwired` means
+    // no IDL instruction matched, so the harness still carries placeholder
+    // instruction data (`&[]`) and a `Pubkey::new_unique()` program id — it never
+    // invokes the audited program at all. Running it and reading the exit code
+    // still yields a verdict, and that verdict was being applied: a finding could
+    // be recorded as fork-Confirmed, with confidence forced to 0.95 and its
+    // severity upgraded, on the strength of a transaction sent to a random pubkey.
+    // The marker was written for exactly this decision and never read.
+    let wiring = tokio::fs::read_to_string(&staged)
+        .await
+        .ok()
+        .and_then(|src| {
+            src.lines()
+                .next()
+                .and_then(|l| l.strip_prefix("// ARES-WIRING: "))
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if wiring != "wired" {
+        warn!(
+            "Finding {} INCONCLUSIVE — PoC wiring is `{}`, so the harness does not \
+             fully exercise the target program; refusing to read a verdict from it",
+            finding.id, wiring
+        );
+        finding.validation = Some(ValidationOutcome::Inconclusive);
+        return;
+    }
+
     match run_poc(&staged, project_root, local_rpc).await {
         Ok(PocVerdict::Passed) => {
             info!(
@@ -151,6 +181,16 @@ async fn confirm_finding(finding: &mut Finding, project_root: &Path, local_rpc: 
         Ok(PocVerdict::Failed) => {
             info!("Finding {} REFUTED (PoC transaction failed)", finding.id);
             apply_refuted(finding);
+        }
+        Ok(PocVerdict::Inconclusive) => {
+            // The harness did not build, or matched no test. Neither outcome is
+            // evidence about the finding, so the finding keeps its scan-time
+            // severity rather than being upgraded or written off.
+            warn!(
+                "Finding {} INCONCLUSIVE — the PoC did not run to a verdict",
+                finding.id
+            );
+            finding.validation = Some(ValidationOutcome::Inconclusive);
         }
         Err(e) => {
             warn!(
@@ -279,17 +319,23 @@ async fn load_report(scan_output: &Path) -> AresResult<(PathBuf, AuditReport)> {
         return Ok((scan_output.to_path_buf(), report));
     }
 
+    // Deterministic pick: newest report = lexicographically greatest filename.
+    let mut candidates: Vec<PathBuf> = Vec::new();
     let mut entries = tokio::fs::read_dir(scan_output).await?;
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if name_str.starts_with("ares-report-") && name_str.ends_with(".json") {
-            let path = entry.path();
-            let content = tokio::fs::read_to_string(&path).await?;
-            let report: AuditReport = serde_json::from_str(&content)
-                .map_err(|e| AresError::Parse(format!("Failed to parse report: {}", e)))?;
-            return Ok((path, report));
+            candidates.push(entry.path());
         }
+    }
+    candidates.sort();
+
+    if let Some(path) = candidates.pop() {
+        let content = tokio::fs::read_to_string(&path).await?;
+        let report: AuditReport = serde_json::from_str(&content)
+            .map_err(|e| AresError::Parse(format!("Failed to parse report: {}", e)))?;
+        return Ok((path, report));
     }
 
     Err(AresError::NotFound(format!(
@@ -314,13 +360,14 @@ fn confirmed_report_path(report_path: &Path) -> PathBuf {
 fn find_program_so(project_root: &Path) -> Option<PathBuf> {
     let deploy_dir = project_root.join("target/deploy");
     let entries = std::fs::read_dir(&deploy_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("so") {
-            return Some(path);
-        }
-    }
-    None
+    // Sort for a deterministic pick when multiple .so files are present.
+    let mut so_files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("so"))
+        .collect();
+    so_files.sort();
+    so_files.into_iter().next()
 }
 
 #[cfg(test)]
