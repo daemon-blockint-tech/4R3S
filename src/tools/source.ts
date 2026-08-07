@@ -12,7 +12,7 @@
  * "no source to read" apart from "could not read the source".
  */
 import { readFile, readdir, lstat, stat } from "node:fs/promises";
-import { basename, join, relative, extname, sep } from "node:path";
+import { basename, dirname, join, relative, extname, sep } from "node:path";
 
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
@@ -96,6 +96,31 @@ function priority(path: string): number {
   return 3;
 }
 
+/**
+ * True when a `.json` path looks like an Anchor IDL rather than npm metadata.
+ *
+ * Judged on the file's own name and on its directory being exactly `idl/` —
+ * never on the rest of the path. `/idl/i` used to be tested against the joined
+ * path, which carries the directories *above* the audit root: those belong to
+ * whoever launched the run, not to the audited tree, so a root under
+ * `~/audits/solidly-fork` (or `candidly`, `idle`, `/tmp/idl-audit`) made every
+ * `.json` in the tree qualify. `.json` ranks priority 0, so a package-lock.json
+ * then sorted ahead of every `.rs` file and could consume the whole budget on
+ * its own — a run that read no program source while reporting `available:
+ * true`, which is precisely what stops `analyze-heuristic` from downgrading its
+ * findings to speculative, and a finding citing `package-lock.json:9` satisfies
+ * `citesLoadedFile`, the mechanical evidence `canBeConfirmed` accepts.
+ *
+ * The directory clause is an equality, not a substring: Anchor emits
+ * `target/idl/vault.json`, and matching `idl-tools/` or `solidly-fork/` too
+ * would put the same class of noise back.
+ */
+function looksLikeIdl(path: string): boolean {
+  return (
+    /idl/i.test(basename(path)) || basename(dirname(path)).toLowerCase() === "idl"
+  );
+}
+
 /** What a walk could not examine, alongside what it found. */
 interface WalkGaps {
   unreadable: number;
@@ -148,10 +173,12 @@ async function walk(
       continue;
     }
     const ext = extname(entry);
+    const rel = relative(root, full);
     // `.json` only when it looks like an Anchor IDL — a program's package.json
-    // or a lockfile is noise that would eat the budget.
-    if (ext === ".rs" || (ext === ".json" && /idl/i.test(full))) {
-      out.push(relative(root, full));
+    // or a lockfile is noise that would eat the budget. See `looksLikeIdl` for
+    // why the test never sees the path above the audit root.
+    if (ext === ".rs" || (ext === ".json" && looksLikeIdl(rel))) {
+      out.push(rel);
     }
   }
 }
@@ -162,7 +189,12 @@ async function loadSingleFile(
   budgetChars: number,
 ): Promise<LoadedSource> {
   const ext = extname(filePath);
-  const isIdl = ext === ".json" && /idl/i.test(filePath);
+  // Same rule as the tree walk, and for the same reason: `/idl/i` over the
+  // whole path accepted `~/idle/proj/package.json` as an IDL, and that lockfile
+  // became the run's entire `available: true` source with no budget pressure
+  // needed. `target/` is in SKIP_DIRS, so naming the file is the only route to
+  // the IDL Anchor actually emits — hence `idl/` as a directory still counts.
+  const isIdl = ext === ".json" && looksLikeIdl(filePath);
   if (ext !== ".rs" && !isIdl) {
     return {
       available: false,
