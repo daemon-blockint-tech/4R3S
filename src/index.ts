@@ -14,7 +14,7 @@
  */
 import { parseArgs } from "node:util";
 
-import { env } from "./config/env.js";
+import { env, modelEndpointWarning } from "./config/env.js";
 import { auditThreadId } from "./config/thread.js";
 import { logger } from "./config/logger.js";
 import { defaultChat } from "./llm/chat-openrouter.js";
@@ -93,6 +93,40 @@ function parseCli(): Cli {
   };
 }
 
+/**
+ * Print the model endpoint this run will actually use, before it is used.
+ *
+ * Two consecutive failures shared a cause: the effective configuration was
+ * invisible until something died several layers down. A base URL pointing at a
+ * local server that was not running surfaced as `Connection error.`; the same
+ * URL pointing remotely with a local placeholder key surfaced as
+ * `401 Missing Authentication header`. Neither message names the base URL, and
+ * neither is wrong — they describe the request, not the configuration that
+ * built it.
+ *
+ * `.env` files that carry two provider blocks make this ordinary: which line
+ * wins depends on the loader (dotenv takes the first occurrence, dotenvx the
+ * last), so the pairing can be split across blocks without either being edited.
+ *
+ * The key is never printed — only its length and prefix, which is enough to
+ * tell `sk-or-…` from `lm-studio` and nothing more.
+ */
+function logStartupConfig(): void {
+  const key = env.OPENROUTER_API_KEY;
+  logger.info(
+    {
+      component: "ares",
+      baseUrl: env.OPENROUTER_BASE_URL,
+      model: env.OPENROUTER_MODEL,
+      apiKey: `${key.slice(0, 6)}… (${key.length} chars)`,
+    },
+    "Model endpoint for this run",
+  );
+  if (modelEndpointWarning) {
+    logger.warn({ component: "ares" }, modelEndpointWarning);
+  }
+}
+
 async function main(): Promise<void> {
   const cli = parseCli();
   setCuaOverride(cli.cua);
@@ -104,6 +138,8 @@ async function main(): Promise<void> {
     source: cli.source,
     override: env.ARES_THREAD_ID,
   });
+
+  logStartupConfig();
 
   const store = createStore();
   const crystalline = new CrystallineStore(store);

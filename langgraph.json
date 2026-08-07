@@ -1,0 +1,8 @@
+{
+  "node_version": "20",
+  "dependencies": ["."],
+  "graphs": {
+    "audit": "./src/studio.ts:graph"
+  },
+  "env": ".env"
+}
