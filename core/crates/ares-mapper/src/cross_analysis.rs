@@ -13,10 +13,6 @@ pub struct CrossInstructionAnalyzer {
     pub writes: HashMap<String, Vec<String>>,
     /// For each account name, which instructions read from it.
     pub reads: HashMap<String, Vec<String>>,
-    /// For each account name, which instructions create (init) it.
-    pub creates: HashMap<String, Vec<String>>,
-    /// For each account name, which instructions close it.
-    pub closes: HashMap<String, Vec<String>>,
 }
 
 /// A vulnerability that only manifests across instruction boundaries.
@@ -45,33 +41,14 @@ impl CrossInstructionAnalyzer {
                             .or_default()
                             .push(instr.name.clone());
                     }
-                    AccountEffect::Write => {
-                        analyzer
-                            .writes
-                            .entry(account.clone())
-                            .or_default()
-                            .push(instr.name.clone());
-                    }
-                    AccountEffect::Create => {
-                        analyzer
-                            .creates
-                            .entry(account.clone())
-                            .or_default()
-                            .push(instr.name.clone());
-                        // A creation also counts as a write
-                        analyzer
-                            .writes
-                            .entry(account.clone())
-                            .or_default()
-                            .push(instr.name.clone());
-                    }
-                    AccountEffect::Close => {
-                        analyzer
-                            .closes
-                            .entry(account.clone())
-                            .or_default()
-                            .push(instr.name.clone());
-                        // A close is also a write
+                    // Create and Close are folded into `writes` because that is
+                    // all they are to every analyzer that survives here: both
+                    // mutate the account. Nothing in the workspace constructs
+                    // either variant today — `extract_account_effects` is the only
+                    // producer of `effects` and emits Read/Write/CpiPass — so the
+                    // `creates`/`closes` maps this used to keep were permanently
+                    // empty. See the note on `AccountEffect` in lib.rs.
+                    AccountEffect::Write | AccountEffect::Create | AccountEffect::Close => {
                         analyzer
                             .writes
                             .entry(account.clone())
@@ -87,11 +64,9 @@ impl CrossInstructionAnalyzer {
         }
 
         info!(
-            "CrossInstructionAnalyzer built | {} read accounts | {} write accounts | {} create | {} close",
+            "CrossInstructionAnalyzer built | {} read accounts | {} write accounts",
             analyzer.reads.len(),
-            analyzer.writes.len(),
-            analyzer.creates.len(),
-            analyzer.closes.len()
+            analyzer.writes.len()
         );
 
         Ok(analyzer)
@@ -203,47 +178,17 @@ impl CrossInstructionAnalyzer {
         findings
     }
 
-    /// Detect state transition gaps.
-    /// If an account is created in instruction A but never properly initialized
-    /// (no init check in subsequent instructions that write to it), flag it.
-    pub fn find_state_transition_gaps(&self, graph: &ProgramGraph) -> Vec<CrossInstructionFinding> {
-        let mut findings = Vec::new();
-
-        for (account, creators) in &self.creates {
-            // After creation, every subsequent writer should have an init check
-            if let Some(writers) = self.writes.get(account) {
-                for writer in writers {
-                    if creators.contains(writer) {
-                        continue; // the creator itself is expected to init
-                    }
-
-                    let writer_instr = graph.instructions.iter().find(|i| i.name == *writer);
-                    let has_init_check = writer_instr
-                        .and_then(|_i| {
-                            // Look for any account in the graph matching this writer that has init check
-                            graph.accounts.iter().find(|a| a.name == *account)
-                        })
-                        .is_some_and(|a| a.is_initialized_check.unwrap_or(false));
-
-                    if !has_init_check {
-                        findings.push(CrossInstructionFinding {
-                            category: "state-transition-gap".to_string(),
-                            description: format!(
-                                "Account '{}' is created by '{}' but written by '{}' without initialization re-check.",
-                                account, creators.join(", "), writer
-                            ),
-                            affected_account: account.clone(),
-                            source_instruction: creators[0].clone(),
-                            sink_instruction: writer.clone(),
-                            confidence: 0.65,
-                        });
-                    }
-                }
-            }
-        }
-
-        findings
-    }
+    // `find_state_transition_gaps` used to sit here, iterating `self.creates`.
+    // It was removed rather than repaired: `creates` could never hold an entry,
+    // so the loop body never ran and the function returned an empty Vec on every
+    // scan while looking, in the report pipeline and in this file, like a third
+    // working analyzer. Reviving it is not a matter of populating `creates` —
+    // its init-check lookup compares an account *field* name (`vault`, from
+    // `ctx.accounts.vault`) against `graph.accounts`, which holds *struct* names
+    // (`Withdraw`), so the lookup misses unconditionally and every created
+    // account would be reported. Detecting `init`/`close` needs the accounts
+    // struct's per-field constraints tied back to the instruction that uses it;
+    // until the graph carries that, a detector here can only guess.
 }
 
 /// Analyze the full ProgramGraph for cross-instruction vulnerabilities.
@@ -254,7 +199,6 @@ pub fn analyze(graph: &ProgramGraph) -> AresResult<Vec<CrossInstructionFinding>>
     let mut all = Vec::new();
     all.extend(analyzer.find_missing_revalidation(graph));
     all.extend(analyzer.find_reentrancy_risk(graph));
-    all.extend(analyzer.find_state_transition_gaps(graph));
 
     if !all.is_empty() {
         info!(

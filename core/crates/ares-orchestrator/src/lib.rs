@@ -281,8 +281,11 @@ impl AgentOrchestrator {
 
     fn get_system_prompt(&self) -> String {
         "You are ARES V3, an autonomous AI security auditor for Solana smart contracts. \
-        You have access to tools to scan, map, and fuzz code. \
-        Always use 'ares_scan' to run a static deterministic analysis on a workspace first. \
+        Your tools in this session read and list files. Neither 'ares_scan' nor 'ares_fuzz' \
+        is implemented here; both return an error saying so. Never state or imply that a \
+        scan, a fuzz run, or any other analysis happened unless a tool result in this \
+        conversation contains its output, and never call a program clean on the strength \
+        of an analysis you did not see. Ground every claim in file contents you have read. \
         Be concise, professional, and act as an expert auditor. \
         IMPORTANT: Before executing any tool or providing an answer, you MUST write down your \
         step-by-step reasoning inside <thinking>...</thinking> XML tags."
@@ -295,7 +298,7 @@ impl AgentOrchestrator {
                 "type": "function",
                 "function": {
                     "name": "ares_scan",
-                    "description": "Run the deterministic ARES V3 local judge and AST mapper on a target directory.",
+                    "description": "NOT IMPLEMENTED in this agent: the deterministic ARES V3 local judge and AST mapper are not reachable from here. Calling this scans nothing and returns an error. Use the CLI `ares scan <path>` outside this session, or read the sources with read_file.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -363,16 +366,30 @@ impl AgentOrchestrator {
     async fn execute_tool(&self, name: &str, args: &Value) -> String {
         match name {
             "ares_scan" => {
+                // This called a local `ares_scanner::scan` stub that ignored all
+                // three arguments and returned `Ok(())`, so the tool result was
+                // always "Scan complete. Check the report in ./ares-output" — for
+                // a scan that opened no file, ran no analyzer and wrote no report.
+                // The model cannot tell that apart from a real scan, and the
+                // system prompt made it the first action of every session, so a
+                // program nobody had looked at could be summarised as clean. A
+                // tool that lies to the model is worse than one that is absent;
+                // `ares_fuzz` below has always said so honestly.
+                //
+                // It is not wired instead of stubbed because the deterministic
+                // pipeline lives in ares-cli/src/commands/scan.rs, which this
+                // crate cannot depend on (ares-cli depends on ares-orchestrator).
+                // A second copy of the scan path here is exactly the fork that
+                // GOLDEN RULE 2 — same input, identical output — cannot survive.
                 let target_path = args["target_path"].as_str().unwrap_or(".");
-                let path = PathBuf::from(target_path);
-
-                let output_dir = PathBuf::from("./ares-output");
-                let res = ares_scanner::scan(&path, &self.config, &output_dir).await;
-
-                match res {
-                    Ok(_) => format!("Scan complete. Check the report in {:?}", output_dir),
-                    Err(e) => format!("Scan failed: {}", e),
-                }
+                format!(
+                    "Error: ares_scan is not implemented in this agent. NOTHING was \
+                     scanned in '{target_path}', no file was read and no report exists. \
+                     Do not describe a scan as having run. Either run the CLI \
+                     `ares scan {target_path}` outside this session and read its JSON \
+                     report with read_file, or audit the sources directly with \
+                     list_directory and read_file."
+                )
             }
             "ares_fuzz" => {
                 let target_path = args["target_path"].as_str().unwrap_or(".");
@@ -433,14 +450,57 @@ impl AgentOrchestrator {
     }
 }
 
-/// Stub module for scan functionality - to be implemented
-mod ares_scanner {
+#[cfg(test)]
+mod tests {
     use super::*;
     use ares_core::AresConfig;
 
-    pub async fn scan(_path: &PathBuf, _config: &AresConfig, _output: &PathBuf) -> Result<()> {
-        // This will delegate to the actual scan implementation
-        // For now, return Ok to allow compilation
-        Ok(())
+    /// The tool result is a fact the model is handed and cannot verify. Reporting
+    /// success for a scan that never ran is how an auditor ends up calling an
+    /// unexamined program clean, so the one thing this must never do is sound
+    /// like it worked.
+    #[tokio::test]
+    async fn ares_scan_says_it_did_not_scan() {
+        let agent = AgentOrchestrator::new(&AresConfig::default()).unwrap();
+        let result = agent
+            .execute_tool("ares_scan", &json!({ "target_path": "./my-program" }))
+            .await;
+
+        assert!(
+            !result.contains("Scan complete"),
+            "must not claim success: {result}"
+        );
+        assert!(
+            result.starts_with("Error:"),
+            "the model has to be able to tell this apart from a result: {result}"
+        );
+        assert!(
+            result.contains("./my-program"),
+            "name the path that was not scanned: {result}"
+        );
+    }
+
+    /// The advertised description is the only thing the model sees before
+    /// choosing a tool; leaving it promising a deterministic scan would keep the
+    /// wasted first call the system prompt used to mandate.
+    #[tokio::test]
+    async fn ares_scan_is_not_advertised_as_working() {
+        let agent = AgentOrchestrator::new(&AresConfig::default()).unwrap();
+        let tools = agent.get_tools();
+        let scan = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["function"]["name"] == "ares_scan")
+            .expect("ares_scan is still offered");
+        let description = scan["function"]["description"].as_str().unwrap();
+        assert!(
+            description.to_lowercase().contains("not implemented"),
+            "description must not promise a scan it cannot run: {description}"
+        );
+        assert!(
+            !agent.get_system_prompt().contains("Always use 'ares_scan'"),
+            "the prompt must not order the model to lead with a tool that errors"
+        );
     }
 }

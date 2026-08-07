@@ -37,6 +37,15 @@ pub struct ModuleNode {
 }
 
 /// Effect an instruction has on a specific account.
+///
+/// `extract_account_effects` is the only producer, and it emits `Read`, `Write`
+/// and `CpiPass` only. **`Create` and `Close` are never constructed**: both come
+/// from Anchor `init`/`close` constraints, which live on the accounts struct's
+/// fields, while effects are read out of the instruction *body*. Treat any code
+/// that branches on them as unreachable until the graph links a `Context<T>`
+/// parameter to `T`'s per-field constraints — `find_state_transition_gaps` was
+/// deleted (see cross_analysis.rs) because it read as a live detector and could
+/// not fire.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AccountEffect {
     /// The instruction reads the account (e.g., `ctx.accounts.x.load()`).
@@ -44,8 +53,10 @@ pub enum AccountEffect {
     /// The instruction writes / mutates the account (e.g., `ctx.accounts.x.data = ...`).
     Write,
     /// The instruction creates / initializes the account (e.g., `init` constraint).
+    /// Not produced today — see the type-level note.
     Create,
     /// The instruction closes the account (e.g., `close` constraint).
+    /// Not produced today — see the type-level note.
     Close,
     /// The instruction passes this account into a CPI call.
     CpiPass,
@@ -373,28 +384,30 @@ impl MapperAgent {
                 }
 
                 // Detect account structs (#[derive(Accounts)])
-                if line.contains("#[derive(Accounts)") || line.contains("#[derive(Accounts<") {
-                    // Look for struct definition on next non-blank line
-                    let struct_line = content
+                if derives_accounts(line) {
+                    // The struct is the next line that is neither blank, nor an
+                    // attribute, nor a comment. It used to have to be the next
+                    // non-blank line and to start with `pub struct `, which drops
+                    // the canonical Anchor PDA form outright — `#[instruction(..)]`
+                    // is *mandatory* between the derive and the struct whenever a
+                    // `seeds` constraint references an instruction argument, and a
+                    // doc comment does the same. The struct was then skipped in
+                    // silence: no AccountNode, no warning, and `anchor_field_count`
+                    // / `unchecked_fields` under-count, which is what LocalJudge
+                    // uses to decide whether to suppress findings.
+                    let struct_at = content
                         .lines()
+                        .enumerate()
                         .skip(line_no + 1)
-                        .find(|l| !l.trim().is_empty());
-                    if let Some(sline) = struct_line {
-                        if sline.trim().starts_with("pub struct ") {
-                            let name = sline
-                                .trim()
-                                .strip_prefix("pub struct ")
-                                .and_then(|s| s.split_whitespace().next())
-                                .unwrap_or("UnknownAccounts")
-                                .trim_end_matches("<'info>")
-                                .to_string();
-
-                            // Find the struct body
-                            let rest = &content
-                                .lines()
-                                .skip(line_no + 1)
-                                .collect::<Vec<_>>()
-                                .join("\n");
+                        .find(|(_, l)| {
+                            let t = l.trim();
+                            !t.is_empty() && !t.starts_with('#') && !t.starts_with("//")
+                        });
+                    if let Some((sidx, sline)) = struct_at {
+                        if let Some(name) = struct_name(sline) {
+                            // Find the struct body — from the struct line, not from
+                            // the derive: anything skipped above may carry braces.
+                            let rest = &content.lines().skip(sidx).collect::<Vec<_>>().join("\n");
                             let struct_body = extract_struct_body(rest);
 
                             let is_initialized = struct_body.as_ref().map(|b| {
@@ -596,6 +609,45 @@ fn extract_function_body(text: &str) -> Option<String> {
 /// Extract struct body from text starting at struct declaration.
 fn extract_struct_body(text: &str) -> Option<String> {
     extract_function_body(text)
+}
+
+/// True when `line` is a derive attribute listing `Accounts`.
+///
+/// Compares whole derive entries rather than substrings: `#[derive(Accounts,
+/// Clone)]` is ordinary Anchor and must match, while Solitaire's
+/// `#[derive(FromAccounts)]` is a different framework's macro and must not. The
+/// previous `contains("#[derive(Accounts)")` excluded the multi-derive form,
+/// which is why a Clone-deriving Accounts struct was mapped as if absent.
+fn derives_accounts(line: &str) -> bool {
+    let Some(open) = line.find("#[derive(") else {
+        return false;
+    };
+    let inner = &line[open + "#[derive(".len()..];
+    let inner = inner.split(')').next().unwrap_or("");
+    inner.split(',').any(|d| d.trim() == "Accounts")
+}
+
+/// Struct name from a `struct` declaration line, or `None` if it is not one.
+///
+/// Cuts at the first character that cannot appear in an identifier, so
+/// `pub struct Withdraw<'info> {` yields `Withdraw` for any lifetime name — the
+/// previous `trim_end_matches("<'info>")` left `Withdraw<'a>` intact whenever a
+/// program used a different one.
+fn struct_name(line: &str) -> Option<String> {
+    let t = line.trim();
+    let rest = t
+        .strip_prefix("pub struct ")
+        .or_else(|| t.strip_prefix("struct "))?;
+    let name: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Heuristic extraction of per-account effects from an instruction function body.
@@ -803,6 +855,116 @@ mod tests {
         assert!(!sp.is_anchor_heavy);
         assert_eq!(sp.unchecked_fields, 0);
         assert!(sp.write_accounts.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod accounts_struct_detection_tests {
+    //! `#[derive(Accounts)]` structs were only found when the struct declaration
+    //! was the very next non-blank line and the derive list held nothing else.
+    //! Both assumptions break on ordinary Anchor code, and the failure is silent:
+    //! the struct simply never reaches `graph.accounts`, so every consumer —
+    //! `anchor_field_count`, `unchecked_fields`, `is_anchor_heavy`, the hypothesis
+    //! generator — reasons about a program it believes has no account structs.
+    use super::*;
+    use std::fs;
+
+    async fn accounts_for(src: &str) -> Vec<AccountNode> {
+        let root = std::env::temp_dir().join(format!(
+            "ares-accts-{}-{}",
+            std::process::id(),
+            // distinct per source so parallel test threads do not share a dir
+            src.len() * 31 + src.bytes().map(|b| b as usize).sum::<usize>()
+        ));
+        let dir = root.join("src");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("lib.rs"), src).unwrap();
+        let g = MapperAgent::new(&root).analyze().await.unwrap();
+        fs::remove_dir_all(&root).ok();
+        g.accounts
+    }
+
+    /// `#[instruction(..)]` is not optional decoration: Anchor requires it
+    /// whenever a `seeds` constraint references an instruction argument, so this
+    /// is the canonical PDA struct, not an edge case.
+    #[tokio::test]
+    async fn instruction_attribute_between_derive_and_struct_is_skipped_over() {
+        let accounts = accounts_for(
+            "#[derive(Accounts)]\n\
+             #[instruction(vault_bump: u8)]\n\
+             pub struct Withdraw<'info> {\n\
+             \x20   #[account(mut, seeds = [b\"vault\"], bump = vault_bump)]\n\
+             \x20   pub vault: Account<'info, Vault>,\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(
+            accounts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["Withdraw"],
+            "the seeds-from-argument form must still be mapped"
+        );
+        assert!(
+            accounts[0].seeds.is_some(),
+            "seeds must come from the struct body, not from whatever line \
+             followed the derive"
+        );
+    }
+
+    #[tokio::test]
+    async fn doc_comment_between_derive_and_struct_is_skipped_over() {
+        let accounts = accounts_for(
+            "#[derive(Accounts)]\n\
+             /// Accounts for the withdraw instruction.\n\
+             pub struct Withdraw<'info> {\n\
+             \x20   pub vault: Account<'info, Vault>,\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(accounts.len(), 1, "got {accounts:?}");
+    }
+
+    #[tokio::test]
+    async fn multi_derive_lists_still_count_as_accounts_structs() {
+        let accounts = accounts_for(
+            "#[derive(Accounts, Clone)]\n\
+             pub struct Withdraw<'info> {\n\
+             \x20   pub vault: Account<'info, Vault>,\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(accounts.len(), 1, "got {accounts:?}");
+    }
+
+    /// Solitaire's `FromAccounts` is a different framework's macro; treating it
+    /// as an Anchor Accounts struct would inflate `anchor_field_count`, which
+    /// LocalJudge uses to decide when to *suppress* findings.
+    #[tokio::test]
+    async fn from_accounts_derive_is_not_an_anchor_accounts_struct() {
+        let accounts = accounts_for(
+            "#[derive(FromAccounts)]\n\
+             pub struct Withdraw<'b> {\n\
+             \x20   pub vault: Info<'b>,\n\
+             }\n",
+        )
+        .await;
+        assert!(accounts.is_empty(), "got {accounts:?}");
+    }
+
+    /// A lifetime other than `'info` used to survive into the name, so the struct
+    /// was recorded as `Withdraw<'a>` and never matched by name anywhere.
+    #[tokio::test]
+    async fn struct_name_excludes_any_lifetime_parameter() {
+        let accounts = accounts_for(
+            "#[derive(Accounts)]\n\
+             pub struct Withdraw<'a> {\n\
+             \x20   pub vault: Account<'a, Vault>,\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(
+            accounts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["Withdraw"]
+        );
     }
 }
 
