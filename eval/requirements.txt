@@ -1,5 +1,5 @@
 numpy>=2.0
-pandas>=2.2
+pandas>=3.0.5
 # Floors below are set by security advisories, not by API needs:
 #   pyarrow >=23.0.1 — PYSEC-2026-113
 #   pytest  >=9.0.3  — PYSEC-2026-1845
