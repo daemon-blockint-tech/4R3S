@@ -201,7 +201,17 @@ impl<'a> SemanticValidator<'a> {
                 .iter()
                 .any(|(_, e)| matches!(e, AccountEffect::CpiPass | AccountEffect::Write));
 
-            if !passes_writable {
+            // `!passes_writable` is only meaningful when effects were actually
+            // extracted. `extract_account_effects` recognises `ctx.accounts.<x>`
+            // and nothing else, so EVERY non-Anchor program has an empty effect
+            // list — and this rule then suppressed 100% of its arbitrary-cpi
+            // findings regardless of what the detector said. Measured on the eval
+            // corpus: only 10 of 141 targets contain `ctx.accounts.` at all.
+            //
+            // An empty list means "we could not tell", not "no writable accounts
+            // are passed". Suppressing on it is the same failure as reporting
+            // `ok` for an analyzer that never looked.
+            if !instr.effects.is_empty() && !passes_writable {
                 return ValidationResult {
                     finding: finding.clone(),
                     suppressed: true,
