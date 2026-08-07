@@ -7,7 +7,8 @@ services:
       POSTGRES_USER: ares
       POSTGRES_PASSWORD: ares_dev_password
     ports:
-      - "5432:5432"
+      # Host 5433 avoids clashing with local Homebrew/Postgres on 5432.
+      - "127.0.0.1:5433:5432"
     volumes:
       - ares_pg:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +21,7 @@ services:
     image: redis:7-alpine
     container_name: ares-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - ares_redis:/data
     healthcheck:
@@ -37,8 +38,8 @@ services:
       NEO4J_AUTH: neo4j/ares_dev_password
       NEO4J_PLUGINS: '["apoc"]'
     ports:
-      - "7474:7474" # HTTP browser
-      - "7687:7687" # Bolt
+      - "127.0.0.1:7474:7474" # HTTP browser
+      - "127.0.0.1:7687:7687" # Bolt
     volumes:
       - ares_neo4j:/data
     healthcheck:

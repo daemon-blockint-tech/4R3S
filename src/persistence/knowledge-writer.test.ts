@@ -9,6 +9,7 @@ const supabaseMock = vi.hoisted(() => ({
 const neo4jMock = vi.hoisted(() => ({
   hasNeo4j: vi.fn(() => false),
   withNeo4jSession: vi.fn(async () => undefined),
+  withNeo4jWriteSession: vi.fn(async () => undefined),
 }));
 
 vi.mock("./supabase.js", () => supabaseMock);
@@ -25,6 +26,7 @@ beforeEach(() => {
   supabaseMock.getSupabase.mockReturnValue(undefined);
   neo4jMock.hasNeo4j.mockReturnValue(false);
   neo4jMock.withNeo4jSession.mockReset().mockResolvedValue(undefined);
+  neo4jMock.withNeo4jWriteSession.mockReset().mockResolvedValue(undefined);
 });
 
 const fragment = {
@@ -97,7 +99,7 @@ describe("HybridKnowledgeWriter", () => {
 
   it("writes to Neo4j when configured", async () => {
     neo4jMock.hasNeo4j.mockReturnValue(true);
-    neo4jMock.withNeo4jSession.mockImplementation(async (fn: (s: unknown) => Promise<unknown>) => {
+    neo4jMock.withNeo4jWriteSession.mockImplementation(async (fn: (s: unknown) => Promise<unknown>) => {
       const session = { run: vi.fn().mockResolvedValue({}) };
       return fn(session);
     });
@@ -106,12 +108,12 @@ describe("HybridKnowledgeWriter", () => {
     expect(writer.enabled).toBe(true);
     const ids = await writer.persist(fragment);
     expect(ids).toBeDefined();
-    expect(neo4jMock.withNeo4jSession).toHaveBeenCalledTimes(1);
+    expect(neo4jMock.withNeo4jWriteSession).toHaveBeenCalledTimes(1);
   });
 
   it("does not throw when the Neo4j write fails", async () => {
     neo4jMock.hasNeo4j.mockReturnValue(true);
-    neo4jMock.withNeo4jSession.mockRejectedValue(new Error("graph down"));
+    neo4jMock.withNeo4jWriteSession.mockRejectedValue(new Error("graph down"));
     const writer = new HybridKnowledgeWriter();
     expect(await writer.persist(fragment)).toBeUndefined();
   });

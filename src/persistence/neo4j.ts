@@ -9,6 +9,7 @@ import neo4j, {
   type Driver,
   type QueryResult,
   type Session,
+  type SessionMode,
 } from "neo4j-driver";
 
 import { env } from "../config/env.js";
@@ -93,17 +94,44 @@ export function deadlined(session: Pick<Session, "run">): Neo4jSession {
  * Run `fn` with a fresh session, always closing it afterward. Returns
  * `undefined` when the driver is not configured.
  */
-export async function withNeo4jSession<T>(
+async function withSession<T>(
+  mode: SessionMode,
   fn: (session: Neo4jSession) => Promise<T>,
 ): Promise<T | undefined> {
   const driver = getNeo4jDriver();
   if (!driver) return undefined;
-  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
+  const session = driver.session({ defaultAccessMode: mode });
   try {
     return await fn(deadlined(session));
   } finally {
     await session.close();
   }
+}
+
+/** Read-only session (queries, traversals). Routed to a replica in a cluster. */
+export async function withNeo4jSession<T>(
+  fn: (session: Neo4jSession) => Promise<T>,
+): Promise<T | undefined> {
+  return withSession(neo4j.session.READ, fn);
+}
+
+/**
+ * Write session, for `MERGE` and DDL. Routed to the leader.
+ *
+ * The mode is not an optimisation. Neo4j routes READ sessions to replicas, and
+ * a replica REJECTS writes — so a `MERGE` issued on a READ session fails against
+ * any clustered deployment while passing silently on a single instance, where
+ * every session is the leader. Collapsing both into one READ helper therefore
+ * breaks writeback exactly where it is hardest to notice: in production, not in
+ * local testing.
+ *
+ * Callers that mutate the graph: `knowledge-writer` (the REMEMBER writeback),
+ * `scripts/migrate`, `scripts/ingest-solsec`.
+ */
+export async function withNeo4jWriteSession<T>(
+  fn: (session: Neo4jSession) => Promise<T>,
+): Promise<T | undefined> {
+  return withSession(neo4j.session.WRITE, fn);
 }
 
 /** Close the shared driver (call on shutdown). */

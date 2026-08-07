@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!session.user.id) {
-    console.error('Session user.id is undefined. Session:', session)
+    console.error('Session user.id is undefined')
     return Response.json({ error: 'Invalid session - user ID missing' }, { status: 400 })
   }
 
@@ -22,12 +22,12 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Cannot disconnect primary authentication method' }, { status: 400 })
   }
 
-  console.log('Disconnecting GitHub account for user:', session.user.id)
+  console.log('Disconnecting GitHub account for user')
 
   try {
     await db.delete(accounts).where(and(eq(accounts.userId, session.user.id), eq(accounts.provider, 'github')))
 
-    console.log('GitHub account disconnected successfully for user:', session.user.id)
+    console.log('GitHub account disconnected successfully')
     return Response.json({ success: true })
   } catch (error) {
     console.error('Error disconnecting GitHub:', error)

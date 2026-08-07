@@ -42,7 +42,7 @@ export async function createSession(tokens: Tokens): Promise<Session | undefined
     },
   }
 
-  console.log('Created session with internal user ID:', session.user.id)
+  console.log('Created session')
   return session
 }
 

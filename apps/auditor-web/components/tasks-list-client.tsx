@@ -24,6 +24,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import type { Session } from '@/lib/session/types'
+import { formatLmStudioModelLabel, isLmStudioAgent } from '@/lib/agents/lmstudio-ui'
 import { Claude, Codex, Copilot, Cursor, Gemini, OpenCode } from '@/components/logos'
 import { PRStatusIcon } from '@/components/pr-status-icon'
 import { PRCheckStatus } from '@/components/pr-check-status'
@@ -255,6 +256,8 @@ export function TasksListClient({ user, authProvider, initialStars = 1200 }: Tas
         return Gemini
       case 'opencode':
         return OpenCode
+      case 'lmstudio':
+        return Codex
       default:
         return null
     }
@@ -262,6 +265,10 @@ export function TasksListClient({ user, authProvider, initialStars = 1200 }: Tas
 
   const getHumanFriendlyModelName = (agent: string | null, model: string | null) => {
     if (!agent || !model) return model
+
+    if (isLmStudioAgent(agent)) {
+      return formatLmStudioModelLabel(model)
+    }
 
     const agentModels = AGENT_MODELS[agent as keyof typeof AGENT_MODELS]
     if (!agentModels) return model

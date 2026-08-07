@@ -78,7 +78,8 @@ async fn test_llm_judge_disabled_passthrough() {
 
 /// Integration test: verify scan budget truncates low-confidence findings.
 /// When findings exceed `llm_max_findings_per_scan`, only the top-N by confidence
-/// should be evaluated by the LLM; the rest are passed through with `llm_used=false`.
+/// are sent to the LLM; the rest are passed through with an explicit budget-skip
+/// reason. Without a working LLM backend no finding may be marked `llm_used`.
 #[tokio::test]
 async fn test_llm_judge_budget_truncation() {
     let graph = ares_mapper::ProgramGraph::default();
@@ -157,41 +158,28 @@ async fn test_llm_judge_budget_truncation() {
 
     assert_eq!(results.len(), 4, "All 4 findings should be returned");
 
-    let evaluated: Vec<_> = results.iter().filter(|r| r.llm_used).collect();
-    let skipped: Vec<_> = results.iter().filter(|r| !r.llm_used).collect();
-
+    // The two lowest-confidence findings overflow the budget of 2 and must
+    // carry the explicit budget-skip reason.
+    let budget_skipped: Vec<_> = results
+        .iter()
+        .filter(|r| r.reasoning.contains("budget"))
+        .collect();
     assert_eq!(
-        evaluated.len(),
-        2,
-        "Only top 2 findings by confidence should be evaluated by LLM"
-    );
-    assert_eq!(
-        skipped.len(),
+        budget_skipped.len(),
         2,
         "2 findings should be skipped due to budget"
     );
 
-    // Verify the evaluated findings are the highest-confidence ones
-    let evaluated_ids: Vec<_> = evaluated.iter().map(|r| r.finding.id.as_str()).collect();
-    assert!(
-        evaluated_ids.contains(&"HIGH-001"),
-        "Highest-confidence finding (0.95) should be evaluated"
-    );
-    assert!(
-        evaluated_ids.contains(&"MED-001"),
-        "Second-highest-confidence finding (0.80) should be evaluated"
-    );
-
-    // Skipped findings should be preserved, not suppressed
-    for result in skipped {
+    // Without a working LLM backend (feature off, or unreachable/invalid API)
+    // no finding may be recorded as LLM-judged, and none may be suppressed.
+    for result in &results {
         assert!(
-            !result.suppressed,
-            "Skipped findings should NOT be suppressed"
+            !result.llm_used,
+            "llm_used must stay false when no real LLM judgment happened"
         );
         assert!(
-            result.reasoning.contains("budget") || result.reasoning.contains("skipped"),
-            "Skipped finding should indicate budget skip reason: got '{}'",
-            result.reasoning
+            !result.suppressed,
+            "No finding should be suppressed without a real LLM verdict"
         );
     }
 
@@ -257,9 +245,10 @@ fn test_llm_judge_prompt_specialization() {
     }
 }
 
-/// Integration test: verify LLM-as-Judge with enabled stub provider (feature off).
-/// When the `llm-judge` feature is disabled, the stub returns a deterministic
-/// response that keeps findings with confidence >= 0.85 (plausibility_score = 0.75).
+/// Integration test: verify LLM-as-Judge never fabricates a verdict when the
+/// `llm-judge` feature is compiled out. The finding must be kept with
+/// `llm_used=false` and the error captured in the reasoning field — a simulated
+/// judgment must not be recorded as a real one.
 #[cfg(not(feature = "llm-judge"))]
 #[tokio::test]
 async fn test_llm_judge_enabled_stub() {
@@ -295,18 +284,17 @@ async fn test_llm_judge_enabled_stub() {
 
     let result = &results[0];
     assert!(
-        result.llm_used,
-        "llm_used should be true when provider is enabled"
+        !result.llm_used,
+        "llm_used must be false — a stubbed backend is not a real judgment"
     );
-    // The stub returns plausibility_score=0.75 and is_false_positive=false,
-    // so this finding should NOT be suppressed
     assert!(
         !result.suppressed,
-        "High-confidence finding should not be suppressed by stub LLM"
+        "Finding should not be suppressed without a real LLM verdict"
     );
     assert!(
-        result.plausibility_score > 0.5,
-        "Plausibility score from stub should be reasonably high"
+        result.reasoning.contains("LLM evaluation error"),
+        "Reasoning should capture the missing-feature error: got '{}'",
+        result.reasoning
     );
 
     let extracted = ares_v3::llm_judge::extract_findings(results);

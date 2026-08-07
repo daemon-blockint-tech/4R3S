@@ -169,6 +169,9 @@ export async function runSemgrep(
           ...[...SKIP_DIRS].flatMap((d) => ["--exclude", d]),
           "--config",
           config,
+          // End-of-options: a target path starting with "-" must not be
+          // parsed as flags.
+          "--",
           sourcePath,
         ],
         // stderr is piped, not ignored: it carries the reason a scan failed,

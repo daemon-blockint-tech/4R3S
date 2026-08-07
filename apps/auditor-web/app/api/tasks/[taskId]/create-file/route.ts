@@ -4,6 +4,7 @@ import { tasks } from '@/lib/db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 import { getServerSession } from '@/lib/session/get-server-session'
 import { PROJECT_DIR } from '@/lib/sandbox/commands'
+import { resolveSandboxPath } from '@/lib/sandbox/safe-path'
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   try {
@@ -18,6 +19,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!filename || typeof filename !== 'string') {
       return NextResponse.json({ success: false, error: 'Filename is required' }, { status: 400 })
+    }
+
+    // Resolve against PROJECT_DIR and reject traversal outside the project root
+    const safeFilename = resolveSandboxPath(filename)
+    if (!safeFilename) {
+      return NextResponse.json({ success: false, error: 'Invalid filename' }, { status: 400 })
     }
 
     // Get task from database and verify ownership (exclude soft-deleted)
@@ -63,7 +70,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // Create the file using touch and mkdir -p for parent directories
     // Extract directory path if file is in a subdirectory
-    const pathParts = filename.split('/')
+    const pathParts = safeFilename.split('/')
     if (pathParts.length > 1) {
       const dirPath = pathParts.slice(0, -1).join('/')
       const mkdirResult = await sandbox.runCommand({
@@ -82,7 +89,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // Create the file using touch
     const touchResult = await sandbox.runCommand({
       cmd: 'touch',
-      args: [filename],
+      args: [safeFilename],
       cwd: PROJECT_DIR,
     })
 
@@ -95,7 +102,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({
       success: true,
       message: 'File created successfully',
-      filename,
+      filename: safeFilename,
     })
   } catch (error) {
     console.error('Error creating file:', error)

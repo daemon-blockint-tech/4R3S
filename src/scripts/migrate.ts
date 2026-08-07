@@ -14,7 +14,7 @@ import { dirname, resolve } from "node:path";
 
 import { logger } from "../config/logger.js";
 import { createPostgresCheckpointer } from "../persistence/checkpointer.js";
-import { hasNeo4j, withNeo4jSession, closeNeo4j } from "../persistence/neo4j.js";
+import { hasNeo4j, withNeo4jWriteSession, closeNeo4j } from "../persistence/neo4j.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -41,7 +41,7 @@ async function migrateNeo4j(): Promise<void> {
     .map((s) => s.trim())
     .filter((s) => s.length > 0 && !s.startsWith("//"));
 
-  await withNeo4jSession(async (session) => {
+  await withNeo4jWriteSession(async (session) => {
     for (const stmt of statements) {
       await session.run(stmt);
     }

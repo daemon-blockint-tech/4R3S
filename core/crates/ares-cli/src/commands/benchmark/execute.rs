@@ -441,7 +441,12 @@ pub async fn execute(
         };
 
         let elapsed = start.elapsed().as_secs();
-        let economic_score = estimate_economic_score(&entry.name, !detected_categories.is_empty());
+        // Aggregate the per-category heuristic over the detected categories —
+        // estimate_economic_score matches on category names, not protocol names.
+        let economic_score: u64 = detected_categories
+            .iter()
+            .map(|c| estimate_economic_score(c, true))
+            .sum();
 
         let total_findings = detected_categories.len();
 

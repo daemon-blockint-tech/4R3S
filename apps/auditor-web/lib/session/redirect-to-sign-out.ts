@@ -3,6 +3,7 @@ export async function redirectToSignOut(): Promise<void> {
     `/api/auth/signout?${new URLSearchParams({
       next: window.location.pathname,
     }).toString()}`,
+    { method: 'POST' },
   )
 
   const { url } = await res.json()

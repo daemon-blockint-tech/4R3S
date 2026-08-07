@@ -13,11 +13,12 @@ const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi
 const URL_SECRET_PARAM =
   /([?&](?:[a-z0-9_-]*(?:key|token|secret|password|auth|credential|access_token)[a-z0-9_-]*)=)([^&\s"'<>]+)/gi
 
-/** GitHub, OpenAI, Anthropic, and similar token prefixes. */
+/** GitHub, OpenAI, Anthropic, Vercel AI Gateway, and similar token prefixes. */
 const TOKEN_PATTERNS = [
   /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g,
   /\bsk-[A-Za-z0-9_-]{20,}\b/g,
   /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g,
+  /\bvck_[A-Za-z0-9_-]{20,}\b/g,
   /\bBearer\s+[A-Za-z0-9._-]{20,}\b/gi,
 ]
 

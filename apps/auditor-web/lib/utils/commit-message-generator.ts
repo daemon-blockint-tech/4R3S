@@ -1,4 +1,4 @@
-import { generateText } from 'ai'
+import { generateLlmText, isLlmConfigured } from '@/lib/llm/provider'
 
 export interface CommitMessageOptions {
   description: string
@@ -9,8 +9,8 @@ export interface CommitMessageOptions {
 export async function generateCommitMessage(options: CommitMessageOptions): Promise<string> {
   const { description, repoName, context } = options
 
-  if (!process.env.AI_GATEWAY_API_KEY) {
-    throw new Error('AI_GATEWAY_API_KEY environment variable is required')
+  if (!isLlmConfigured()) {
+    throw new Error('LLM is not configured (set AI_GATEWAY_API_KEY or LM Studio vars)')
   }
 
   // Create the prompt for commit message generation
@@ -39,11 +39,7 @@ Return ONLY the commit message, nothing else.`
 
   try {
     // Generate commit message using AI SDK 5 with AI Gateway
-    const result = await generateText({
-      model: 'openai/gpt-5-nano',
-      prompt,
-      temperature: 0.3,
-    })
+    const result = await generateLlmText(prompt, 0.3)
 
     // Clean up the response (remove any extra whitespace or quotes)
     const commitMessage = result.text.trim().replace(/^["']|["']$/g, '')

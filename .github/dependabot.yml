@@ -2,6 +2,9 @@ version: 2
 updates:
   # npm dependencies — grouped into a single weekly PR to keep noise low. This
   # complements GitHub's security updates, which continue to open their own PRs.
+  # apps/auditor-web gets no entry of its own: it is a pnpm workspace member
+  # whose deps resolve into the root pnpm-lock.yaml, and dependabot updates
+  # pnpm workspaces recursively from "/" (a subdirectory entry would conflict).
   - package-ecosystem: npm
     directory: "/"
     schedule:
@@ -51,6 +54,18 @@ updates:
       core-cargo:
         patterns:
           - "*"
+
+  - package-ecosystem: pip
+    directory: "/eval"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: "/apps/auditor-api"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
 
   # Keep the GitHub Actions used in .github/workflows pinned to current versions.
   - package-ecosystem: github-actions

@@ -346,17 +346,15 @@ Scoring:
     }
 
     /// Stub implementation used when the `llm-judge` feature is disabled.
-    /// Returns a deterministic simulated response for architecture testing.
+    /// Always errors: a simulated verdict must never be recorded as a real
+    /// LLM judgment (`llm_used=true`). The caller keeps the finding with
+    /// `llm_used=false` and the error captured in the reasoning field.
     #[cfg(not(feature = "llm-judge"))]
     async fn call_llm(&self, _prompt: &str) -> Result<String, String> {
-        match self.config.llm_provider {
-            LlmProvider::Disabled => Err("LLM provider is disabled".to_string()),
-            _ => {
-                // Simulated response: findings with confidence >= 0.85 are likely real
-                // This is a deterministic stub for testing the pipeline architecture
-                Ok(r#"{"plausibility_score": 0.75, "is_false_positive": false, "reasoning": "Simulated LLM assessment — architecture validation.", "suggested_severity": "High"}"#.to_string())
-            }
-        }
+        Err(format!(
+            "compiled without the `llm-judge` feature — cannot evaluate via {:?} provider",
+            self.config.llm_provider
+        ))
     }
 
     /// Parse the LLM's JSON response into a structured validation result.

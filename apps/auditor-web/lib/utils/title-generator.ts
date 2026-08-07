@@ -1,4 +1,4 @@
-import { generateText } from 'ai'
+import { generateLlmText, isLlmConfigured } from '@/lib/llm/provider'
 
 export interface TitleGenerationOptions {
   prompt: string
@@ -9,8 +9,8 @@ export interface TitleGenerationOptions {
 export async function generateTaskTitle(options: TitleGenerationOptions): Promise<string> {
   const { prompt, repoName, context } = options
 
-  if (!process.env.AI_GATEWAY_API_KEY) {
-    throw new Error('AI_GATEWAY_API_KEY environment variable is required')
+  if (!isLlmConfigured()) {
+    throw new Error('LLM is not configured (set AI_GATEWAY_API_KEY or LM Studio vars)')
   }
 
   // Create the prompt for title generation
@@ -37,11 +37,7 @@ Return ONLY the title, nothing else.`
 
   try {
     // Generate title using AI SDK 5 with AI Gateway
-    const result = await generateText({
-      model: 'openai/gpt-5-nano',
-      prompt: systemPrompt,
-      temperature: 0.3,
-    })
+    const result = await generateLlmText(systemPrompt, 0.3)
 
     // Clean up the response (remove any extra whitespace or quotes)
     const title = result.text.trim().replace(/^["']|["']$/g, '')

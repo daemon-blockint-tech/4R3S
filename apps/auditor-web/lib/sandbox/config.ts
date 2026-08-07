@@ -1,3 +1,5 @@
+import { isLmStudioConfigured } from '@/lib/llm/lmstudio'
+
 export function validateEnvironmentVariables(
   selectedAgent: string = 'claude',
   githubToken?: string | null,
@@ -20,8 +22,21 @@ export function validateEnvironmentVariables(
     errors.push('CURSOR_API_KEY is required for Cursor CLI. Please add your API key in your profile.')
   }
 
-  if (selectedAgent === 'codex' && !apiKeys?.AI_GATEWAY_API_KEY && !process.env.AI_GATEWAY_API_KEY) {
-    errors.push('AI_GATEWAY_API_KEY is required for Codex CLI. Please add your API key in your profile.')
+  if (
+    (selectedAgent === 'codex' || selectedAgent === 'lmstudio') &&
+    !isLmStudioConfigured() &&
+    !apiKeys?.AI_GATEWAY_API_KEY &&
+    !process.env.AI_GATEWAY_API_KEY
+  ) {
+    errors.push(
+      'Codex requires AI_GATEWAY_API_KEY or LM Studio (LLM_PROVIDER=lmstudio + LM_STUDIO_MODEL). See .env.local.example.',
+    )
+  }
+
+  if (selectedAgent === 'lmstudio' && !isLmStudioConfigured()) {
+    errors.push(
+      'Local (LM Studio) is not configured. Set LLM_PROVIDER=lmstudio and LM_STUDIO_MODEL in .env.local, with LM Studio running.',
+    )
   }
 
   if (selectedAgent === 'gemini' && !apiKeys?.GEMINI_API_KEY && !process.env.GEMINI_API_KEY) {

@@ -1,5 +1,6 @@
 import { Sandbox } from '@vercel/sandbox'
 import { runCommandInSandbox, runInProject, PROJECT_DIR } from '../commands'
+import { writeInstructionFile } from '../instruction-file'
 import { AgentExecutionResult } from '../types'
 import { redactSensitiveInfo } from '@/lib/utils/logging'
 import { TaskLogger } from '@/lib/utils/task-logger'
@@ -230,10 +231,12 @@ EOF`
     await logger.info('Attempting Gemini CLI execution with basic flags...')
 
     // Execute Gemini CLI with proper environment using shell command
-    // IMPORTANT: Wrap instruction in quotes to prevent CLI option parsing issues
+    // Deliver the instruction via a sandbox file so the prompt is never
+    // interpolated into the shell command string
+    const instructionArg = await writeInstructionFile(sandbox, instruction)
     const fullCommand = envPrefix
-      ? `${envPrefix} gemini ${args.join(' ')} "${instruction}"`
-      : `gemini ${args.join(' ')} "${instruction}"`
+      ? `${envPrefix} gemini ${args.join(' ')} ${instructionArg}`
+      : `gemini ${args.join(' ')} ${instructionArg}`
     let result = await runCommandInSandbox(sandbox, 'sh', ['-c', fullCommand])
 
     // If that fails with tool registry error, try with different approval modes
@@ -248,8 +251,8 @@ EOF`
       // Don't add instruction to array - add it quoted separately
 
       const fallbackCommand = envPrefix
-        ? `${envPrefix} gemini ${fallbackArgs.join(' ')} "${instruction}"`
-        : `gemini ${fallbackArgs.join(' ')} "${instruction}"`
+        ? `${envPrefix} gemini ${fallbackArgs.join(' ')} ${instructionArg}`
+        : `gemini ${fallbackArgs.join(' ')} ${instructionArg}`
       result = await runCommandInSandbox(sandbox, 'sh', ['-c', fallbackCommand])
 
       // If still failing, try the most basic approach
@@ -257,8 +260,8 @@ EOF`
         await logger.info('Retrying with minimal flags...')
         const minimalArgs = selectedModel ? ['-m', selectedModel] : []
         const minimalCommand = envPrefix
-          ? `${envPrefix} gemini ${minimalArgs.join(' ')} "${instruction}"`
-          : `gemini ${minimalArgs.join(' ')} "${instruction}"`
+          ? `${envPrefix} gemini ${minimalArgs.join(' ')} ${instructionArg}`
+          : `gemini ${minimalArgs.join(' ')} ${instructionArg}`
         result = await runCommandInSandbox(sandbox, 'sh', ['-c', minimalCommand])
       }
     }

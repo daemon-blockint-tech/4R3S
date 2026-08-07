@@ -4,7 +4,13 @@ import { isRelativeUrl } from '@/lib/utils/is-relative-url'
 import { saveSession } from '@/lib/session/create'
 import { getOAuthToken } from '@/lib/session/get-oauth-token'
 
-export async function GET(req: NextRequest) {
+// Logout changes state (token revocation + session clear); GET would be
+// triggerable via cross-site navigation, so only POST is accepted
+export async function GET() {
+  return Response.json({ error: 'Method not allowed' }, { status: 405 })
+}
+
+export async function POST(req: NextRequest) {
   const session = await getSessionFromReq(req)
   if (session) {
     // Check which provider the user authenticated with

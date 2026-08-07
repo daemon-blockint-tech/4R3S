@@ -90,7 +90,7 @@ impl TridentTool {
             )));
         }
 
-        let result = self.parse_fuzz_output(&stdout, &stderr);
+        let result = Self::parse_fuzz_output(&stdout, &stderr);
         info!(
             "Fuzz completed | iterations_ran={} crashes={} invariant_violations={}",
             result.iterations_ran,
@@ -163,7 +163,14 @@ impl TridentTool {
     ///
     /// So: summary counts are parsed as counts, and only genuine crash evidence
     /// is recorded as a crash.
-    fn parse_fuzz_output(&self, stdout: &str, stderr: &str) -> FuzzRunResult {
+    /// Pure: it reads the two streams and nothing else.
+    ///
+    /// Deliberately NOT a method. Taking `&self` forced its tests to build a
+    /// `TridentTool`, which resolves the `trident` binary and panics when it is
+    /// absent — so seven parser tests passed locally, where trident happens to be
+    /// installed, and failed on every CI runner, where it is not. A test for
+    /// string parsing must not depend on an unrelated binary being present.
+    fn parse_fuzz_output(stdout: &str, stderr: &str) -> FuzzRunResult {
         let mut crashes = Vec::new();
         let mut invariant_violations = Vec::new();
         let mut iterations_ran = 0u64;
@@ -525,9 +532,9 @@ mod fuzz_output_parsing_tests {
     use super::*;
 
     fn parse(stdout: &str, stderr: &str) -> FuzzRunResult {
-        TridentTool::new(None)
-            .expect("trident tool")
-            .parse_fuzz_output(stdout, stderr)
+        // No TridentTool: the parser is pure, and requiring the binary here is
+        // what made these tests pass locally and fail in CI.
+        TridentTool::parse_fuzz_output(stdout, stderr)
     }
 
     /// The defect that reached client reports. `scan.rs` turns every entry in

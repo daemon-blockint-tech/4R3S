@@ -5,6 +5,7 @@ import { eq, and, isNull } from 'drizzle-orm'
 import { getOctokit } from '@/lib/github/client'
 import { getServerSession } from '@/lib/session/get-server-session'
 import { PROJECT_DIR } from '@/lib/sandbox/commands'
+import { resolveSandboxPath } from '@/lib/sandbox/safe-path'
 import type { Octokit } from '@octokit/rest'
 import type { Sandbox } from '@vercel/sandbox'
 
@@ -170,8 +171,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ error: 'Missing filename parameter' }, { status: 400 })
     }
 
-    // Decode the filename (handles %40 -> @, etc.)
-    const filename = decodeURIComponent(rawFilename)
+    // Resolve against PROJECT_DIR and reject traversal outside the project root
+    const filename = resolveSandboxPath(rawFilename)
+    if (!filename) {
+      return NextResponse.json({ error: 'Invalid filename' }, { status: 400 })
+    }
 
     // Get task from database and verify ownership (exclude soft-deleted)
     const [task] = await db

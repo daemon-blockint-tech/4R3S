@@ -6,6 +6,7 @@ import { eq, and } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { createGitHubSession, saveSession } from '@/lib/session/create-github'
 import { encrypt } from '@/lib/crypto'
+import { isRelativeUrl } from '@/lib/utils/is-relative-url'
 import { buildRequestContext, runWithRequestContextAsync } from '@/lib/observability/context'
 import { logger } from '@/lib/observability/logger'
 import { hashId } from '@/lib/observability/redaction'
@@ -54,6 +55,17 @@ async function githubCallback(req: NextRequest): Promise<Response> {
       })
       return new Response('Invalid OAuth state', { status: 400 })
     }
+
+    // The redirect cookie is unsigned and client-controlled: re-validate before
+    // using it as a redirect target (reject absolute, protocol-relative, and
+    // backslash URLs), falling back to the default path
+    const safeRedirectTo =
+      storedRedirectTo &&
+      isRelativeUrl(storedRedirectTo) &&
+      !storedRedirectTo.startsWith('//') &&
+      !storedRedirectTo.includes('\\')
+        ? storedRedirectTo
+        : '/'
 
     const clientId = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID
     const clientSecret = process.env.GITHUB_CLIENT_SECRET
@@ -213,7 +225,7 @@ async function githubCallback(req: NextRequest): Promise<Response> {
 
         const response = new Response(null, {
           status: 302,
-          headers: { Location: storedRedirectTo },
+          headers: { Location: safeRedirectTo },
         })
 
         await saveSession(response, session)
@@ -334,7 +346,7 @@ async function githubCallback(req: NextRequest): Promise<Response> {
       }
       cookieStore.delete(`github_oauth_user_id`)
 
-      return Response.redirect(new URL(storedRedirectTo, req.nextUrl.origin))
+      return Response.redirect(new URL(safeRedirectTo, req.nextUrl.origin))
     } catch (error) {
       logger.error('OAuth callback failed', {
         component: 'auth.github',
