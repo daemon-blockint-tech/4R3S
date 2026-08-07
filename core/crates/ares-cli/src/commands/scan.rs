@@ -99,6 +99,44 @@ pub async fn execute(
         cross_findings.len()
     );
 
+    // ORC2-F7: hypotheses become findings here. Before this, the vec built above
+    // was logged and dropped, so `findings` was filled only by cross-analysis and
+    // the two fuzz paths `--fuzz false` skips — which is why EVAL-2 measured F1
+    // 0.0000 with zero predictions across 159 targets.
+    //
+    // They enter as ordinary findings, not privileged ones: the semantic
+    // validator, local judge, LLM judge and triager all run downstream and can
+    // reject them. That is the point — a hypothesis that is wrong should be
+    // *suppressed* and counted, not silently discarded before anything can see it.
+    for h in hypotheses {
+        let severity = match h.category {
+            VulnerabilityCategory::SignerAuthorization | VulnerabilityCategory::ArbitraryCpi => {
+                ares_core::Severity::Critical
+            }
+            VulnerabilityCategory::OwnershipCheck | VulnerabilityCategory::RevivalAttack => {
+                ares_core::Severity::High
+            }
+            _ => ares_core::Severity::Medium,
+        };
+        findings.push(ares_core::Finding {
+            id: format!("ARES-HYP-{}", findings.len() + 1),
+            title: h.title,
+            description: h.description,
+            severity,
+            category: h.category,
+            location: ares_core::CodeLocation {
+                file: program_target.source_path.clone(),
+                function: Some(h.subject),
+                ..Default::default()
+            },
+            proof_of_concept: None,
+            recommendation: h.recommendation,
+            references: vec![],
+            confidence: h.confidence,
+            validation: None,
+        });
+    }
+
     for cf in cross_findings {
         let category = VulnerabilityCategory::from_str_checked(&cf.category)
             .unwrap_or(VulnerabilityCategory::InvariantViolation);
@@ -201,8 +239,18 @@ pub async fn execute(
         if target_idl.is_none() {
             info!("No parseable IDL for target; PoCs will use placeholder instruction data.");
         }
+        // The PoC directory has to exist before the first write. `create_dir_all`
+        // for `output` runs further down, when the report is written — after this
+        // loop — and it never creates the `poc/` child at all. That was
+        // unreachable while ORC2-F7 kept `findings` empty: with nothing to
+        // generate a PoC for, the loop never ran and the missing directory never
+        // surfaced. Wiring hypotheses into findings makes it the first thing a
+        // scan hits, as `Error: IO error: No such file or directory (os error 2)`.
+        let poc_dir = output.join("poc");
+        tokio::fs::create_dir_all(&poc_dir).await?;
+
         for finding in findings.iter_mut() {
-            let poc_path = output.join("poc").join(format!(
+            let poc_path = poc_dir.join(format!(
                 "{}_test.rs",
                 finding.id.to_lowercase().replace("-", "_")
             ));
@@ -223,14 +271,13 @@ pub async fn execute(
 
     // Phase 3: Semantic false-positive validation (Old validator)
     info!("[4.5/5] Semantic Validator: Suppressing structurally implausible findings...");
-    let pre_validation_count = findings.len();
     let validator = crate::validator::SemanticValidator::new(&program_graph);
-    findings = validator.validate(findings);
-    let suppressed_count = pre_validation_count - findings.len();
-    if suppressed_count > 0 {
+    let (retained, semantic_suppressed) = validator.validate(findings);
+    findings = retained;
+    if !semantic_suppressed.is_empty() {
         info!(
             "Semantic FP filter suppressed {} findings",
-            suppressed_count
+            semantic_suppressed.len()
         );
     }
 
@@ -240,6 +287,11 @@ pub async fn execute(
     let (retained_findings, mut suppressed_findings) =
         local_judge.judge(findings, &program_graph.source_patterns);
     findings = retained_findings;
+    // Carry the semantic validator's suppressions into the same list the judges
+    // use, so `suppressed_findings` and the summary's
+    // `false_positives_suppressed` describe every filter in the pipeline rather
+    // than the last two.
+    suppressed_findings.extend(semantic_suppressed);
 
     // Phase 7: LLM-as-Judge validation
     info!("[4.75/5] LLM-as-Judge: Assessing vulnerability plausibility...");
@@ -287,6 +339,12 @@ pub async fn execute(
         info!("Filtered out {} low-confidence findings", filtered_count);
     }
 
+    // Every filter's removals, not just the triager's. `false_positives_suppressed`
+    // was set from `filtered_count` — the confidence cut alone — so a scan that
+    // suppressed findings in the semantic validator or either judge still reported
+    // zero. The field names the FP filters; it should count them.
+    let suppressed_total = suppressed_findings.len();
+
     // Phase 4: Economic exploit scoring
     info!("[5.5/5] Exploit Scorer: Estimating extractable economic impact...");
     let (total_economic_impact, max_single_exploit) =
@@ -316,7 +374,7 @@ pub async fn execute(
             .iter()
             .filter(|f| matches!(f.severity, Severity::Informational))
             .count(),
-        false_positives_suppressed: filtered_count,
+        false_positives_suppressed: suppressed_total,
         poc_generated: findings
             .iter()
             .filter(|f| f.proof_of_concept.is_some())
@@ -439,50 +497,140 @@ async fn discover_fuzz_targets(fuzz_tests_dir: &Path) -> AresResult<Vec<String>>
     Ok(targets)
 }
 
-/// Generate initial vulnerability hypotheses (Phase 1 stub).
-fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec<String> {
+/// A hypothesis the program graph supports, already shaped as a finding.
+///
+/// This returned `Vec<String>` of prose until ORC2-F7. `scan` generated it,
+/// logged the count, and dropped it: findings reaching the report came only from
+/// `cross_analysis` and the two fuzz paths that `--fuzz false` skips. EVAL-2
+/// measured the result — **F1 0.0000 across 159 targets, 170 false negatives,
+/// zero predictions** — and the scan logs showed the mechanism directly:
+/// `Generated 1 vulnerability hypotheses` followed by `Suppressed: 0`. Zero in
+/// both places means the hypotheses were never findings to suppress.
+///
+/// Prose could not become a `Finding` without a category, so the fix is to
+/// produce the category here rather than to parse it back out of a sentence.
+struct Hypothesis {
+    category: VulnerabilityCategory,
+    /// The instruction or account this is about, for the finding's location.
+    subject: String,
+    title: String,
+    description: String,
+    recommendation: String,
+    /// Deliberately per-category. These are graph-shaped heuristics, not proofs,
+    /// and `scan`'s triager drops anything below 0.70 — so a number chosen to
+    /// clear that bar rather than to describe the evidence would be tuning the
+    /// gate, not measuring the code.
+    confidence: f64,
+}
+
+fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec<Hypothesis> {
     let mut hypotheses = Vec::new();
 
-    // Check for common Solana patterns
     for instruction in &program_graph.instructions {
         if instruction.has_signer_check.is_none() {
-            hypotheses.push(format!(
-                "Missing signer authorization in instruction '{}'",
-                instruction.name
-            ));
+            hypotheses.push(Hypothesis {
+                category: VulnerabilityCategory::SignerAuthorization,
+                subject: instruction.name.clone(),
+                title: format!("Missing signer authorization in '{}'", instruction.name),
+                description: format!(
+                    "The mapper found no signer check in instruction '{}'. An instruction that \
+                     mutates state without asserting the authority signed can be invoked by anyone.",
+                    instruction.name
+                ),
+                recommendation: "Assert the authority is a signer — `Signer<'info>` in Anchor, or \
+                                 an explicit `is_signer` check on the raw AccountInfo."
+                    .to_string(),
+                confidence: 0.72,
+            });
         }
         if instruction.has_owner_check.is_none() {
-            hypotheses.push(format!(
-                "Missing ownership check in instruction '{}'",
-                instruction.name
-            ));
+            hypotheses.push(Hypothesis {
+                category: VulnerabilityCategory::OwnershipCheck,
+                subject: instruction.name.clone(),
+                title: format!("Missing ownership check in '{}'", instruction.name),
+                description: format!(
+                    "The mapper found no owner check in instruction '{}'. Without one, an account \
+                     owned by a different program can be substituted for the expected one.",
+                    instruction.name
+                ),
+                recommendation: "Constrain the account's owner — a typed `Account<'info, T>` in \
+                                 Anchor, or an explicit `owner == program_id` comparison."
+                    .to_string(),
+                confidence: 0.72,
+            });
         }
         if instruction.uses_cpi && !instruction.has_cpi_program_id_check {
-            hypotheses.push(format!(
-                "Arbitrary CPI risk in instruction '{}'",
-                instruction.name
-            ));
+            hypotheses.push(Hypothesis {
+                category: VulnerabilityCategory::ArbitraryCpi,
+                subject: instruction.name.clone(),
+                title: format!("Unvalidated CPI target in '{}'", instruction.name),
+                description: format!(
+                    "Instruction '{}' performs a CPI without validating the target program id, so \
+                     the caller chooses which program runs.",
+                    instruction.name
+                ),
+                recommendation: "Compare the target program id against the expected one, or take \
+                                 it as a typed `Program<'info, T>` account."
+                    .to_string(),
+                // Two independent conditions must hold (a CPI exists AND no id
+                // check was found), so this is better evidenced than the
+                // single-signal hypotheses above.
+                confidence: 0.78,
+            });
         }
-        if instruction.has_arithmetic {
-            hypotheses.push(format!(
-                "Potential arithmetic overflow in instruction '{}'",
-                instruction.name
-            ));
+        if instruction.has_unchecked_arithmetic {
+            hypotheses.push(Hypothesis {
+                category: VulnerabilityCategory::ArithmeticOverflow,
+                subject: instruction.name.clone(),
+                title: format!("Unchecked arithmetic in '{}'", instruction.name),
+                description: format!(
+                    "Instruction '{}' mutates with `+=`/`-=`/`*=`/`/=` and shows no `checked_*`, \
+                     `saturating_*`, or `wrapping_*` guard anywhere in its body.",
+                    instruction.name
+                ),
+                recommendation: "Use `checked_*` and handle the `None`, or `saturating_*` where \
+                                 clamping is the intended behaviour."
+                    .to_string(),
+                // Gated on `has_unchecked_arithmetic`, not `has_arithmetic`: the
+                // latter is set by `.checked_add(` itself, so this hypothesis used
+                // to fire on correctly-guarded code.
+                confidence: 0.70,
+            });
         }
     }
 
     for account in &program_graph.accounts {
         if account.is_initialized_check.is_none() {
-            hypotheses.push(format!(
-                "Missing initialization check for account '{}'",
-                account.name
-            ));
+            hypotheses.push(Hypothesis {
+                category: VulnerabilityCategory::ReInitialization,
+                subject: account.name.clone(),
+                title: format!("Missing initialization check for '{}'", account.name),
+                description: format!(
+                    "Account '{}' has no initialization guard, so it can be initialized a second \
+                     time and its state reset.",
+                    account.name
+                ),
+                recommendation: "Mark the account `init` (which fails if it already exists), or \
+                                 assert an `is_initialized` discriminator before writing."
+                    .to_string(),
+                confidence: 0.70,
+            });
         }
         if account.has_close_constraint.is_none() {
-            hypotheses.push(format!(
-                "Missing close constraint for account '{}' — revival attack risk",
-                account.name
-            ));
+            hypotheses.push(Hypothesis {
+                category: VulnerabilityCategory::RevivalAttack,
+                subject: account.name.clone(),
+                title: format!("Missing close constraint for '{}'", account.name),
+                description: format!(
+                    "Account '{}' is closed without a constraint that zeroes and reassigns it, so \
+                     it can be revived within the same transaction.",
+                    account.name
+                ),
+                recommendation: "Use Anchor's `close = destination`, or zero the data and assign \
+                                 the account to the system program manually."
+                    .to_string(),
+                confidence: 0.70,
+            });
         }
     }
 

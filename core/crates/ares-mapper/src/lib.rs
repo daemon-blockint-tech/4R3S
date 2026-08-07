@@ -52,7 +52,21 @@ pub struct InstructionNode {
     pub has_owner_check: Option<bool>,
     pub has_cpi_program_id_check: bool,
     pub uses_cpi: bool,
+    /// True when the body performs arithmetic at all — including the *safe*
+    /// `checked_*` forms. On its own this is not a vulnerability signal; see
+    /// `has_unchecked_arithmetic`.
     pub has_arithmetic: bool,
+    /// True when the body mutates with `+=`/`-=`/`*=`/`/=` and shows no
+    /// `checked_*` call anywhere.
+    ///
+    /// `has_arithmetic` cannot answer this: it is set by `.checked_add(` too, so
+    /// a handler that carefully guards every operation looks identical to one
+    /// that guards none. The only consumer of `has_arithmetic` was the
+    /// hypothesis generator, which therefore proposed "potential arithmetic
+    /// overflow" for correctly-guarded code — the same failure that retired the
+    /// `anchor-constraint-gap` rule (README, Detection accuracy), where 50% of
+    /// hits already carried the constraint the rule asked for.
+    pub has_unchecked_arithmetic: bool,
     pub file_path: PathBuf,
     pub line_number: Option<u32>,
     /// Data-flow effects this instruction has on specific accounts by name.
@@ -192,6 +206,25 @@ impl MapperAgent {
                             || b.contains(" /= ")
                     });
 
+                    // Mutating arithmetic with no `checked_*` guard anywhere in the
+                    // body. Deliberately conservative at the body level rather than
+                    // per-expression: a handler that uses `checked_add` for one
+                    // operation and `+=` for another will not be flagged here. That
+                    // is the right trade for a *hypothesis* — a missed guard is
+                    // recoverable by the later analyzers, whereas flagging guarded
+                    // code trains reviewers to ignore the category entirely.
+                    let has_unchecked_arithmetic = body.as_ref().is_some_and(|b| {
+                        let mutating = b.contains(" += ")
+                            || b.contains(" -= ")
+                            || b.contains(" *= ")
+                            || b.contains(" /= ");
+                        let guarded = b.contains(".checked_")
+                            || b.contains(".saturating_")
+                            || b.contains(".wrapping_")
+                            || b.contains(".overflowing_");
+                        mutating && !guarded
+                    });
+
                     let effects = extract_account_effects(body.as_deref());
 
                     graph.instructions.push(InstructionNode {
@@ -202,6 +235,7 @@ impl MapperAgent {
                         has_cpi_program_id_check: has_cpi_check,
                         uses_cpi,
                         has_arithmetic,
+                        has_unchecked_arithmetic,
                         file_path: path.to_path_buf(),
                         line_number: Some(line_num),
                         effects,
@@ -639,5 +673,74 @@ mod tests {
         assert!(!sp.is_anchor_heavy);
         assert_eq!(sp.unchecked_fields, 0);
         assert!(sp.write_accounts.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod unchecked_arithmetic_tests {
+    use super::*;
+    use std::fs;
+
+    /// Build a one-instruction Anchor-ish program and return its graph.
+    async fn graph_for(body: &str) -> ProgramGraph {
+        let root =
+            std::env::temp_dir().join(format!("ares-arith-{}-{}", std::process::id(), body.len()));
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            format!(
+                "#[program]\npub mod p {{\n    use super::*;\n    pub fn withdraw(ctx: Context<W>) -> Result<()> {{\n{body}\n        Ok(())\n    }}\n}}\n"
+            ),
+        )
+        .unwrap();
+        let mut m = MapperAgent::new(&root);
+        let g = m.analyze().await.unwrap();
+        fs::remove_dir_all(&root).ok();
+        g
+    }
+
+    /// The defect this field exists to fix: `has_arithmetic` is set by
+    /// `.checked_add(` itself, so the hypothesis generator proposed "potential
+    /// arithmetic overflow" for code that guards every operation. Flagging
+    /// already-correct code is what retired `anchor-constraint-gap`.
+    #[tokio::test]
+    async fn checked_arithmetic_is_not_reported_as_unchecked() {
+        let g = graph_for("        vault.total = vault.total.checked_add(amount).unwrap();").await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            !i.has_unchecked_arithmetic,
+            "checked_add must not read as unchecked arithmetic"
+        );
+    }
+
+    #[tokio::test]
+    async fn saturating_and_wrapping_also_count_as_guarded() {
+        for guard in ["saturating_add", "wrapping_add", "overflowing_add"] {
+            let g = graph_for(&format!(
+                "        vault.total = vault.total.{guard}(amount);"
+            ))
+            .await;
+            let i = g.instructions.first().expect("one instruction");
+            assert!(!i.has_unchecked_arithmetic, "{guard} must count as guarded");
+        }
+    }
+
+    #[tokio::test]
+    async fn bare_compound_assignment_is_unchecked() {
+        let g = graph_for("        vault.total += amount;").await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            i.has_unchecked_arithmetic,
+            "`+= ` with no guard in the body is the case worth reporting"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_body_with_no_arithmetic_at_all_is_clean() {
+        let g = graph_for("        msg!(\"noop\");").await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(!i.has_unchecked_arithmetic);
+        assert!(!i.has_arithmetic);
     }
 }
