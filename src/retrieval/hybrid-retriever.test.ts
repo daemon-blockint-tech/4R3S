@@ -105,6 +105,33 @@ describe("HybridRetriever", () => {
     expect(ids[0]).toBe("shared");
   });
 
+  it("counts one source at most once per fragment", async () => {
+    // The graph bucket is two queries concatenated, and its Cypher used to
+    // return one row per mentioned entity, so the same chunk arrived several
+    // times over. Each copy added the full graph weight (0.6), which is how a
+    // chunk with many :MENTIONS edges outranked everything else by arithmetic
+    // rather than relevance. Crystalline's weight is 0.9, so only
+    // double-counting can put "dup" first.
+    const neo4j = {
+      name: "neo4j",
+      retrieve: vi.fn(async () => ({ fragments: [scored("dup", 1)] })),
+      expand: vi.fn(async () => ({ fragments: [scored("dup", 1)] })),
+    } as unknown as Neo4jRetriever;
+
+    const retriever = new HybridRetriever(
+      fakeCrystalline([scored("solo", 1)]),
+      undefined,
+      neo4j,
+    );
+    const { fragments } = await retriever.retrieveWithStatus({
+      text: "q",
+      limit: 8,
+    });
+
+    expect(fragments.map((f) => f.crystal.id)).toEqual(["solo", "dup"]);
+    expect(fragments[1]!.score).toBeCloseTo(0.6);
+  });
+
   it("respects the result limit", async () => {
     const many = Array.from({ length: 20 }, (_, i) => scored(`c${i}`, 20 - i));
     const retriever = new HybridRetriever(fakeCrystalline(many));
