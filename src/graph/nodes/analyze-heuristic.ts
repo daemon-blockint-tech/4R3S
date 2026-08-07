@@ -25,6 +25,7 @@ import {
   coerceFindings,
   extractChecked,
   downgradeSpeculative,
+  fenceUntrusted,
 } from "../util.js";
 
 /** Build this node's entry for the `analyzers` channel. */
@@ -52,8 +53,21 @@ export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
         ? `Concerns: ${state.intake.concerns.join(", ")}`
         : "",
       "",
-      "Recalled memory fragments (prior audit knowledge):",
-      memory || "(none)",
+      // Not "prior audit knowledge". That phrasing asserts current truth about
+      // text that carries no revision key and no freshness: a fragment was
+      // written against the code as it stood in an EARLIER audit, and nothing
+      // re-observes the repository between runs to invalidate it. Stating the
+      // liveness truth is the cheap half of the fix — the age/level plumbing is
+      // a separate change, and printing a date before `created_at` is real would
+      // be worse than printing none.
+      //
+      // The second sentence is the load-bearing one: it forbids the escalation
+      // where recalled prose becomes a finding's evidence. `canBeConfirmed` can
+      // then only be reached through source the analyzer actually read.
+      "Recalled memory from EARLIER audits of this or similar targets. The code",
+      "may have changed since. Treat each as a LEAD to re-check against the source",
+      "below — a finding may never cite memory as its evidence.",
+      memory ? fenceUntrusted(memory, 4_000) : "(none)",
       "",
       hasSource
         ? [
