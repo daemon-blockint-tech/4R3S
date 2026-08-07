@@ -1,6 +1,6 @@
 use crate::taint_engine::TaintEngine;
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use syn::spanned::Spanned;
 use syn::{visit::Visit, Attribute, Expr, FnArg, ItemFn, ItemStruct, Pat, PatType};
@@ -189,7 +189,7 @@ pub fn analyze_file(path: &Path, content: &str) -> AstScanner {
             for arg in &func.sig.inputs {
                 if let syn::FnArg::Typed(syn::PatType { pat, ty, .. }) = arg {
                     let param_name = pat_to_string(pat);
-                    let ty_str = quote::quote!(#ty).to_string();
+                    let ty_str = type_string(ty);
                     taint.mark_param(&param_name, &ty_str);
                 }
             }
@@ -248,7 +248,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                     .map(|i| i.to_string())
                     .unwrap_or_default();
                 let ty = &field.ty;
-                let ty_str = quote::quote!(#ty).to_string();
+                let ty_str = type_string(ty);
 
                 let is_unchecked = ty_str.contains("UncheckedAccount")
                     || field
@@ -322,7 +322,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                     .map(|i| i.to_string())
                     .unwrap_or_default();
                 let ty = &field.ty;
-                let ty_str = quote::quote!(#ty).to_string();
+                let ty_str = type_string(ty);
 
                 // Solitaire type analysis:
                 // - Info<'b> = raw AccountInfo (no validation) → risky
@@ -419,10 +419,20 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
 
         // Detect if this is a Solitaire instruction handler
         // Signature: fn(ctx: &ExecutionContext, accs: &mut AccountStruct, data: Data) -> Result<()>
-        let is_solitaire_handler = node.sig.inputs.len() >= 2 && {
-            let first_param = quote::quote!(#node.sig.inputs.first()).to_string();
-            first_param.contains("ExecutionContext")
-        };
+        // This was `quote::quote!(#node.sig.inputs.first()).to_string()`, which
+        // does not do what it reads like. Inside `quote!`, `#node` interpolates
+        // the ItemFn and the trailing `.sig.inputs.first()` is emitted as literal
+        // tokens — it is never evaluated. The string held the *entire function*,
+        // so any two-parameter function mentioning `ExecutionContext` anywhere,
+        // including in its body or a string literal, was classified as a Solitaire
+        // entry point. `is_entry_point` gates `arbitrary-cpi` and
+        // `signer-authorization`, both Critical, so this manufactured Critical
+        // findings on functions that are not instruction boundaries.
+        let is_solitaire_handler = node.sig.inputs.len() >= 2
+            && node.sig.inputs.first().is_some_and(|arg| match arg {
+                FnArg::Typed(PatType { ty, .. }) => type_string(ty).contains("ExecutionContext"),
+                FnArg::Receiver(_) => false,
+            });
 
         handler.is_entry_point =
             is_instruction || is_solitaire_handler || fn_name.starts_with("process_");
@@ -431,7 +441,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
         for arg in &node.sig.inputs {
             if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
                 let param_name = pat_to_string(pat);
-                let ty_str = quote::quote!(#ty).to_string();
+                let ty_str = type_string(ty);
                 let is_ctx = ty_str.contains("Context<") || ty_str.contains("ExecutionContext");
                 let is_account_info = ty_str.contains("AccountInfo") || ty_str.contains("Info<");
 
@@ -474,8 +484,23 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
     fn visit_expr(&mut self, node: &'ast Expr) {
         let expr_str = quote::quote!(#node).to_string();
 
-        // Detect CPI calls
-        if expr_str.contains("invoke(") || expr_str.contains("invoke_signed(") {
+        // Detect CPI calls.
+        //
+        // This must not be written as `expr_str.contains("invoke(")`. `expr_str`
+        // comes from `quote!(...).to_string()`, which reconstructs source from a
+        // token stream and separates tokens with spaces: `invoke(&ix, accounts)`
+        // round-trips as `invoke (& ix , accounts)`. The no-space form therefore
+        // never matched, `invoke_seen` was never set, `handler.uses_invoke` was
+        // permanently false, and the post-processing pass above could not raise
+        // `arbitrary-cpi` at all — a Critical detector that silently detected
+        // nothing. (The `_unchecked` check further down this same function
+        // already compensated with `expr_str.replace(" ", "")`; this one did not.)
+        //
+        // `calls_fn` matches on the compact form and requires a real identifier
+        // boundary, so `invoke(` is found while `try_invoke(` or `reinvoke(` —
+        // different functions that merely end in the same letters — are not.
+        let expr_compact = expr_str.replace(' ', "");
+        if calls_fn(&expr_compact, "invoke") || calls_fn(&expr_compact, "invoke_signed") {
             self.invoke_seen = true;
 
             let has_validation = expr_str.contains("program_id")
@@ -688,6 +713,51 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
     }
 }
 
+/// Render a type as a whitespace-free string for substring matching.
+///
+/// `quote!(#ty).to_string()` rebuilds source from tokens and puts a space
+/// between every one, so `Program<'info, Token>` comes back as
+/// `Program < 'info , Token >`. Every `ty_str.contains("Something<")` test in
+/// this file is written without spaces, so against the raw rendering they all
+/// silently returned false — including the `Program<` / `ProgramAccount<` check
+/// that is the sole false-positive guard for Anchor CPI, and the `Signer<` /
+/// `Sysvar<` / `Mut<` classification of Solitaire fields.
+///
+/// Normalising here rather than at each comparison is deliberate: the failure is
+/// invisible (a detector that finds nothing looks exactly like clean code), so
+/// leaving the raw form reachable would let the next `contains("Foo<")` reopen
+/// the same hole. `is_raw_solitaire_info` already stripped spaces internally;
+/// that call is now redundant but harmless.
+fn type_string(ty: &syn::Type) -> String {
+    quote::quote!(#ty).to_string().replace(' ', "")
+}
+
+/// True when `compact` (a whitespace-stripped `quote!` rendering) contains a
+/// call to exactly `name`.
+///
+/// A bare `contains("invoke(")` would also fire on `try_invoke(` and
+/// `reinvoke(`, which are different functions; requiring the preceding character
+/// to be a non-identifier one keeps the match to the function actually named.
+/// Method calls (`x.invoke(..)`) still match, because `.` is not an identifier
+/// character — that is intended: a CPI through a receiver is still a CPI.
+fn calls_fn(compact: &str, name: &str) -> bool {
+    let needle = format!("{name}(");
+    let mut from = 0usize;
+    while let Some(rel) = compact[from..].find(&needle) {
+        let at = from + rel;
+        let boundary_ok = at == 0
+            || !compact[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+        if boundary_ok {
+            return true;
+        }
+        from = at + needle.len();
+    }
+    false
+}
+
 fn is_derive_accounts_attr(attr: &Attribute) -> bool {
     let s = attr_to_string(attr);
     (s.contains("derive") && s.contains("Accounts") && !s.contains("FromAccounts"))
@@ -731,7 +801,9 @@ fn pat_to_string(pat: &Pat) -> String {
 /// Run AST-based analysis across all `.rs` files in a program directory.
 /// Uses rayon for parallel file scanning on multi-core systems.
 pub fn scan_directory_ast(dir: &Path) -> AstScanner {
-    let files: Vec<(PathBuf, String)> = WalkDir::new(dir)
+    // Sort by path before the rayon pass so merged scanner output is
+    // deterministic regardless of filesystem walk order.
+    let mut files: Vec<(PathBuf, String)> = WalkDir::new(dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().and_then(|e| e.to_str()) == Some("rs"))
@@ -742,6 +814,7 @@ pub fn scan_directory_ast(dir: &Path) -> AstScanner {
                 .map(|content| (path, content))
         })
         .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
 
     let scanners: Vec<AstScanner> = files
         .par_iter()
@@ -777,7 +850,9 @@ pub fn scan_directory_ast(dir: &Path) -> AstScanner {
 /// Phase-7 local judge: suppresses low-confidence AST false positives (e.g.
 /// `try_from_slice` in test/util files) without requiring an LLM API call.
 pub fn ast_categories_to_benchmark(findings: &[AstFinding]) -> Vec<String> {
-    let mut cats: HashSet<String> = HashSet::new();
+    // BTreeSet keeps the collected category list sorted/deterministic for
+    // benchmark JSON output.
+    let mut cats: BTreeSet<String> = BTreeSet::new();
     for f in findings {
         if f.confidence >= 0.55 {
             cats.insert(f.category.clone());
@@ -787,6 +862,142 @@ pub fn ast_categories_to_benchmark(findings: &[AstFinding]) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `analyze_file` is pure — source text in, findings out — so every test here
+    /// feeds it real Rust and asserts on real output. No fixtures, no stubs.
+    fn scan(src: &str) -> AstScanner {
+        analyze_file(Path::new("test_program/src/lib.rs"), src)
+    }
+
+    fn categories(s: &AstScanner) -> Vec<String> {
+        let mut c: Vec<String> = s.findings.iter().map(|f| f.category.clone()).collect();
+        c.sort();
+        c.dedup();
+        c
+    }
+
+    // ---- failure paths -----------------------------------------------------
+    // These run first because they are the ones that decide whether a scan of a
+    // hostile or broken repository degrades or takes the process down with it.
+
+    #[test]
+    fn unparseable_source_yields_no_findings_and_does_not_panic() {
+        // A target repository controls this text. `syn::parse_file` must be
+        // allowed to fail without aborting the scan of every other file.
+        let s = scan("fn broken( { this is not rust ::::");
+        assert!(s.findings.is_empty());
+        assert!(s.instruction_handlers.is_empty());
+    }
+
+    #[test]
+    fn empty_and_whitespace_only_source_are_clean() {
+        assert!(scan("").findings.is_empty());
+        assert!(scan("\n\n   \t\n").findings.is_empty());
+    }
+
+    #[test]
+    fn source_with_no_solana_constructs_reports_nothing() {
+        // Guards against a detector that fires on ordinary Rust: a scanner that
+        // flags this would flag every dependency in the tree.
+        let s = scan("pub fn add(a: u64, b: u64) -> u64 { a + b }");
+        assert!(s.findings.is_empty(), "unexpected: {:?}", categories(&s));
+    }
+
+    // ---- calls_fn boundary behaviour ---------------------------------------
+
+    #[test]
+    fn calls_fn_matches_the_named_call_only() {
+        assert!(calls_fn("invoke(&ix,accounts)", "invoke"));
+        assert!(calls_fn("let_=invoke(&ix);", "invoke"));
+        assert!(calls_fn("solana_program::program::invoke(&ix)", "invoke"));
+        // A receiver call is still a CPI.
+        assert!(calls_fn("ctx.invoke(&ix)", "invoke"));
+        assert!(calls_fn(
+            "invoke_signed(&ix,accounts,seeds)",
+            "invoke_signed"
+        ));
+    }
+
+    #[test]
+    fn calls_fn_rejects_longer_identifiers_that_merely_end_the_same() {
+        // These are different functions. Matching them would attribute a CPI to
+        // code that performs none, and `arbitrary-cpi` is Critical.
+        assert!(!calls_fn("try_invoke(&ix)", "invoke"));
+        assert!(!calls_fn("reinvoke(&ix)", "invoke"));
+        assert!(!calls_fn("my_invoke(&ix)", "invoke"));
+        assert!(!calls_fn("x9invoke(&ix)", "invoke"));
+    }
+
+    #[test]
+    fn calls_fn_rejects_a_mention_that_is_not_a_call() {
+        assert!(!calls_fn("letinvoke=1;", "invoke"));
+        assert!(!calls_fn("//invoke", "invoke"));
+        assert!(!calls_fn("", "invoke"));
+    }
+
+    #[test]
+    fn calls_fn_keeps_scanning_past_a_rejected_boundary() {
+        // The rejected `try_invoke(` must not stop the search: a genuine call
+        // later in the same expression still has to be found.
+        assert!(calls_fn("try_invoke(&a);invoke(&b)", "invoke"));
+    }
+
+    // ---- arbitrary-cpi -----------------------------------------------------
+
+    #[test]
+    fn flags_invoke_without_program_id_validation() {
+        let s = scan(
+            r#"
+            pub fn process_transfer(accounts: &[AccountInfo]) -> ProgramResult {
+                invoke(&ix, accounts)?;
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            categories(&s).contains(&"arbitrary-cpi".to_string()),
+            "expected arbitrary-cpi, got {:?}",
+            categories(&s)
+        );
+    }
+
+    #[test]
+    fn typed_program_account_suppresses_arbitrary_cpi() {
+        // The false-positive guard: Anchor's `Program<'info, Token>` is itself the
+        // program-id check, so flagging it would fire on correct Anchor code. If
+        // this regresses, every Anchor CPI in the corpus becomes a Critical.
+        let s = scan(
+            r#"
+            pub fn process_transfer(token_program: Program<'info, Token>) -> ProgramResult {
+                invoke(&ix, accounts)?;
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            !categories(&s).contains(&"arbitrary-cpi".to_string()),
+            "typed Program<> must suppress arbitrary-cpi, got {:?}",
+            categories(&s)
+        );
+    }
+
+    // ---- signer-authorization ---------------------------------------------
+
+    #[test]
+    fn flags_raw_account_info_without_signer_check() {
+        let s = scan(
+            r#"
+            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            categories(&s).contains(&"signer-authorization".to_string()),
+            "expected signer-authorization, got {:?}",
+            categories(&s)
 mod eng3_taint_sources_sinks {
     //! ENG-3: real test coverage for all 6 taint classes this task covers,
     //! against the canonical catalog IDs from Gilbert's ENG-2 merge
@@ -924,6 +1135,92 @@ mod eng3_taint_sources_sinks {
     }
 
     #[test]
+    fn is_signer_check_suppresses_signer_authorization() {
+        let s = scan(
+            r#"
+            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
+                if !authority.is_signer { return Err(ProgramError::MissingRequiredSignature); }
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            !categories(&s).contains(&"signer-authorization".to_string()),
+            "an explicit is_signer check must suppress the finding, got {:?}",
+            categories(&s)
+        );
+    }
+
+    #[test]
+    fn non_entry_point_helper_is_not_treated_as_an_instruction() {
+        // `is_entry_point` gates arbitrary-cpi. A private helper that happens to
+        // call invoke is not an instruction boundary, so flagging it would report
+        // an attack surface that no transaction can reach.
+        let s = scan(
+            r#"
+            fn helper_transfer(accounts: &[AccountInfo]) -> ProgramResult {
+                invoke(&ix, accounts)?;
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            !categories(&s).contains(&"arbitrary-cpi".to_string()),
+            "helper without process_ prefix must not be an entry point, got {:?}",
+            categories(&s)
+        );
+    }
+
+    // ---- entry-point classification ---------------------------------------
+
+    #[test]
+    fn solitaire_detection_does_not_key_on_the_whole_function_body() {
+        // `is_solitaire_handler` is computed as:
+        //     quote::quote!(#node.sig.inputs.first()).to_string()
+        // In `quote!`, `#node` interpolates the ItemFn and `.sig.inputs.first()`
+        // is emitted as *literal tokens* — it is never evaluated. The string
+        // therefore holds the entire function, so ANY two-parameter function that
+        // merely mentions ExecutionContext anywhere — including in a comment-free
+        // body or an unrelated local — is classified as a Solitaire entry point.
+        //
+        // Entry-point status gates arbitrary-cpi and signer-authorization, both
+        // Critical, so a misclassification here manufactures Critical findings on
+        // code that is not an instruction boundary at all.
+        let s = scan(
+            r#"
+            fn not_an_entry_point(a: u64, b: u64) -> ProgramResult {
+                let note = "ExecutionContext";
+                invoke(&ix, accounts)?;
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            !categories(&s).contains(&"arbitrary-cpi".to_string()),
+            "a plain 2-arg helper that only mentions ExecutionContext in its body \
+             must not be classified as a Solitaire entry point; got {:?}",
+            categories(&s)
+        );
+    }
+
+    #[test]
+    fn genuine_solitaire_handler_is_still_an_entry_point() {
+        // The other half of the fix above: narrowing to the first parameter must
+        // not cost real Solitaire detection. Signature per the Solitaire pattern
+        // `fn(ctx: &ExecutionContext, accs: &mut Accounts, data: D)`.
+        let s = scan(
+            r#"
+            fn transfer_native(ctx: &ExecutionContext, accs: &mut TransferAccounts) -> Result<()> {
+                invoke(&ix, accounts)?;
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            categories(&s).contains(&"arbitrary-cpi".to_string()),
+            "a real Solitaire handler taking &ExecutionContext first must still be \
+             an entry point; got {:?}",
+            categories(&s)
     fn account_reinitialization_does_not_fire_when_is_initialized_is_checked() {
         let src = r#"
             fn initialize_vault(vault: AccountInfo) {

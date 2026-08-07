@@ -91,6 +91,27 @@ describe("citesLoadedFile", () => {
     // Excluded directories are not "read" either, so citing them fails.
     expect(citesLoadedFile(join("target", "debug", "gen.rs") + ":1", res)).toBe(false);
   });
+
+  // `canBeConfirmed` uses this function as the mechanical evidence that lets an
+  // LLM-authored finding be labelled `confirmed`, and REMEMBER persists only
+  // confirmed findings durably. A suffix match with no separator boundary let a
+  // filename that was never read borrow the identity of one that was, which is
+  // how a hallucination would have entered durable memory as fact.
+  it("rejects a fabricated filename that merely ends like one that was read", async () => {
+    const res = await loadSource(root);
+    // Loaded: src/instructions/withdraw.rs. None of these are that file.
+    expect(citesLoadedFile("my_withdraw.rs:2", res)).toBe(false);
+    expect(citesLoadedFile("xwithdraw.rs", res)).toBe(false);
+    expect(citesLoadedFile("src/instructions/not_withdraw.rs:9", res)).toBe(false);
+  });
+
+  it("still accepts a real file cited from a different root", async () => {
+    const res = await loadSource(root);
+    // The loader stores paths relative to the audit root; a model citing the
+    // same file from a repository root above it is describing the same file.
+    const rel = join("src", "instructions", "withdraw.rs");
+    expect(citesLoadedFile(join("programs", "vault", rel) + ":2", res)).toBe(true);
+  });
 });
 
 describe("loadSource with a single file", () => {

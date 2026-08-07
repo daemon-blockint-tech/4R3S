@@ -96,10 +96,22 @@ pub fn generate_markdown(report: &AuditReport) -> String {
     md
 }
 
+/// HTML-escape text interpolated into generated reports. Applied BEFORE the
+/// markdown→HTML substitutions below: those only match markdown punctuation
+/// (`#`, `` ` ``, `|`, `*`, `-`, newlines), which escaping leaves untouched,
+/// while attacker-influenced finding text can no longer inject markup.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 /// Generate an HTML audit report.
 pub fn generate_html(report: &AuditReport) -> String {
     let md = generate_markdown(report);
-    let html_body = md
+    let html_body = html_escape(&md)
         .replace("# ", "<h1>")
         .replace("\n## ", "</p><h2>")
         .replace("\n### ", "</p><h3>")
@@ -140,7 +152,8 @@ pub fn generate_html(report: &AuditReport) -> String {
 </div>
 </body>
 </html>"#,
-        report.target.name, html_body
+        html_escape(&report.target.name),
+        html_body
     )
 }
 
@@ -295,5 +308,50 @@ mod tests {
         let issue = generate_github_issue(&report);
         assert!(issue.contains("Security Audit Findings"));
         assert!(issue.contains("Missing signer check"));
+    }
+}
+
+#[cfg(test)]
+mod xss_tests {
+    use super::*;
+    use ares_core::{AuditReport, ProgramTarget, ReportMetadata, ReportSummary};
+    use std::path::PathBuf;
+
+    /// `target.name` is the audited directory's own name, so the audited party
+    /// chooses it. The rendered HTML is the artifact handed to a client, and it
+    /// opens in the reviewer's browser origin.
+    #[test]
+    fn a_hostile_target_name_cannot_inject_markup() {
+        let report = AuditReport {
+            target: ProgramTarget {
+                name: r#"x"><img src=x onerror=alert(1)>"#.to_string(),
+                repository_url: None,
+                commit_hash: None,
+                program_id: None,
+                source_path: PathBuf::from("."),
+                idl_path: None,
+            },
+            findings: vec![],
+            suppressed_findings: vec![],
+            metadata: ReportMetadata {
+                generated_at: chrono::Utc::now(),
+                ares_version: "test".to_string(),
+                scan_duration_secs: 0,
+                agent_pipeline: vec![],
+                tools_used: vec![],
+            },
+            summary: ReportSummary::default(),
+        };
+
+        let html = generate_html(&report);
+
+        assert!(
+            !html.contains("<img src=x onerror="),
+            "unescaped markup reached the rendered report"
+        );
+        assert!(
+            html.contains("&lt;img src=x onerror=alert(1)&gt;"),
+            "the hostile name should survive as escaped text"
+        );
     }
 }

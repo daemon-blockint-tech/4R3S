@@ -1,7 +1,7 @@
 use ares_core::AresConfig;
 use ares_core::AresResult;
 use std::path::Path;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Outcome of running a single PoC file to completion.
 ///
@@ -16,6 +16,16 @@ pub enum PocVerdict {
     Passed,
     /// The harness ran and the transaction failed — the finding did not reproduce.
     Failed,
+    /// The harness did not produce a usable answer, so neither `Passed` nor
+    /// `Failed` may be claimed.
+    ///
+    /// Distinguishing this from `Failed` is not pedantry. `cargo test` exits
+    /// non-zero for a compile error exactly as it does for a failing assertion,
+    /// so a harness that never built was being reported as evidence the finding
+    /// is false — a refutation manufactured out of a syntax error. And it exits
+    /// **zero** when a filter matches no test at all, which was being reported as
+    /// a confirmed exploit. Both are absence of evidence, not evidence.
+    Inconclusive,
 }
 
 /// Validate a proof-of-concept in a sandboxed SVM environment.
@@ -140,11 +150,33 @@ pub async fn run_poc(
                             stderr.lines().take(10).collect::<Vec<_>>().join("\n")
                         );
                     }
-                    if o.status.success() {
-                        info!("PoC validation PASSED — program may be VULNERABLE (transaction succeeded).");
+                    // A verdict may only be read off the exit code once we know a
+                    // test actually executed. libtest prints a `test result:`
+                    // summary iff it ran; a compile error never reaches it.
+                    let combined = format!("{stdout}{stderr}");
+                    let tests_ran = combined.contains("test result:");
+                    let matched_none = combined.contains("running 0 tests");
+
+                    if !tests_ran {
+                        warn!(
+                            "PoC INCONCLUSIVE — the harness never ran (build or link failure). \
+                             Not treating this as a refutation."
+                        );
+                        Ok(PocVerdict::Inconclusive)
+                    } else if matched_none {
+                        // `cargo test <filter>` exits 0 when the filter matches
+                        // nothing, so this would otherwise read as a confirmed
+                        // exploit produced by running no code at all.
+                        warn!(
+                            "PoC INCONCLUSIVE — filter {test_filter:?} matched no test. \
+                             Not treating an empty run as a confirmation."
+                        );
+                        Ok(PocVerdict::Inconclusive)
+                    } else if o.status.success() {
+                        info!("PoC validation PASSED — the attack transaction was accepted.");
                         Ok(PocVerdict::Passed)
                     } else {
-                        info!("PoC validation produced failures — program may be SECURE, or test needs adjustment.");
+                        info!("PoC validation FAILED — the program rejected the attack.");
                         Ok(PocVerdict::Failed)
                     }
                 }

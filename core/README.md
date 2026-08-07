@@ -8,8 +8,7 @@
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/Rust-2021-orange.svg" alt="Rust Edition">
   <img src="https://img.shields.io/badge/Solana-Anchor%20%7C%20Solitaire-purple.svg" alt="Solana Frameworks">
-  <img src="https://img.shields.io/badge/F1-0.94-brightgreen.svg" alt="F1 Score">
-  <img src="https://img.shields.io/badge/Recall-0.97-green.svg" alt="Recall">
+  <img src="https://img.shields.io/badge/accuracy-self--reported-yellow.svg" alt="Accuracy: self-reported, see Measurement status">
   <img src="https://img.shields.io/badge/API%20Cost-%240-success.svg" alt="Zero API Cost">
   <img src="https://img.shields.io/badge/Scan%20Time-%3C5s-blue.svg" alt="Scan Time">
   <img src="https://img.shields.io/badge/Protocols-20-informational.svg" alt="Benchmark Protocols">
@@ -17,7 +16,13 @@
 
 ---
 
-ARES V3 is an open-source, fully deterministic static analysis framework for Solana smart contracts. It detects vulnerability patterns in Anchor and Solitaire programs through a four-phase pipeline -- regex extraction, AST parsing, taint analysis, and a deterministic local judge -- achieving **97% micro-averaged recall** and **0.94 F1** across 20 benchmark protocols with **zero API cost** and **sub-5-second scans**.
+ARES V3 is an open-source, fully deterministic static analysis framework for Solana smart contracts. It detects vulnerability patterns in Anchor and Solitaire programs through a four-phase pipeline -- regex extraction, AST parsing, taint analysis, and a deterministic local judge -- with **zero API cost** and **sub-5-second scans**.
+
+> **Accuracy figures are self-reported and currently under re-measurement.** Every
+> number in [Benchmark Results](#benchmark-results) came from this repository's own
+> `ares benchmark` run, not from an independent harness, and three detector bugs
+> found since have invalidated them. Read [Measurement status](#measurement-status)
+> before quoting any figure from this file.
 
 > **Zero config, zero cost.** The core pipeline runs locally without any API keys. Bring your own API key (OpenAI-compatible) to enable optional LLM features like the LLM-as-Judge, MCP server enrichment, and narrative report generation.
 
@@ -50,7 +55,45 @@ Non-deterministic external data sources (MCP server, on-chain DB) are strictly s
   <img src="docs/paper/figures/determinism_separation.png" alt="Determinism Separation" width="85%">
 </p>
 
+## Measurement status
+
+The tables in this section are real output from `ares benchmark` on the committed
+`dataset/`. They are **not** verified accuracy claims, for three specific reasons.
+Stating them plainly is cheaper than having a reader discover them:
+
+**1. They were measured with three detector bugs live.** All three are fixed now,
+and all three change the numbers — in both directions:
+
+| Bug | Effect on these numbers |
+|---|---|
+| `expr_str.contains("invoke(")` never matched, because `quote!().to_string()` puts a space before `(` | The `arbitrary-cpi` detector **could not fire at all**. Recall here is understated. |
+| `ty_str.contains("Program<")` never matched, same spacing cause | Anchor's false-positive guard was dead. Once `arbitrary-cpi` fires, it would have over-fired. |
+| `quote!(#node.sig.inputs.first())` stringified the **whole function** (`quote!` never evaluates the trailing field access) | Any 2-argument function merely mentioning `ExecutionContext` was treated as an instruction entry point, manufacturing Critical findings. Precision here is overstated. |
+
+**2. They describe a code path the product does not run.** `ares benchmark` calls
+`ares_mapper::ast_scanner::scan_directory_ast` ("Phase-2 AST analysis") in addition
+to `MapperAgent`. **`ares scan` — the command a user runs — does not.** The
+benchmark also applies suppression the product never applies, including a rule that
+drops `type-cosplay` when a program has 15 or fewer instructions because that
+indicates a synthetic stub. So these figures do not describe `ares scan` output.
+
+**3. They are not re-derivable by the repository's own release gate.** The
+Auditor's `verify-claims` job scores against a labelled corpus in
+[`eval/`](../eval/); nothing here has been through it. Per GOLDEN RULE 3 in
+`CLAUDE.md` — *"if you can't re-derive it from committed data, don't publish it"* —
+these numbers do not yet qualify.
+
+The root [README](../README.md#detection-accuracy) records the project's official
+position: **detection accuracy is unmeasured**, and it explicitly disowns the
+0.94 F1 quoted below. Where this file and the root README disagree, **the root
+README is authoritative.** These tables are kept because deleting real measurement
+output would lose information; they are evidence about a past build, not a claim
+about the current one.
+
 ## Benchmark Results
+
+> Superseded — see [Measurement status](#measurement-status) above. Retained as a
+> record of the pre-fix build, not as a current accuracy claim.
 
 ### Head-to-Head: ARES V3 vs. Trident Arena, Opus 4.6, GPT-5.2
 
@@ -234,15 +277,30 @@ ares interact
 ### Scan a Program (CLI Mode)
 
 ```bash
-# Scan a local Solana program directory
-ares scan --target ./path/to/program --output ./results
+# Scan a local Solana program directory.
+# The path is a POSITIONAL argument. `--target` is a different flag: it narrows
+# the scan to one file or module *within* that path.
+ares scan ./path/to/program --output ./results
 
-# Run with policy configuration
-ares scan --target ./path/to/program --policy ./ares.toml
+# Scan with an explicit config file (this is `--config`, not `--policy`)
+ares scan ./path/to/program --config ./ares.toml
 
-# Run the full benchmark suite
-ares benchmark --ground-truth ./dataset/solana-common-attack-vectors/ground_truth.json
+# Scanning something that is not an Anchor project? Disable fuzzing.
+# `--fuzz` defaults to TRUE, and Trident aborts the whole scan with
+# "It does not seem that Anchor is initialized" when there is no Anchor.toml
+# in any parent directory -- even though the static analysis itself would run.
+ares scan ./path/to/raw-rust-program --fuzz false
+
+# Run the full benchmark suite (the flag is `--dataset`; it takes the dataset
+# DIRECTORY, not a ground_truth.json file)
+ares benchmark --dataset ./dataset
 ```
+
+> **Policy note.** `scan` refuses any path outside its allowed read paths, which
+> default to `["."]` — relative to the **current working directory**, not to the
+> target. Running `ares scan ../some/program` therefore fails with
+> `POLICY VIOLATION: Path outside allowed read paths`. Run from a directory that
+> contains the target, or widen `allowed_read_paths` in your config.
 
 ### Output Formats
 
@@ -291,6 +349,11 @@ The full research paper is available in the `docs/paper/` directory:
 
 - **LaTeX source**: `docs/paper/arxiv-style-master/arxiv-style-master/main.tex`
 - **Compiled PDF**: `docs/paper/arxiv-style-master/arxiv-style-master/main.pdf`
+
+> ⚠️ **The title below carries the 97% figure that [Measurement status](#measurement-status)
+> retracts.** The paper reports the pre-fix build and does not reflect the three
+> detector bugs found since. Resolve this before any submission or public citation:
+> a number in a paper title cannot be quietly corrected the way a README can.
 
 **Citation:**
 

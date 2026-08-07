@@ -30,6 +30,21 @@ Checks, per guarded README, in order of what they catch:
 "not measured" is the honest state and always passes. So does a README that does
 not exist: ares-sec is a skeleton, and a gate that failed on absent files would
 block the repo rather than the claim.
+
+Two holes closed after `core/README.md` shipped an `F1-0.94` badge and "97%
+micro-averaged recall" — the very figure the root README disowns — past a green
+check. First, that file was not in GUARDED_READMES at all. Second, and worse,
+adding it would have changed nothing: detection matched only markdown table rows
+in one exact shape, so a badge, a sentence, or even `| Micro F1 |` was invisible.
+A gate that inspects one syntax is not a gate; it is a naming convention.
+
+There is a third honest state alongside "not measured" and "measured and
+re-derivable": **explicitly retracted**. Deleting a real measurement destroys
+evidence, so a README may keep the figure if it publishes a `## Measurement
+status` section that says what the number is and is not — and that section must
+come BEFORE the figure, so a reader meets the caveat first. Adding the heading
+without the substance defeats the check rather than satisfying it; CLAUDE.md's
+rule applies here as everywhere: fix the claim, don't weaken the gate.
 """
 from __future__ import annotations
 
@@ -49,24 +64,102 @@ GUARDED_READMES = (
     ("apps/auditor-api/README.md", True),
     ("apps/auditor-web/README.md", True),
     ("apps/ares-sec/README.md", False),
+    # core/ was missing, and it was the file publishing the loudest figures: an
+    # `F1-0.94` shields badge and "97% micro-averaged recall" in its opening
+    # paragraph — the same 0.94 the root README explicitly disowns. It is
+    # `scoreable=False` because `ares benchmark` is not the Auditor eval: it scores
+    # a different pipeline (it calls `ast_scanner`, which `ares scan` does not) on a
+    # different corpus, so its output cannot be re-derived by `verify-claims`.
+    ("core/README.md", False),
 )
 
-# `| Precision | 0.94 | verified |` — metric, value, status.
+# A metric claim is anything a reader would take as this system's accuracy. All
+# three forms below were live in this repo at some point, and only the first was
+# ever detected, so a figure could be published simply by not putting it in a
+# table:
+#
+#   1. table row  — `| Micro F1 | **0.94** |`
+#   2. badge      — `img.shields.io/badge/F1-0.94-brightgreen.svg`
+#   3. prose      — "achieving 97% micro-averaged recall and 0.94 F1"
+#
+# The optional qualifier in ROW is what let `| Micro Precision |` through: the
+# original anchored on the metric word alone, so any adjective defeated it.
+QUALIFIER = r"(?:[A-Za-z][A-Za-z-]*\s+){0,3}"
+METRIC = r"(Precision|Recall|F1)"
 ROW = re.compile(
-    r"^\|\s*(Precision|Recall|F1)\s*\|\s*([^|]+?)\s*\|", re.IGNORECASE | re.MULTILINE
+    rf"^\|\s*{QUALIFIER}{METRIC}\s*\|\s*([^|]+?)\s*\|", re.IGNORECASE | re.MULTILINE
 )
+BADGE = re.compile(rf"badge/{METRIC}-(\d*\.?\d+)", re.IGNORECASE)
+PROSE_VALUE_FIRST = re.compile(rf"(\d*\.?\d+)\s*%?\s+{QUALIFIER}{METRIC}\b", re.IGNORECASE)
+PROSE_METRIC_FIRST = re.compile(rf"{METRIC}\s+of\s+(\d*\.?\d+)", re.IGNORECASE)
+
+# A figure under an accuracy-status section is not a claim. This is the third
+# honest state, alongside "not measured" and "measured and re-derivable": a number
+# kept on the page as a record of a past build, or quoted precisely in order to
+# disown it, with the status stated ABOVE it so a reader meets the caveat before
+# the figure. Position is the whole point — a disclaimer under the tables is not a
+# disclaimer.
+#
+# Without this, the gate cannot tell an assertion from a retraction, and it
+# punishes exactly the honest behaviour it exists to encourage: the root README's
+# sentence "no ... F1 figure for this system is published — including the 0.94 F1
+# that has been quoted internally" reads to a regex as a 0.94 F1 claim. Failing
+# that file would teach the next author to delete the disownment rather than write
+# one. Both spellings below are section names this repo actually uses.
+RETRACTION = re.compile(
+    r"^#{2,}\s*(?:Measurement status|Detection accuracy)\b", re.IGNORECASE | re.MULTILINE
+)
+
 NUMBER = re.compile(r"^\d*\.?\d+$")
 TOLERANCE = 0.005
 
 
-def published_metrics(text: str) -> dict[str, float]:
-    """Numeric metric claims in a README, keyed lowercase."""
-    found: dict[str, float] = {}
-    for metric, value in ROW.findall(text):
+def _claims_with_positions(text: str) -> list[tuple[str, float, int]]:
+    """Every (metric, value, offset) a reader could take as an accuracy claim."""
+    found: list[tuple[str, float, int]] = []
+
+    for match in ROW.finditer(text):
+        metric, value = match.group(1), match.group(2)
         cleaned = value.strip().strip("*`")
         if NUMBER.match(cleaned):
-            found[metric.lower()] = float(cleaned)
+            found.append((metric.lower(), float(cleaned), match.start()))
+
+    for pattern, metric_first in (
+        (BADGE, True),
+        (PROSE_METRIC_FIRST, True),
+        (PROSE_VALUE_FIRST, False),
+    ):
+        for match in pattern.finditer(text):
+            metric = match.group(1) if metric_first else match.group(2)
+            value = match.group(2) if metric_first else match.group(1)
+            # A percentage is the same claim written differently: 97% recall and
+            # 0.97 recall must not be treated as two different assertions.
+            number = float(value)
+            if number > 1:
+                number /= 100
+            found.append((metric.lower(), number, match.start()))
+
     return found
+
+
+def is_retracted(text: str) -> bool:
+    """True when every figure is published under a retraction that precedes it."""
+    marker = RETRACTION.search(text)
+    if not marker:
+        return False
+    claims = _claims_with_positions(text)
+    return all(offset > marker.start() for _, _, offset in claims)
+
+
+def published_metrics(text: str) -> dict[str, float]:
+    """Numeric metric claims in a README, keyed lowercase.
+
+    Empty when the figures are explicitly retracted — such a README asserts
+    nothing, so there is nothing for the gate to demand a run for.
+    """
+    if is_retracted(text):
+        return {}
+    return {metric: value for metric, value, _ in _claims_with_positions(text)}
 
 
 def unverifiable(relative_path: str, scoreable: bool) -> str | None:

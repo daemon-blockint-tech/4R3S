@@ -97,8 +97,29 @@ async function createTask(request: NextRequest) {
 
     // Use provided ID or generate a new one
     const taskId = body.id || generateId(12)
+
+    // Only these columns may come from the request. Spreading `...body` here was
+    // mass assignment: every column of `tasks` became client-settable except the
+    // four overridden below, and `sandboxId` is one of them. Posting
+    // `{prompt:"x", sandboxId:"<victim's sandbox>"}` created a task owned by the
+    // caller that points at someone else's live sandbox — and the routes that
+    // reconnect to a sandbox authorize on `tasks.userId`, which is legitimately
+    // the caller's. `/terminal` then returned the victim's environment, which
+    // `createSandbox` populates with their GitHub OAuth token and model API keys,
+    // while `save-file` and `delete-file` gave write and delete access to their
+    // source. Server-owned runtime columns — sandboxId, sandboxUrl, previewUrl,
+    // branchName, prUrl, agentSessionId — are written later by `processTask`,
+    // never by the client.
     const validatedData = insertTaskSchema.parse({
-      ...body,
+      prompt: body.prompt,
+      title: body.title,
+      repoUrl: body.repoUrl,
+      selectedAgent: body.selectedAgent,
+      selectedModel: body.selectedModel,
+      installDependencies: body.installDependencies,
+      maxDuration: body.maxDuration,
+      keepAlive: body.keepAlive,
+      enableBrowser: body.enableBrowser,
       id: taskId,
       userId: session.user.id,
       status: 'pending',

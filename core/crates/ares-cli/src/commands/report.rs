@@ -190,56 +190,19 @@ fn generate_markdown_report(report: &ares_core::AuditReport) -> String {
     md
 }
 
+/// Render the HTML report.
+///
+/// Delegates to `ares_report::generate_html`, which HTML-escapes the markdown
+/// before applying its markdown→HTML substitutions. This function used to carry
+/// its own copy of that substitution chain with the escaping step missing, so the
+/// hardening in `ares-report` protected nobody: `report --format html` called the
+/// unescaped copy. `target.name` comes from the audited directory's own name, so
+/// unpacking a program into a directory called
+/// `x"><img src=x onerror=...>` put attacker script into the `<title>` and body
+/// of the artifact handed to the client. One renderer, escaped, is the fix —
+/// keeping two was what let them drift apart unnoticed.
 fn generate_html_report(report: &ares_core::AuditReport) -> String {
-    // Phase 1: simple HTML wrapper around markdown content (no external markdown-to-html dep)
-    let md = generate_markdown_report(report);
-    // Very basic markdown-to-html conversion for Phase 1
-    let html_body = md
-        .replace("# ", "<h1>")
-        .replace("\n## ", "</p><h2>")
-        .replace("\n### ", "</p><h3>")
-        .replace("\n\n", "</p><p>")
-        .replace("```", "<pre><code>")
-        .replace("`", "<code>")
-        .replace("| ", "<td>")
-        .replace(" |", "</td>")
-        .replace("---\n", "</tr><tr>")
-        .replace("**", "<strong>")
-        .replace("- ", "<li>")
-        .replace("\n</p>", "</p>");
-
-    format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>ARES V3 Audit Report - {}</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #333; }}
-        h1 {{ color: #1a1a1a; border-bottom: 3px solid #e74c3c; padding-bottom: 10px; }}
-        h2 {{ color: #2c3e50; margin-top: 30px; }}
-        h3 {{ color: #e74c3c; }}
-        table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
-        th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-        th {{ background-color: #f5f5f5; font-weight: 600; }}
-        tr:nth-child(even) {{ background-color: #fafafa; }}
-        .critical {{ color: #c0392b; font-weight: bold; }}
-        .high {{ color: #e67e22; font-weight: bold; }}
-        .medium {{ color: #f39c12; font-weight: bold; }}
-        code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-family: 'SF Mono', Monaco, monospace; font-size: 0.9em; }}
-        hr {{ border: none; border-top: 1px solid #eee; margin: 30px 0; }}
-        pre {{ background: #f8f8f8; padding: 16px; border-radius: 4px; overflow-x: auto; }}
-        p {{ margin: 0 0 16px 0; }}
-    </style>
-</head>
-<body>
-<div class="report">
-{}
-</div>
-</body>
-</html>"#,
-        report.target.name, html_body
-    )
+    ares_report::generate_html(report)
 }
 
 fn generate_github_issue(report: &ares_core::AuditReport) -> String {

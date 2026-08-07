@@ -142,6 +142,46 @@ async fn {}() {{
         )
     }
 
+    /// The generated harness's **exit code is the verdict**. This emits the block
+    /// that makes that true.
+    ///
+    /// `commands/validate.rs::run_poc` decides `Passed` vs `Failed` from the exit
+    /// status of `cargo test` and nothing else, and `commands/confirm.rs` maps
+    /// `Passed` to `ValidationOutcome::Confirmed`, forcing confidence to 0.95 and
+    /// upgrading severity. Every template used to `println!` on **both** arms and
+    /// panic on neither, so `cargo test` exited 0 whether the attack transaction
+    /// was accepted or rejected. The verdict was therefore a constant: every PoC
+    /// that compiled came back Confirmed.
+    ///
+    /// The direction of the error made it worse than noise. A *correctly guarded*
+    /// program is precisely the one whose check makes `process_transaction` return
+    /// `Err` — the arm that printed "check is present" and passed. So the safer the
+    /// target, the more confidently it was reported as holding a fork-confirmed
+    /// critical exploit.
+    ///
+    /// Contract, relied on by `run_poc`: exit 0 iff the attack transaction was
+    /// accepted. Panic (non-zero) when the program rejected it.
+    ///
+    /// `tx` names the transaction variable the template built (templates differ:
+    /// `transaction`, `tx2`, `tx_reinit`), so the attack transaction this verdict
+    /// reports on is always the one the caller actually intends.
+    fn verdict_match(tx: &str, guard: &str) -> String {
+        format!(
+            "let result = banks_client.process_transaction({tx}).await;\n    \
+             match result {{\n        \
+             Ok(_) => println!(\n            \
+             \"ARES-POC: EXPLOIT REPRODUCED — {guard} is missing or bypassable.\"\n        \
+             ),\n        \
+             // Non-zero exit is the signal for `refuted`. Do not soften this to a\n        \
+             // println!: doing so reports every guarded program as exploited.\n        \
+             Err(e) => panic!(\n            \
+             \"ARES-POC: NOT REPRODUCED — {guard} rejected the attack: {{:?}}\",\n            \
+             e\n        \
+             ),\n    \
+             }}"
+        )
+    }
+
     fn generate_signer_poc(id: &str, program_name: &str) -> String {
         let mut s = Self::header(
             id,
@@ -151,7 +191,9 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_missing_signer", sanitize_id(id)),
-            r#"// Attack: omit the required signer signature in AccountMeta
+            &format!(
+                "{}{}",
+                r#"// Attack: omit the required signer signature in AccountMeta
     let accounts = vec![
         AccountMeta::new(victim.pubkey(), false), // should be true
         AccountMeta::new_readonly(attacker.pubkey(), false),
@@ -167,11 +209,9 @@ async fn {}() {{
         recent_blockhash,
     );
 
-    let result = banks_client.process_transaction(transaction).await;
-    match result {
-        Ok(_) => println!("Transaction succeeded — signer check may be MISSING (vulnerability confirmed)."),
-        Err(e) => println!("Transaction failed: {:?} — signer check is present.", e),
-    }"#,
+    "#,
+                Self::verdict_match("transaction", "the signer check")
+            ),
         ));
         s
     }
@@ -181,7 +221,7 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_wrong_owner", sanitize_id(id)),
-            r#"// Attack: provide an account owned by system_program instead of the target program
+            &format!("{}{}", r#"// Attack: provide an account owned by system_program instead of the target program
     let fake_account = Keypair::new();
     program_test.add_account(
         fake_account.pubkey(),
@@ -206,11 +246,8 @@ async fn {}() {{
         recent_blockhash,
     );
 
-    let result = banks_client.process_transaction(transaction).await;
-    match result {
-        Ok(_) => println!("Transaction succeeded — ownership check may be MISSING."),
-        Err(e) => println!("Transaction failed: {:?} — ownership check is present.", e),
-    }"#,
+    "#,
+            Self::verdict_match("transaction", "the account ownership check")),
         ));
         s
     }
@@ -220,7 +257,9 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_arbitrary_cpi", sanitize_id(id)),
-            r#"// Attack: create a fake program account to impersonate a trusted CPI target
+            &format!(
+                "{}{}",
+                r#"// Attack: create a fake program account to impersonate a trusted CPI target
     let fake_program = Keypair::new();
     program_test.add_account(
         fake_program.pubkey(),
@@ -246,11 +285,9 @@ async fn {}() {{
         recent_blockhash,
     );
 
-    let result = banks_client.process_transaction(transaction).await;
-    match result {
-        Ok(_) => println!("Transaction succeeded — CPI target check may be MISSING."),
-        Err(e) => println!("Transaction failed: {:?} — CPI program ID check is present.", e),
-    }"#,
+    "#,
+                Self::verdict_match("transaction", "the CPI target program-id check")
+            ),
         ));
         s
     }
@@ -264,7 +301,9 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_double_init", sanitize_id(id)),
-            r#"// Attack: call the initialize instruction twice without checks
+            &format!(
+                "{}{}",
+                r#"// Attack: call the initialize instruction twice without checks
     let accounts = vec![
         AccountMeta::new(victim.pubkey(), false),
         AccountMeta::new_readonly(system_program::id(), false),
@@ -289,11 +328,9 @@ async fn {}() {{
         recent_blockhash,
     );
 
-    let res2 = banks_client.process_transaction(tx2).await;
-    match res2 {
-        Ok(_) => println!("Second init succeeded — initialization check may be MISSING."),
-        Err(e) => println!("Second init failed: {:?} — initialization check is present.", e),
-    }"#,
+    "#,
+                Self::verdict_match("tx2", "the re-initialization guard")
+            ),
         ));
         s
     }
@@ -303,7 +340,9 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_revival", sanitize_id(id)),
-            r#"// Attack: close an account then re-initialize it
+            &format!(
+                "{}{}",
+                r#"// Attack: close an account then re-initialize it
     let target_account = Keypair::new();
 
     // Step 1: Initialize
@@ -347,11 +386,9 @@ async fn {}() {{
         recent_blockhash,
     );
 
-    let result = banks_client.process_transaction(tx_reinit).await;
-    match result {
-        Ok(_) => println!("Revival succeeded — close constraint may be MISSING."),
-        Err(e) => println!("Revival failed: {:?} — close constraint is present.", e),
-    }"#,
+    "#,
+                Self::verdict_match("tx_reinit", "the account-close constraint")
+            ),
         ));
         s
     }
@@ -377,12 +414,9 @@ async fn {}() {{
         recent_blockhash,
     );
 
-    let result = banks_client.process_transaction(transaction).await;
-    match result {{
-        Ok(_) => println!("Invariant violation PoC executed — inspect program state."),
-        Err(e) => println!("Transaction failed: {{:?}} — may require specific preconditions.", e),
-    }}"#,
-            finding.description.replace('"', "\\\"")
+    {}"#,
+            sanitize_comment(&finding.description).replace('"', "\\\""),
+            Self::verdict_match("transaction", "the violated invariant")
         );
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_invariant", sanitize_id(id)),
@@ -396,7 +430,9 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_generic", sanitize_id(id)),
-            r#"// Generic PoC harness — implement attack sequence based on finding details.
+            &format!(
+                "{}{}",
+                r#"// Generic PoC harness — implement attack sequence based on finding details.
     let accounts = vec![
         AccountMeta::new(victim.pubkey(), false),
         AccountMeta::new_readonly(attacker.pubkey(), true),
@@ -410,11 +446,9 @@ async fn {}() {{
         recent_blockhash,
     );
 
-    let result = banks_client.process_transaction(transaction).await;
-    match result {
-        Ok(_) => println!("Transaction succeeded."),
-        Err(e) => println!("Transaction failed: {:?}", e),
-    }"#,
+    "#,
+                Self::verdict_match("transaction", "the program's validation")
+            ),
         ));
         s
     }
@@ -422,6 +456,15 @@ async fn {}() {{
 
 fn sanitize_id(id: &str) -> String {
     id.to_lowercase().replace("-", "_").replace(" ", "_")
+}
+
+/// Neutralize control characters (newlines, CR, tabs, etc.) so untrusted
+/// fuzzer-derived text cannot break out of the `//` comment it is
+/// interpolated into and inject Rust code into the generated PoC.
+fn sanitize_comment(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 fn program_name_placeholder() -> &'static str {
@@ -513,5 +556,123 @@ mod tests {
         assert!(code.contains(".parse::<Pubkey>().unwrap()"));
         assert!(!code.contains("Pubkey::new_unique()"));
         assert!(code.starts_with("// ARES-WIRING: wired\n"));
+    }
+
+    /// Every category, including the ones that fall through to the generic
+    /// builder. Iterating the enum is deliberate: the original defect was present
+    /// in all seven builders at once, so a test pinning one of them would have
+    /// passed while the rest stayed broken.
+    fn all_categories() -> Vec<VulnerabilityCategory> {
+        use VulnerabilityCategory::*;
+        vec![
+            SignerAuthorization,
+            OwnershipCheck,
+            ArbitraryCpi,
+            InitializationFrontrunning,
+            ReInitialization,
+            AccountReloading,
+            RevivalAttack,
+            FuzzingCrash,
+            InvariantViolation,
+            TypeCosplay,
+            ReentrancyRisk,
+            DuplicateMutableAccounts,
+            ArithmeticOverflow,
+            CloseAccount,
+            AccountDataMatching,
+            PdaPrivileges,
+            MissingSigner,
+            MissingRevalidation,
+            UncheckedCast,
+            Generic,
+        ]
+    }
+
+    fn harness_for(category: VulnerabilityCategory) -> String {
+        let mut f = sample_finding();
+        f.category = category;
+        PocGenerator::generate(&f, "target_program", None, None)
+    }
+
+    #[test]
+    fn every_harness_fails_the_test_when_the_attack_is_rejected() {
+        // THE VERDICT CONTRACT. `run_poc` reads only the exit code of `cargo
+        // test`, and `confirm.rs` maps success to ValidationOutcome::Confirmed
+        // with confidence forced to 0.95. A harness that merely prints on the
+        // Err arm exits 0 even when the program correctly rejected the attack,
+        // so a *well-guarded* program was reported as a fork-confirmed exploit.
+        // The panic is what carries the refutation out to the exit code.
+        for category in all_categories() {
+            let code = harness_for(category.clone());
+            assert!(
+                code.contains("Err(e) => panic!("),
+                "{category:?} harness does not panic when the attack is rejected;                  cargo test would exit 0 and the finding would be marked Confirmed"
+            );
+        }
+    }
+
+    #[test]
+    fn no_harness_swallows_the_rejected_arm_with_a_print() {
+        // The exact shape of the original bug: both arms printing, neither
+        // failing. Guards against a future "friendlier output" refactor quietly
+        // restoring a constant-Confirmed verdict.
+        for category in all_categories() {
+            let code = harness_for(category.clone());
+            let err_arm = code
+                .split("Err(e) =>")
+                .nth(1)
+                .unwrap_or_else(|| panic!("{category:?} harness has no Err arm at all"));
+            assert!(
+                !err_arm.trim_start().starts_with("println!"),
+                "{category:?} harness prints on the rejected arm instead of failing"
+            );
+        }
+    }
+
+    #[test]
+    fn the_reproduced_arm_succeeds_so_a_real_exploit_still_confirms() {
+        // The other direction: the fix must not make every PoC refute. An
+        // accepted attack transaction has to leave the test passing.
+        for category in all_categories() {
+            let code = harness_for(category.clone());
+            let ok_arm = code
+                .split("Ok(_) =>")
+                .nth(1)
+                .unwrap_or_else(|| panic!("{category:?} harness has no Ok arm"));
+            assert!(
+                !ok_arm.trim_start().starts_with("panic!"),
+                "{category:?} panics when the exploit DID reproduce, inverting the verdict"
+            );
+            assert!(
+                ok_arm.contains("EXPLOIT REPRODUCED"),
+                "{category:?} does not mark the reproduced arm"
+            );
+        }
+    }
+
+    #[test]
+    fn the_verdict_block_reports_on_the_transaction_the_template_built() {
+        // The revival and double-init builders name their attack transaction
+        // `tx_reinit` / `tx2`. A verdict hard-coded to `transaction` would either
+        // not compile or, worse, judge a different transaction than the attack.
+        for category in all_categories() {
+            let code = harness_for(category.clone());
+            let processed: Vec<&str> = code
+                .match_indices("banks_client.process_transaction(")
+                .map(|(i, _)| {
+                    let rest = &code[i + "banks_client.process_transaction(".len()..];
+                    &rest[..rest.find(')').unwrap_or(0)]
+                })
+                .collect();
+            let judged = code
+                .split("let result = banks_client.process_transaction(")
+                .nth(1)
+                .map(|r| &r[..r.find(')').unwrap_or(0)])
+                .unwrap_or_else(|| panic!("{category:?} never binds a judged result"));
+            assert!(
+                processed.contains(&judged),
+                "{category:?} judges `{judged}` which the template never builds"
+            );
+        }
     }
 }

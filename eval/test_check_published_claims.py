@@ -143,3 +143,96 @@ def test_all_offending_readmes_are_reported_not_just_the_first(repo, capsys):
 def test_parser_reads_all_three_metrics_case_insensitively():
     found = gate.published_metrics("| precision | 0.1 |\n| RECALL | 0.2 |\n| F1 | 0.3 |")
     assert found == {"precision": 0.1, "recall": 0.2, "f1": 0.3}
+
+
+# --- detection surface -------------------------------------------------------
+# The gate shipped green while core/README.md published an `F1-0.94` badge and
+# "97% micro-averaged recall" in prose, because detection matched only markdown
+# table rows in one exact shape. Each test below pins one syntax that was
+# invisible, so a figure can never again be published by choosing a different one.
+
+
+def test_a_badge_is_a_claim(repo):
+    root, _, _ = repo
+    write(root, ROOT_README, "![](https://img.shields.io/badge/F1-0.94-brightgreen.svg)")
+    assert gate.main() == 1
+
+
+def test_prose_is_a_claim(repo):
+    root, _, _ = repo
+    write(root, ROOT_README, "achieving 97% micro-averaged recall on the suite.")
+    assert gate.main() == 1
+
+
+def test_metric_first_prose_is_a_claim(repo):
+    root, _, _ = repo
+    write(root, ROOT_README, "The system reaches an F1 of 0.94 across 20 protocols.")
+    assert gate.main() == 1
+
+
+def test_a_qualified_table_row_is_a_claim(repo):
+    root, _, _ = repo
+    # `| Micro F1 |` slipped past a pattern anchored on the bare metric word.
+    write(root, ROOT_README, "| Micro F1 | **0.94** |\n")
+    assert gate.main() == 1
+
+
+def test_a_percentage_and_a_ratio_are_the_same_claim():
+    assert gate.published_metrics("97% recall") == gate.published_metrics("0.97 recall")
+
+
+# --- retraction --------------------------------------------------------------
+# The third honest state. Deleting a real measurement destroys evidence, so a
+# README may keep the figure under a status section — but only above it.
+
+
+def test_a_figure_under_a_preceding_status_section_is_not_a_claim(repo):
+    root, _, _ = repo
+    write(
+        root,
+        ROOT_README,
+        "# ARES\n\n## Measurement status\n\nSuperseded; three detector bugs "
+        "invalidated these.\n\n| Micro F1 | **0.94** |\n",
+    )
+    assert gate.main() == 0
+
+
+def test_a_status_section_below_the_figure_does_not_retract_it(repo):
+    root, _, _ = repo
+    # A disclaimer a reader reaches only after the number is not a disclaimer.
+    write(
+        root,
+        ROOT_README,
+        "# ARES\n\n| Micro F1 | **0.94** |\n\n## Measurement status\n\nSuperseded.\n",
+    )
+    assert gate.main() == 1
+
+
+def test_disowning_a_figure_in_prose_does_not_trip_the_gate(repo):
+    root, _, _ = repo
+    # The root README's actual shape: it names 0.94 precisely to disown it.
+    # Failing this would teach the next author to delete the disownment.
+    write(
+        root,
+        ROOT_README,
+        "# ARES\n\n## Detection accuracy\n\nAccuracy is unmeasured. No F1 is "
+        "published — including the 0.94 F1 quoted internally.\n",
+    )
+    assert gate.main() == 0
+
+
+def test_retraction_requires_the_status_section_not_just_any_heading(repo):
+    root, _, _ = repo
+    write(root, ROOT_README, "# ARES\n\n## Results\n\n| Micro F1 | **0.94** |\n")
+    assert gate.main() == 1
+
+
+# --- coverage ----------------------------------------------------------------
+
+
+def test_core_readme_is_guarded(repo):
+    root, _, _ = repo
+    # core/ published the loudest figures in the repo while unguarded.
+    (root / "core").mkdir(parents=True, exist_ok=True)
+    write(root, "core/README.md", "Known-Audit Recall of 97%.\n")
+    assert gate.main() == 1
