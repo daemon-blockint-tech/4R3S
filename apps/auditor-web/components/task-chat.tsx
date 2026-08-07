@@ -24,6 +24,16 @@ import { Streamdown } from 'streamdown'
 import { useAtom } from 'jotai'
 import { taskChatInputAtomFamily } from '@/lib/atoms/task'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface TaskChatProps {
   taskId: string
@@ -67,6 +77,7 @@ export function TaskChat({ taskId, task }: TaskChatProps) {
   const [currentTime, setCurrentTime] = useState(Date.now())
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [isStopping, setIsStopping] = useState(false)
+  const [showStopConfirm, setShowStopConfirm] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const previousMessageCountRef = useRef(0)
@@ -573,6 +584,7 @@ export function TaskChat({ taskId, task }: TaskChatProps) {
       toast.error('Failed to stop task')
     } finally {
       setIsStopping(false)
+      setShowStopConfirm(false)
     }
   }
 
@@ -1283,21 +1295,53 @@ export function TaskChat({ taskId, task }: TaskChatProps) {
             />
             {task.status === 'processing' || task.status === 'pending' ? (
               <button
-                onClick={handleStopTask}
+                type="button"
+                onClick={() => setShowStopConfirm(true)}
                 disabled={isStopping}
-                className="absolute bottom-2 right-2 rounded-full h-5 w-5 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Stop task"
+                title="Stop task"
+                className="absolute bottom-2 right-2 rounded-full h-5 w-5 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <Square className="h-3 w-3" fill="currentColor" />
               </button>
             ) : (
               <button
+                type="button"
                 onClick={handleSendMessage}
                 disabled={!newMessage.trim() || isSending}
-                className="absolute bottom-2 right-2 rounded-full h-5 w-5 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Send message"
+                title="Send message"
+                className="absolute bottom-2 right-2 rounded-full h-5 w-5 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 {isSending ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowUp className="h-3 w-3" />}
               </button>
             )}
+
+            <AlertDialog open={showStopConfirm} onOpenChange={setShowStopConfirm}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Stop this task?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    The agent stops where it is. Work in progress that hasn&apos;t been committed will be lost, and the
+                    run can&apos;t be resumed from this point.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isStopping}>Keep running</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={isStopping}
+                    onClick={(e) => {
+                      // Keep the dialog open so `isStopping` is actually visible; the
+                      // finally in handleStopTask closes it once the request settles.
+                      e.preventDefault()
+                      handleStopTask()
+                    }}
+                  >
+                    {isStopping ? 'Stopping…' : 'Stop task'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       )}

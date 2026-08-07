@@ -5,6 +5,16 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { ExternalLink, StopCircle, Loader2, Server } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
@@ -31,6 +41,7 @@ export function SandboxesDialog({ open, onOpenChange }: SandboxesDialogProps) {
   const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
   const [loading, setLoading] = useState(false)
   const [stoppingId, setStoppingId] = useState<string | null>(null)
+  const [pendingStopId, setPendingStopId] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -164,7 +175,7 @@ export function SandboxesDialog({ open, onOpenChange }: SandboxesDialogProps) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleStopSandbox(sandbox.taskId)}
+                        onClick={() => setPendingStopId(sandbox.taskId)}
                         disabled={stoppingId === sandbox.taskId}
                         className="h-7 text-xs ml-auto"
                       >
@@ -183,6 +194,29 @@ export function SandboxesDialog({ open, onOpenChange }: SandboxesDialogProps) {
           )}
         </div>
       </DialogContent>
+
+      <AlertDialog open={pendingStopId !== null} onOpenChange={(o) => !o && setPendingStopId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Stop this sandbox?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The running environment is torn down. Uncommitted changes in the sandbox are lost, and starting it again
+              takes a fresh boot.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingStopId) handleStopSandbox(pendingStopId)
+                setPendingStopId(null)
+              }}
+            >
+              Stop sandbox
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }
