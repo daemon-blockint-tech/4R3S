@@ -6,6 +6,21 @@ import { getOctokit } from '@/lib/github/client'
 import { getServerSession } from '@/lib/session/get-server-session'
 import { PROJECT_DIR } from '@/lib/sandbox/commands'
 import type { Octokit } from '@octokit/rest'
+import type { Sandbox } from '@vercel/sandbox'
+
+/**
+ * Every filename this route handles is PROJECT_DIR-relative — that is what the
+ * file tree (`find .` run with cwd: PROJECT_DIR) and the editor hand back. The
+ * sandbox's own default cwd is /vercel/sandbox, one level above the clone, so a
+ * `cat` issued without cwd looks for /vercel/sandbox/src/foo.ts and always exits
+ * non-zero. That is why the "file exists in the sandbox but is not on the branch
+ * yet" fallback below returned 404 for files that were sitting right there: the
+ * fallback the code was written to provide could never fire. Routing all three
+ * reads through here is what stops the next one from forgetting the cwd.
+ */
+function catInProject(sandbox: Sandbox, relativePath: string) {
+  return sandbox.runCommand({ cmd: 'cat', args: [relativePath], cwd: PROJECT_DIR })
+}
 
 function getLanguageFromFilename(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase()
@@ -256,11 +271,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             if (sandbox) {
               // Read file from sandbox
               const normalizedPath = filename.startsWith('/') ? filename.substring(1) : filename
-              const catResult = await sandbox.runCommand({
-                cmd: 'cat',
-                args: [normalizedPath],
-                cwd: PROJECT_DIR,
-              })
+              const catResult = await catInProject(sandbox, normalizedPath)
 
               if (catResult.exitCode === 0) {
                 newContent = await catResult.stdout()
@@ -311,7 +322,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             if (sandbox) {
               // Read file from sandbox
               const normalizedPath = filename.startsWith('/') ? filename.substring(1) : filename
-              const catResult = await sandbox.runCommand('cat', [normalizedPath])
+              const catResult = await catInProject(sandbox, normalizedPath)
 
               if (catResult.exitCode === 0) {
                 content = await catResult.stdout()
@@ -361,7 +372,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             if (sandbox) {
               // Read file from sandbox
               const normalizedPath = filename.startsWith('/') ? filename.substring(1) : filename
-              const catResult = await sandbox.runCommand('cat', [normalizedPath])
+              const catResult = await catInProject(sandbox, normalizedPath)
 
               if (catResult.exitCode === 0) {
                 content = await catResult.stdout()

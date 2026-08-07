@@ -95,6 +95,21 @@ jobs:
       # artifact. CLAUDE.md asserted "CI checks both" long before either half
       # existed; these two steps are what make that true. LGPL and permissive
       # pass by design — see scripts/check-licenses.mjs and deny.toml.
+      #
+      # The npm half walks the root tree *and* every apps/* package, so those
+      # trees have to be installed here or the gate refuses to report a pass.
+      # apps/auditor-web is the deployed dashboard and the reason this matters:
+      # its 700+ production packages were outside the gate's reach entirely.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install app dependencies (license gate scope)
+        run: |
+          npm ci --prefix apps/ares-sec
+          pnpm install --dir apps/auditor-web --frozen-lockfile --ignore-scripts
+
       - name: License check (npm)
         run: node scripts/check-licenses.mjs
 
