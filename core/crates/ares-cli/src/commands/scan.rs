@@ -527,7 +527,17 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
     let mut hypotheses = Vec::new();
 
     for instruction in &program_graph.instructions {
-        if instruction.has_signer_check.is_none() {
+        // `Some(false)`, not `is_none()`. `has_signer_check` is
+        // `body.map(|b| b.contains("is_signer") || ...)`, so:
+        //   None        -> the body could not be extracted; we do not know
+        //   Some(false) -> the body WAS read and holds no signer check  <-- the bug
+        //   Some(true)  -> a check is present
+        // Testing `is_none()` fired only on the case where nothing is known and
+        // never on the vulnerability itself, which is why EVAL-2 measured
+        // recall 0.0000 for this class across every target that parsed. Claiming
+        // a finding from an unreadable body would also be the exact inversion of
+        // "better that an agent knows it is blind".
+        if instruction.has_signer_check == Some(false) {
             hypotheses.push(Hypothesis {
                 category: VulnerabilityCategory::SignerAuthorization,
                 subject: instruction.name.clone(),
@@ -543,7 +553,8 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
                 confidence: 0.72,
             });
         }
-        if instruction.has_owner_check.is_none() {
+        // Same inversion as the signer check above.
+        if instruction.has_owner_check == Some(false) {
             hypotheses.push(Hypothesis {
                 category: VulnerabilityCategory::OwnershipCheck,
                 subject: instruction.name.clone(),
