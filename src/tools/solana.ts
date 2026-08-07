@@ -121,10 +121,24 @@ export async function loadProgram(address: string): Promise<ProgramInfo> {
 
     // For upgradeable programs, the account data points at a ProgramData
     // account holding the bytecode + upgrade authority.
-    if (loader === "upgradeable" && acct.data.length < 36) {
+    //
+    // `executable` gates the decode because three account kinds share this
+    // owner — Program (executable), ProgramData and Buffer (neither) — and only
+    // Program has the layout read below. On a ProgramData account bytes 4..36
+    // are slot + option + the first 23 bytes of the authority, and `new
+    // PublicKey` accepts any 32 bytes rather than rejecting them, so the decode
+    // could not fail: it emitted a base58 address belonging to no account at
+    // all. `analyze-onchain` branches only on `error` and `exists`, both fine
+    // here, and JSON.stringify's the record into the analyzer prompt under "On-
+    // chain program metadata (tool output)" — an invented address presented as
+    // an observed on-chain fact. Pasting a ProgramData address is a normal
+    // mistake; every explorer shows one on the page for an upgradeable program.
+    if (loader === "upgradeable" && !acct.executable) {
+      info.upgradeAuthorityUnresolved =
+        "account is owned by the upgradeable loader but is not executable, so it is a ProgramData or Buffer account rather than a program";
+    } else if (loader === "upgradeable" && acct.data.length < 36) {
       info.upgradeAuthorityUnresolved = `program account is ${acct.data.length} bytes, too short to point at a ProgramData account`;
-    }
-    if (loader === "upgradeable" && acct.data.length >= 36) {
+    } else if (loader === "upgradeable") {
       try {
         const programDataKey = new PublicKey(acct.data.subarray(4, 36));
         info.programDataAddress = programDataKey.toBase58();

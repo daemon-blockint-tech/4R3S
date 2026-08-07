@@ -109,6 +109,74 @@ describe("coverage gaps are disclosed, not swallowed", () => {
   });
 });
 
+// The IDL test used to run against the joined path, which carries the
+// directories above the audit root — the caller's, not the audited tree's. Any
+// root whose path contains "idl" (`solidly`, `candidly`, `idle`, `/tmp/idl-…`)
+// made every `.json` qualify, and `.json` is priority 0, so a lockfile sorted
+// ahead of every `.rs` file and could eat the entire budget. The run still
+// reported `available: true`, which is what stops `analyze-heuristic` from
+// downgrading its findings to speculative, and a citation into the lockfile
+// satisfies `citesLoadedFile` — the evidence `canBeConfirmed` accepts. The temp
+// root the suite above uses ("ares-source-") passes that check only by accident
+// of its name, so these roots name themselves deliberately.
+describe("an audit root whose own path contains \"idl\"", () => {
+  let idlRoot: string;
+
+  beforeAll(() => {
+    idlRoot = mkdtempSync(join(tmpdir(), "ares-solidly-fork-"));
+    mkdirSync(join(idlRoot, "src"), { recursive: true });
+    writeFileSync(join(idlRoot, "src", "lib.rs"), "pub fn entry() {}\n");
+    writeFileSync(join(idlRoot, "package.json"), '{"name":"vault"}\n');
+    writeFileSync(
+      join(idlRoot, "package-lock.json"),
+      `{"packages":{"x":"${"y".repeat(2000)}"}}\n`,
+    );
+  });
+
+  afterAll(() => rmSync(idlRoot, { recursive: true, force: true }));
+
+  it("does not turn every .json in the tree into an IDL", async () => {
+    const res = await loadSource(idlRoot);
+    expect(res.discovered).not.toContain("package.json");
+    expect(res.discovered).not.toContain("package-lock.json");
+    expect(res.files.map((f) => f.path)).toEqual([join("src", "lib.rs")]);
+  });
+
+  it("still loads program source first instead of a lockfile", async () => {
+    // The whole budget spent on npm metadata is an audit that read no program
+    // source while reporting itself source-backed.
+    const res = await loadSource(idlRoot, 2000);
+    expect(res.available).toBe(true);
+    expect(res.files[0]!.content).toContain("pub fn entry()");
+  });
+
+  it("still recognises an IDL by its path inside the audited tree", async () => {
+    mkdirSync(join(idlRoot, "idl"), { recursive: true });
+    writeFileSync(join(idlRoot, "idl", "vault.json"), '{"instructions":[]}\n');
+    const res = await loadSource(idlRoot);
+    expect(res.discovered).toContain(join("idl", "vault.json"));
+  });
+
+  it("rejects a single non-IDL json named directly under such a root", async () => {
+    const res = await loadSource(join(idlRoot, "package.json"));
+    expect(res.available).toBe(false);
+    expect(res.reason).toBe("no-rust-files");
+  });
+
+  it("still accepts an Anchor IDL named directly by its idl/ path", async () => {
+    // `target/` is in SKIP_DIRS, so naming the file is the only way to load the
+    // IDL Anchor actually emits.
+    mkdirSync(join(idlRoot, "target", "idl"), { recursive: true });
+    writeFileSync(
+      join(idlRoot, "target", "idl", "vault.json"),
+      '{"instructions":[]}\n',
+    );
+    const res = await loadSource(join(idlRoot, "target", "idl", "vault.json"));
+    expect(res.available).toBe(true);
+    expect(res.files[0]!.path).toBe("vault.json");
+  });
+});
+
 describe("citesLoadedFile", () => {
   it("accepts a citation into a file that was actually read", async () => {
     const res = await loadSource(root);

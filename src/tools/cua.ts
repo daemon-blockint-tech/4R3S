@@ -47,6 +47,39 @@ export interface CuaResult {
   note?: string;
 }
 
+/**
+ * Build the CUA graph, reporting the VM id the moment the graph has one.
+ *
+ * The VM is started *inside* the graph (`createVMInstance` calls Scrapybara's
+ * `startBrowser`) and its id reaches us only through the returned state, so it
+ * exists nowhere outside discarded in-memory state until `invoke` resolves. Any
+ * throw from `invoke` therefore skipped the cleanup below — and throwing is the
+ * normal outcome this is meant to cover: LangGraph raises `GraphRecursionError`
+ * when the browsing agent does not converge within `CUA_RECURSION_LIMIT`, which
+ * is roughly 24 actions, and a transient OpenAI or Scrapybara error mid-loop
+ * does the same. The leaked VM then runs billed until `CUA_TIMEOUT_HOURS`.
+ *
+ * `nodeBeforeAction` is the node the graph runs immediately after
+ * `createVMInstance`, and again before every later action, so it observes the
+ * id while the run is still alive. Exported so that capture can be exercised
+ * against the real graph without a live VM.
+ */
+export function createCuaGraph(
+  onInstance: (id: string) => void,
+): ReturnType<typeof createCua> {
+  return createCua({
+    scrapybaraApiKey: env.SCRAPYBARA_API_KEY,
+    timeoutHours: env.CUA_TIMEOUT_HOURS,
+    environment: env.CUA_ENVIRONMENT,
+    recursionLimit: env.CUA_RECURSION_LIMIT,
+    prompt: cuaInvestigationSystemPrompt(),
+    nodeBeforeAction: async (state) => {
+      if (state.instanceId) onInstance(state.instanceId);
+      return {};
+    },
+  });
+}
+
 /** Run a read-only CUA investigation. Never throws. */
 export async function runCuaInvestigation(objective: string): Promise<CuaResult> {
   if (!hasCua()) {
@@ -57,21 +90,19 @@ export async function runCuaInvestigation(objective: string): Promise<CuaResult>
     };
   }
 
-  const graph = createCua({
-    scrapybaraApiKey: env.SCRAPYBARA_API_KEY,
-    timeoutHours: env.CUA_TIMEOUT_HOURS,
-    environment: env.CUA_ENVIRONMENT,
-    recursionLimit: env.CUA_RECURSION_LIMIT,
-    prompt: cuaInvestigationSystemPrompt(),
+  let instanceId: string | undefined;
+  const graph = createCuaGraph((id) => {
+    instanceId = id;
   });
 
-  let instanceId: string | undefined;
   try {
     const result = await graph.invoke(
       { messages: [new HumanMessage(objective)] },
       { recursionLimit: env.CUA_RECURSION_LIMIT },
     );
-    instanceId = result.instanceId;
+    // The hook has already seen the id if any node ran after the VM was
+    // created; this covers only a graph shape where none did.
+    instanceId ??= result.instanceId;
 
     if (result.streamUrl) {
       logger.info(
