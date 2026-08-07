@@ -45,6 +45,7 @@
     "@types/pg": "^8.20.3",
     "@types/uuid": "^11.0.0",
     "eslint": "^10.8.0",
+    "license-checker-rseidelsohn": "^4.4.2",
     "tsx": "^4.19.2",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.65.0",

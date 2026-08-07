@@ -30,6 +30,7 @@ import { PRCheckStatus } from '@/components/pr-check-status'
 import { githubConnectionAtom } from '@/lib/atoms/github-connection'
 import { AresBrand } from '@/components/ares-brand'
 import { SidebarNav } from '@/components/sidebar-nav'
+import { formatLmStudioModelLabel, isLmStudioAgent } from '@/lib/agents/lmstudio-ui'
 
 // Model mappings for human-friendly names
 const AGENT_MODELS = {
@@ -341,6 +342,10 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
   const getHumanFriendlyModelName = (agent: string | null, model: string | null) => {
     if (!agent || !model) return model
 
+    if (isLmStudioAgent(agent)) {
+      return formatLmStudioModelLabel(model)
+    }
+
     const agentModels = AGENT_MODELS[agent as keyof typeof AGENT_MODELS]
     if (!agentModels) return model
 
@@ -364,6 +369,8 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
         return Gemini
       case 'opencode':
         return OpenCode
+      case 'lmstudio':
+        return Codex
       default:
         return null
     }

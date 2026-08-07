@@ -151,6 +151,9 @@ export async function runSemgrep(
           "--no-git-ignore",
           "--config",
           config,
+          // End-of-options: a target path starting with "-" must not be
+          // parsed as flags.
+          "--",
           sourcePath,
         ],
         // stderr is piped, not ignored: it carries the reason a scan failed,

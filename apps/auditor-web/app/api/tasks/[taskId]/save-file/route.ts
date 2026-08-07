@@ -6,6 +6,7 @@ import { getServerSession } from '@/lib/session/get-server-session'
 import { getSandbox } from '@/lib/sandbox/sandbox-registry'
 import { Sandbox } from '@vercel/sandbox'
 import { PROJECT_DIR } from '@/lib/sandbox/commands'
+import { resolveSandboxPath } from '@/lib/sandbox/safe-path'
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   try {
@@ -20,6 +21,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!filename || content === undefined) {
       return NextResponse.json({ error: 'Missing filename or content' }, { status: 400 })
+    }
+
+    // Resolve against PROJECT_DIR and reject traversal outside the project root
+    const safeFilename = resolveSandboxPath(filename)
+    if (!safeFilename) {
+      return NextResponse.json({ error: 'Invalid filename' }, { status: 400 })
     }
 
     // Get task from database and verify ownership (exclude soft-deleted)
@@ -71,7 +78,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     try {
       // Escape filename for safe shell interpolation
       // This prevents shell injection attacks when filename contains special characters
-      const escapedFilename = "'" + filename.replace(/'/g, "'\\''") + "'"
+      const escapedFilename = "'" + safeFilename.replace(/'/g, "'\\''") + "'"
 
       // Encode content as base64 to safely handle arbitrary content including special characters
       // This prevents shell injection attacks when content contains sequences like 'EOF'

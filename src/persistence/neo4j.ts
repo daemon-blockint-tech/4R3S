@@ -5,7 +5,7 @@
  * configured. Downstream code treats `undefined` as "graph layer unavailable"
  * and skips graph expansion, so the agent runs fine without Neo4j.
  */
-import neo4j, { type Driver, type Session } from "neo4j-driver";
+import neo4j, { type Driver, type Session, type SessionMode } from "neo4j-driver";
 
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
@@ -63,21 +63,41 @@ export function hasNeo4j(): boolean {
  */
 export const NEO4J_TX_CONFIG = { timeout: env.NEO4J_TIMEOUT_MS };
 
-/**
- * Run `fn` with a fresh session, always closing it afterward. Returns
- * `undefined` when the driver is not configured.
- */
-export async function withNeo4jSession<T>(
+/** Run `fn` with a fresh session in `mode`, always closing it afterward. */
+async function withSession<T>(
+  mode: SessionMode,
   fn: (session: Session) => Promise<T>,
 ): Promise<T | undefined> {
   const driver = getNeo4jDriver();
   if (!driver) return undefined;
-  const session = driver.session({ defaultAccessMode: neo4j.session.READ });
+  const session = driver.session({ defaultAccessMode: mode });
   try {
     return await fn(session);
   } finally {
     await session.close();
   }
+}
+
+/**
+ * Run `fn` with a fresh READ session. Returns `undefined` when the driver is
+ * not configured.
+ */
+export async function withNeo4jSession<T>(
+  fn: (session: Session) => Promise<T>,
+): Promise<T | undefined> {
+  return withSession(neo4j.session.READ, fn);
+}
+
+/**
+ * As `withNeo4jSession`, but WRITE mode, for MERGE/DDL statements. A write
+ * issued on a READ-mode session is rejected by servers that enforce access
+ * modes, and the callers treat write failures as non-fatal — so graph memory
+ * would silently never persist at all.
+ */
+export async function withNeo4jWriteSession<T>(
+  fn: (session: Session) => Promise<T>,
+): Promise<T | undefined> {
+  return withSession(neo4j.session.WRITE, fn);
 }
 
 /** Close the shared driver (call on shutdown). */

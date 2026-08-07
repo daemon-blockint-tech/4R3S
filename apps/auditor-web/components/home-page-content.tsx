@@ -72,6 +72,7 @@ export function HomePageContent({
   const [loadingVercel, setLoadingVercel] = useState(false)
   const [loadingGitHub, setLoadingGitHub] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [taskSubmitError, setTaskSubmitError] = useState<string | null>(null)
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [showOpenRepoDialog, setShowOpenRepoDialog] = useState(false)
@@ -165,6 +166,8 @@ export function HomePageContent({
   const handleRepoChange = (repo: string) => {
     setSelectedRepoState(repo)
     setSelectedRepo(repo)
+    // The error told them to pick a repo; picking one clears it.
+    if (repo) setTaskSubmitError(null)
   }
 
   const handleRefreshOwners = () => {
@@ -372,20 +375,18 @@ export function HomePageContent({
       return
     }
 
+    setTaskSubmitError(null)
+
     // Check if multi-repo mode is enabled
     if (multiRepoMode) {
       if (selectedRepos.length === 0) {
-        toast.error('Please select repositories', {
-          description: 'Click on "0 repos selected" to choose repositories.',
-        })
+        setTaskSubmitError('Select at least one repository — click "0 repos selected" above.')
         return
       }
     } else {
       // Check if user has selected a repository
       if (!data.repoUrl) {
-        toast.error('Please select a repository', {
-          description: 'Choose a GitHub repository to work with from the header.',
-        })
+        setTaskSubmitError('Select a GitHub repository from the header before starting an audit.')
         return
       }
     }
@@ -593,6 +594,7 @@ export function HomePageContent({
           isSubmitting={isSubmitting}
           selectedOwner={selectedOwner}
           selectedRepo={selectedRepo}
+          submitError={taskSubmitError}
           initialInstallDependencies={initialInstallDependencies}
           initialMaxDuration={initialMaxDuration}
           initialKeepAlive={initialKeepAlive}

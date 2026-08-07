@@ -1,6 +1,7 @@
 import { Sandbox } from '@vercel/sandbox'
 import { Writable } from 'stream'
 import { runCommandInSandbox, runInProject, PROJECT_DIR } from '../commands'
+import { writeInstructionFile } from '../instruction-file'
 import { AgentExecutionResult } from '../types'
 import { redactSensitiveInfo } from '@/lib/utils/logging'
 import { TaskLogger } from '@/lib/utils/task-logger'
@@ -274,6 +275,10 @@ export async function executeClaudeInSandbox(
       })
     }
 
+    // Deliver the instruction via a sandbox file so the prompt is never
+    // interpolated into the shell command string
+    const instructionArg = await writeInstructionFile(sandbox, instruction)
+
     // Build command with stream-json output format for streaming
     let fullCommand = `${envPrefix} claude --model "${modelToUse}" --dangerously-skip-permissions --output-format stream-json --verbose`
 
@@ -292,7 +297,7 @@ export async function executeClaudeInSandbox(
       }
     }
 
-    fullCommand += ` "${instruction}"`
+    fullCommand += ` ${instructionArg}`
 
     if (logger) {
       await logger.info('Executing Claude CLI with --dangerously-skip-permissions for automated file changes...')

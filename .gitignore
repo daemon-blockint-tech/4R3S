@@ -1,7 +1,7 @@
 node_modules/
 dist/
-.env
-.env.local
+.env*
+!.env.example
 *.log
 .DS_Store
 coverage/
@@ -30,3 +30,6 @@ ares-output/
 .devin/
 .claude/
 .windsurf/
+
+# LangGraph API
+.langgraph_api

@@ -1,7 +1,7 @@
 import 'server-only'
 
 import { db } from './client'
-import { users, accounts, type InsertUser } from './schema'
+import { users, accounts, userSettings, type InsertUser } from './schema'
 import { eq, and } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 
@@ -58,9 +58,7 @@ export async function upsertUser(
 
     if (existingAccount.length > 0) {
       const userId = existingAccount[0].userId
-      console.log(
-        `[upsertUser] GitHub account (${externalId}) is already connected to user ${userId}. Refreshing profile and token.`,
-      )
+      console.log('[upsertUser] GitHub account already connected to an existing user. Refreshing profile and token.')
 
       const now = new Date()
 
@@ -98,9 +96,17 @@ export async function upsertUser(
   await db.insert(users).values({
     id: userId,
     ...userData,
+    planId: userData.planId ?? 'free',
     createdAt: now,
     updatedAt: now,
     lastLoginAt: now,
+  })
+
+  await db.insert(userSettings).values({
+    id: nanoid(),
+    userId,
+    createdAt: now,
+    updatedAt: now,
   })
 
   return userId

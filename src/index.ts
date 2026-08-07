@@ -122,11 +122,6 @@ async function main(): Promise<void> {
     ? meterChat(defaultChat, billing.meter)
     : defaultChat;
 
-  // Pre-flight: surface an unpayable configuration before spending on the audit.
-  if (billing.config.enabled) {
-    canAffordAudit(billing);
-  }
-
   const graph = buildAuditGraph({
     deps: { chat, crystalline, retriever, knowledge },
     checkpointer,
@@ -138,12 +133,8 @@ async function main(): Promise<void> {
     "Starting audit",
   );
 
-  // Checked BEFORE the graph runs, not after. `canAffordAudit` was computed and
-  // its result discarded, so an account that cannot pay still bought a full
-  // audit at the provider — every analyzer, verify, remember and report — and
-  // only then had the report withheld at settlement. Every run, on the config
-  // .env.example leaves you in (BILLING_ENABLED=true, zero plan credits, no
-  // on-demand).
+  // Pre-flight: refuse to spend on an audit whose report could not be
+  // released at settlement.
   if (billing.config.enabled && !canAffordAudit(billing)) {
     throw new Error(
       "Payment required: the account has no prepaid credits and on-demand billing is " +

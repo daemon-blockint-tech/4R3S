@@ -7,7 +7,8 @@ import { generateId } from '@/lib/utils/id'
 import { createTaskLogger } from '@/lib/utils/task-logger'
 import { Sandbox } from '@vercel/sandbox'
 import { createSandbox } from '@/lib/sandbox/creation'
-import { executeAgentInSandbox, AgentType } from '@/lib/sandbox/agents'
+import { executeAgentInSandbox } from '@/lib/sandbox/agents'
+import { resolveSandboxAgent } from '@/lib/agents/lmstudio-ui'
 import { pushChangesToBranch, shutdownSandbox } from '@/lib/sandbox/git'
 import { unregisterSandbox } from '@/lib/sandbox/sandbox-registry'
 import { decrypt } from '@/lib/crypto'
@@ -19,6 +20,8 @@ import { getMaxSandboxDuration } from '@/lib/db/settings'
 import { generateCommitMessage, createFallbackCommitMessage } from '@/lib/utils/commit-message-generator'
 import { detectPortFromRepo } from '@/lib/sandbox/port-detection'
 import { withObservedRoute } from '@/lib/observability/route-handler'
+import { isLlmConfigured } from '@/lib/llm/provider'
+import { recordTaskUsageForTask } from '@/lib/db/usage'
 
 async function continueTaskRoute(req: NextRequest, context: { params: Promise<{ taskId: string }> }) {
   try {
@@ -144,6 +147,7 @@ async function continueTask(
   let sandbox: Sandbox | null = null
   let isResumedSandbox = false // Track if we reconnected to existing sandbox
   const logger = createTaskLogger(taskId)
+  const taskStartTime = Date.now()
 
   try {
     console.log('Continuing task with new message')
@@ -327,7 +331,7 @@ async function continueTask(
     const agentResult = await executeAgentInSandbox(
       sandbox,
       promptWithContext,
-      selectedAgent as AgentType,
+      resolveSandboxAgent(selectedAgent),
       logger,
       selectedModel,
       mcpServers,
@@ -381,7 +385,7 @@ async function continueTask(
           // Ignore URL parsing errors
         }
 
-        if (process.env.AI_GATEWAY_API_KEY) {
+        if (isLlmConfigured()) {
           commitMessage = await generateCommitMessage({
             description: prompt,
             repoName,
@@ -423,6 +427,7 @@ async function continueTask(
       } else {
         await logger.updateStatus('completed')
         await logger.updateProgress(100, 'Task completed successfully')
+        await recordTaskUsageForTask(taskId, { startTime: new Date(taskStartTime) })
         console.log('Task continuation completed successfully')
       }
     } else {
@@ -461,6 +466,7 @@ async function continueTask(
 
     await logger.updateStatus('error')
     await logger.error('Task failed to continue')
+    await recordTaskUsageForTask(taskId, { startTime: new Date(taskStartTime) })
     // Error details are saved to the database for debugging
     console.error('Task error details:', errorMessage)
 

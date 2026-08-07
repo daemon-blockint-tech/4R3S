@@ -38,8 +38,7 @@ We aim to acknowledge reports within a few business days.
 
 ## Known dependency advisories
 
-Dependencies are monitored by Dependabot. CI runs no `npm audit` step — see the
-note at the end of this section for why. The current tracked advisories:
+Dependencies are monitored by Dependabot. The current tracked advisories:
 
 ### Resolved
 
@@ -73,11 +72,18 @@ note at the end of this section for why. The current tracked advisories:
 
 - **`uuid` < 11.1.1 — missing buffer bounds check** (`GHSA-w5hq-g745-h8pq`,
   Moderate). Pulled in transitively through `jayson` (a `@solana/web3.js`
-  dependency). Resolved with an npm [`overrides`](package.json) entry pinning
-  `uuid` to `^11.1.1` across the tree; `jayson` imports only `uuid.v4()`, which
-  is API-compatible with uuid 11. This also clears the downstream advisories on
-  `jayson`, `@solana/web3.js`, `@solana/spl-token-group`, and
-  `@solana/spl-token-metadata`.
+  dependency). Resolved by moving `uuid` to a direct dependency (`^14.0.1`) and
+  aliasing transitive copies to it via the npm [`overrides`](package.json)
+  entry `"uuid": "$uuid"` (resolves to the direct 14.x range); the root
+  `pnpm.overrides` entry forces `uuid >= 14.0.0` across the workspace lockfile.
+  `jayson` imports only `uuid.v4()`, which is API-compatible with uuid 14. This
+  also clears the downstream advisories on `jayson`, `@solana/web3.js`,
+  `@solana/spl-token-group`, and `@solana/spl-token-metadata`.
+
+- **`esbuild` < 0.25.0 — dev server accepts cross-origin requests**
+  (`GHSA-67mh-4wv8-2f99`, Moderate). Reached transitively via `tsx`/Vite.
+  Resolved with a root [`pnpm.overrides`](package.json) entry forcing
+  `esbuild >= 0.25.0`.
 
 ### Resolved by dropping an unused dependency
 

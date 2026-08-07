@@ -8,7 +8,7 @@
  */
 import { logger } from './logger'
 
-export type Journey = 'signin' | 'create_task' | 'list_tasks' | 'connect_repo' | 'sandbox' | 'unknown'
+export type Journey = 'signin' | 'create_task' | 'list_tasks' | 'connect_repo' | 'sandbox' | 'usage' | 'unknown'
 
 export type StatusClass = '2xx' | '3xx' | '4xx' | '5xx'
 

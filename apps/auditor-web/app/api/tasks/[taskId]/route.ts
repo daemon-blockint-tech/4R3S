@@ -5,6 +5,7 @@ import { eq, and, isNull } from 'drizzle-orm'
 import { createTaskLogger } from '@/lib/utils/task-logger'
 import { killSandbox } from '@/lib/sandbox/sandbox-registry'
 import { getServerSession } from '@/lib/session/get-server-session'
+import { recordTaskUsageForTask } from '@/lib/db/usage'
 
 interface RouteParams {
   params: Promise<{
@@ -97,6 +98,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         }
 
         await logger.error('Task execution stopped by user')
+
+        await recordTaskUsageForTask(taskId)
 
         return NextResponse.json({
           message: 'Task stopped successfully',

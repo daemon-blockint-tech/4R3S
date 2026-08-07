@@ -25,6 +25,7 @@ import {
   coerceFindings,
   extractChecked,
   downgradeSpeculative,
+  fenceUntrusted,
 } from "../util.js";
 
 /** Build this node's entry for the `analyzers` channel. */
@@ -43,6 +44,7 @@ export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
 
     const source = state.source;
     const hasSource = Boolean(source?.available && source.files.length > 0);
+    const sourceBlock = hasSource ? formatSourceForPrompt(source!) : "";
 
     const human = [
       state.intake
@@ -62,9 +64,14 @@ export function makeAnalyzeHeuristicNode(deps: GraphDeps) {
               ? `NOTE: only ${source!.files.length} of ${source!.discovered.length} discovered files fit the context budget. Classes you could not examine belong in "checked" only if you actually evaluated them.`
               : "",
             "",
-            "<<<BEGIN PROGRAM SOURCE>>>",
-            formatSourceForPrompt(source!),
-            "<<<END PROGRAM SOURCE>>>",
+            // The audited program's own text is the most attacker-reachable
+            // content in this prompt: an ad-hoc marker (or a fake BEGIN/END
+            // inside the payload) would let it close the block and address the
+            // model as the operator. fenceUntrusted strips such markers.
+            // loadSource already bounded the size, so the fence budget is the
+            // formatted length itself — a second truncation would only cut
+            // real source.
+            fenceUntrusted(sourceBlock, sourceBlock.length),
             "",
             "Analyze the source above. Every finding MUST cite a real location as",
             '"<file>:<line>" using a path shown in the source and a line you actually',

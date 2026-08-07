@@ -108,16 +108,20 @@ impl MapperAgent {
             return Ok(graph);
         }
 
-        // Walk source files
-        for entry in WalkDir::new(&src_dir)
+        // Walk source files. WalkDir yields entries in filesystem order, so
+        // collect and sort paths first to keep the graph deterministic.
+        let mut source_paths: Vec<PathBuf> = WalkDir::new(&src_dir)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().and_then(|e| e.to_str()) == Some("rs"))
-        {
-            let path = entry.path();
+            .map(|e| e.path().to_path_buf())
+            .collect();
+        source_paths.sort();
+
+        for path in &source_paths {
             debug!("Analyzing file: {:?}", path);
 
-            graph.all_source_files.push(path.to_path_buf());
+            graph.all_source_files.push(path.clone());
 
             let content = match std::fs::read_to_string(path) {
                 Ok(c) => c,

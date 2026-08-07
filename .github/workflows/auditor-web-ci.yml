@@ -1,12 +1,18 @@
-name: PR Checks
+name: auditor-web PR Checks
 
 on:
   pull_request:
     branches: ['*']
+    paths: ["apps/auditor-web/**"]
+  workflow_dispatch:
 
 jobs:
   checks:
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/auditor-web
 
     steps:
       - name: Checkout code
@@ -46,4 +52,3 @@ jobs:
 
       - name: Run build
         run: pnpm build
-

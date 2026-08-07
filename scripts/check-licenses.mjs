@@ -22,6 +22,7 @@
  *     noisy enough to get switched off — which is how the last one died.
  */
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 
 const BANNED = /(?<!L)GPL-|^AGPL/i;
 
@@ -30,9 +31,16 @@ function licensesOf(entry) {
   return Array.isArray(raw) ? raw : [String(raw)];
 }
 
+// Pinned devDependency, executed from node_modules. Never `npx -y`: that
+// resolves and downloads whatever the registry serves at check time, so the
+// gate itself would be an unpinned network fetch.
+const bin = createRequire(import.meta.url).resolve(
+  "license-checker-rseidelsohn/bin/license-checker-rseidelsohn.js",
+);
+
 const json = execFileSync(
-  "npx",
-  ["-y", "license-checker-rseidelsohn", "--json", "--production"],
+  process.execPath,
+  [bin, "--json", "--production"],
   { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
 );
 

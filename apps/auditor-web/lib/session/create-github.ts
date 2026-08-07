@@ -76,7 +76,7 @@ export async function createGitHubSession(accessToken: string, scope?: string): 
     },
   }
 
-  console.log('Created GitHub session with internal user ID:', session.user.id)
+  console.log('Created GitHub session')
   return session
 }
 

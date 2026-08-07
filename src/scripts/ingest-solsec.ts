@@ -23,7 +23,7 @@ import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { describePostgrestError } from "../persistence/supabase-error.js";
 import { getSupabase, hasSupabase } from "../persistence/supabase.js";
-import { hasNeo4j, withNeo4jSession, closeNeo4j } from "../persistence/neo4j.js";
+import { hasNeo4j, withNeo4jWriteSession, closeNeo4j } from "../persistence/neo4j.js";
 import { embedBatch, hasEmbeddings } from "../retrieval/embeddings.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -173,7 +173,7 @@ async function upsertNeo4j(
   docs: Array<{ doc_id: string; title: string; rel: string; chunks: ChunkRecord[] }>,
 ): Promise<void> {
   if (!hasNeo4j()) return;
-  await withNeo4jSession(async (session) => {
+  await withNeo4jWriteSession(async (session) => {
     for (const d of docs) {
       await session.run(
         `MERGE (doc:Document { doc_id: $doc_id })

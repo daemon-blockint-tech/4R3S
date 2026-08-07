@@ -360,6 +360,17 @@ impl AgentOrchestrator {
         ])
     }
 
+    /// Gate a filesystem path through the policy engine's read allowlist —
+    /// the same boundary check `scan` applies to its target. Prompt-injected
+    /// tool calls can otherwise read arbitrary paths (e.g. ~/.ssh).
+    fn check_tool_read_permission(&self, path: &std::path::Path) -> Result<(), String> {
+        let policy = ares_policy::PolicyEngine::new(self.config.policy_file.as_deref())
+            .map_err(|e| e.to_string())?;
+        policy
+            .check_scan_permission(path)
+            .map_err(|e| e.to_string())
+    }
+
     async fn execute_tool(&self, name: &str, args: &Value) -> String {
         match name {
             "ares_scan" => {
@@ -383,6 +394,9 @@ impl AgentOrchestrator {
             "read_file" => {
                 let file_path = args["file_path"].as_str().unwrap_or("");
                 let path = PathBuf::from(file_path);
+                if let Err(e) = self.check_tool_read_permission(&path) {
+                    return format!("Policy denied read of '{}': {}", file_path, e);
+                }
                 if path.is_dir() {
                     return format!(
                         "Error: '{}' is a directory. Use list_directory to see its contents.",
@@ -397,6 +411,9 @@ impl AgentOrchestrator {
             "list_directory" => {
                 let dir_path = args["dir_path"].as_str().unwrap_or(".");
                 let path = PathBuf::from(dir_path);
+                if let Err(e) = self.check_tool_read_permission(&path) {
+                    return format!("Policy denied listing of '{}': {}", dir_path, e);
+                }
                 if !path.exists() {
                     return format!("Error: Directory '{}' does not exist.", dir_path);
                 }

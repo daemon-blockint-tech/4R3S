@@ -1,5 +1,6 @@
 import { Sandbox } from '@vercel/sandbox'
 import { runCommandInSandbox, runInProject, PROJECT_DIR } from '../commands'
+import { writeInstructionFile } from '../instruction-file'
 import { AgentExecutionResult } from '../types'
 import { redactSensitiveInfo } from '@/lib/utils/logging'
 import { TaskLogger } from '@/lib/utils/task-logger'
@@ -343,7 +344,11 @@ EOF`
       }
     }
 
-    const fullCommand = `${envPrefix} ${opencodeCmdToUse} run${modelFlag}${sessionFlags} "${instruction}"`
+    // Deliver the instruction via a sandbox file so the prompt is never
+    // interpolated into the shell command string
+    const instructionArg = await writeInstructionFile(sandbox, instruction)
+
+    const fullCommand = `${envPrefix} ${opencodeCmdToUse} run${modelFlag}${sessionFlags} ${instructionArg}`
 
     // Log the command we're about to execute (with redacted API keys)
     const redactedCommand = fullCommand.replace(/API_KEY="[^"]*"/g, 'API_KEY="[REDACTED]"')

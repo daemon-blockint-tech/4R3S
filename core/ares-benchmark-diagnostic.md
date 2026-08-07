@@ -13,7 +13,7 @@ These curated 50–150 LOC reproduction stubs are designed to isolate and reprod
 | type-cosplay-stub | 1 | **1/1 (100%)** | N/A | N/A | N/A |
 | ownership-check-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
 | signer-auth-stub | 1 | **1/1 (100%)** | N/A | N/A | N/A |
-| arbitrary-cpi-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
+| arbitrary-cpi-stub | 1 | **1/1 (100%)** | N/A | N/A | N/A |
 | init-frontrunning-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
 | reentrancy-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
 | dup-mutable-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
@@ -21,7 +21,7 @@ These curated 50–150 LOC reproduction stubs are designed to isolate and reprod
 | close-account-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
 | account-reload-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
 | pda-privileges-stub | 1 | **0/1 (0%)** | N/A | N/A | N/A |
-| **TOTAL** | **11** | **2/11 (18%)** | **—** | **—** | **—** |
+| **TOTAL** | **11** | **3/11 (27%)** | **—** | **—** | **—** |
 
 ## Segment B: Real-World Capability Assessment (Production 10K+ LOC Repos)
 
@@ -54,7 +54,7 @@ These are **real cloned production repositories** with multi-program workspaces,
 | **Time to Report** | **< 5 seconds** | Hours | N/A |
 | **Cost per Protocol** | **$0 (local)** | $$$ (SaaS) | API tokens |
 
-**Combined: ARES V3 recalled 2/50 (4%) of published audit findings across 20 protocols. **
+**Combined: ARES V3 recalled 3/50 (6%) of published audit findings across 20 protocols. **
 **Additionally, 0 findings per protocol require manual triage to distinguish real bugs from false positives.**
 
 ## Additional Findings (Not in Ground Truth)

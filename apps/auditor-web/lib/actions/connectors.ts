@@ -7,6 +7,7 @@ import { revalidatePath } from 'next/cache'
 import { ZodError } from 'zod'
 import { eq, and } from 'drizzle-orm'
 import { encrypt, decrypt } from '@/lib/crypto'
+import { SECRET_MASK } from '@/lib/utils/secret-mask'
 import { getServerSession } from '@/lib/session/get-server-session'
 
 type FormState = {
@@ -179,6 +180,32 @@ export async function updateConnector(_: FormState, formData: FormData): Promise
 
     const validatedData = insertConnectorSchema.parse(connectorData)
 
+    // The edit form round-trips masked secret values; keep the stored value for
+    // any env key still showing the placeholder instead of persisting the mask
+    let envJsonToStore = validatedData.env ? JSON.stringify(validatedData.env) : null
+    if (validatedData.env && Object.values(validatedData.env).includes(SECRET_MASK)) {
+      const [existing] = await db
+        .select({ env: connectors.env })
+        .from(connectors)
+        .where(and(eq(connectors.id, id), eq(connectors.userId, session.user.id)))
+        .limit(1)
+
+      if (existing?.env) {
+        try {
+          const existingEnv = JSON.parse(decrypt(existing.env)) as Record<string, string>
+          const mergedEnv = { ...validatedData.env }
+          for (const key of Object.keys(mergedEnv)) {
+            if (mergedEnv[key] === SECRET_MASK && key in existingEnv) {
+              mergedEnv[key] = existingEnv[key]
+            }
+          }
+          envJsonToStore = JSON.stringify(mergedEnv)
+        } catch {
+          // Keep submitted values when the stored env cannot be read
+        }
+      }
+    }
+
     await db
       .update(connectors)
       .set({
@@ -189,7 +216,7 @@ export async function updateConnector(_: FormState, formData: FormData): Promise
         oauthClientId: validatedData.oauthClientId || null,
         oauthClientSecret: validatedData.oauthClientSecret ? encrypt(validatedData.oauthClientSecret) : null,
         command: validatedData.command || null,
-        env: validatedData.env ? encrypt(JSON.stringify(validatedData.env)) : null,
+        env: envJsonToStore ? encrypt(envJsonToStore) : null,
         status: validatedData.status,
         updatedAt: new Date(),
       })
