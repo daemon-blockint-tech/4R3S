@@ -18,12 +18,9 @@ import { createHash } from "node:crypto";
 
 import { logger } from "../config/logger.js";
 import type { KnowledgeLevel } from "../memory/types.js";
-import {
-  describePostgrestError,
-  logPostgrestError,
-} from "./supabase-error.js";
+import { logPostgrestError } from "./supabase-error.js";
 import { getSupabase, hasSupabase } from "./supabase.js";
-import { hasNeo4j, withNeo4jSession } from "./neo4j.js";
+import { hasNeo4j, withNeo4jWriteSession } from "./neo4j.js";
 
 /** A memory fragment to persist durably. */
 export interface KnowledgeFragment {
@@ -153,7 +150,7 @@ export class HybridKnowledgeWriter implements KnowledgeWriter {
   ): Promise<boolean> {
     try {
       const entities = tagEntities(fragment.tags);
-      await withNeo4jSession(async (session) => {
+      await withNeo4jWriteSession(async (session) => {
         await session.run(
           `MERGE (doc:Document { doc_id: $doc_id })
              SET doc.title = $title, doc.path = $path

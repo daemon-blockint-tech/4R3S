@@ -11,7 +11,7 @@
  * machine-readable reason when it produced nothing, so the caller can tell
  * "no source to read" apart from "could not read the source".
  */
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, lstat, stat } from "node:fs/promises";
 import { basename, join, relative, extname, sep } from "node:path";
 
 import { env } from "../config/env.js";
@@ -81,10 +81,14 @@ async function walk(root: string, dir: string, out: string[]): Promise<void> {
     const full = join(dir, entry);
     let info;
     try {
-      info = await stat(full);
+      // lstat, not stat: never follow a symlink. An audited repo could link
+      // to ~/.env or any file outside its tree and have secrets pulled into
+      // the prompt with the source.
+      info = await lstat(full);
     } catch {
       continue;
     }
+    if (info.isSymbolicLink()) continue;
     if (info.isDirectory()) {
       await walk(root, full, out);
       continue;
@@ -279,7 +283,26 @@ export function citesLoadedFile(location: string, source: LoadedSource): boolean
   if (!location) return false;
   const cited = location.split(":")[0]?.trim().replace(/^\.\//, "");
   if (!cited) return false;
+  // Both suffix directions must land on a path separator. Without that boundary
+  // on the second one, `endsWith` compares raw characters and a file that was
+  // never read matches a file that was: cited `my_vault.rs` "confirms" against a
+  // loaded `vault.rs`, and cited `xlib.rs` against `lib.rs`. That is the exact
+  // failure this function exists to catch — `canBeConfirmed` in graph/util.ts
+  // treats a passing citation as the mechanical evidence that lets an
+  // LLM-authored finding be labelled `confirmed`, and REMEMBER then persists
+  // only confirmed findings into durable memory that later audits recall as
+  // prior knowledge. An unbounded suffix match is therefore the path by which a
+  // hallucinated filename becomes a fact the system believes about itself.
+  //
+  // Citing a *longer* path than was loaded stays legal on purpose: the loader
+  // stores paths relative to the audit root, so a model that cites
+  // `programs/vault/src/lib.rs` for a loaded `src/lib.rs` is describing the same
+  // file from a different root. The separator is what distinguishes that from a
+  // different file whose name merely ends the same way.
   return source.files.some(
-    (f) => f.path === cited || f.path.endsWith(`${sep}${cited}`) || cited.endsWith(f.path),
+    (f) =>
+      f.path === cited ||
+      f.path.endsWith(`${sep}${cited}`) ||
+      cited.endsWith(`${sep}${f.path}`),
   );
 }
