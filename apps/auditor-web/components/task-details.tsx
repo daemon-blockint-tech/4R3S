@@ -198,6 +198,13 @@ export function TaskDetails({ task, maxSandboxDuration = 300 }: TaskDetailsProps
   const [prNumber, setPrNumber] = useState<number | null>(task.prNumber || null)
   const [prStatus, setPrStatus] = useState<'open' | 'closed' | 'merged' | null>(task.prStatus || null)
   const [isClosingPR, setIsClosingPR] = useState(false)
+  // One confirm slot rather than a dialog per action — these all ask the same shape of question.
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string
+    description: string
+    actionLabel: string
+    run: () => void
+  } | null>(null)
   const [isReopeningPR, setIsReopeningPR] = useState(false)
   const [isMergingPR, setIsMergingPR] = useState(false)
   const [filesPane, setFilesPane] = useState<'files' | 'changes'>('changes')
@@ -1481,7 +1488,18 @@ export function TaskDetails({ task, maxSandboxDuration = 300 }: TaskDetailsProps
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={handleClosePR} disabled={isClosingPR || isMergingPR}>
+                        <DropdownMenuItem
+                          disabled={isClosingPR || isMergingPR}
+                          onClick={() => {
+                            setConfirmAction({
+                              title: 'Close this pull request?',
+                              description:
+                                'The PR is closed on GitHub without merging. Its commits stay on the branch, and anyone watching the PR sees the close.',
+                              actionLabel: 'Close PR',
+                              run: handleClosePR,
+                            })
+                          }}
+                        >
                           <XCircle className="h-4 w-4 mr-2" />
                           Close PR
                         </DropdownMenuItem>
@@ -2012,7 +2030,18 @@ export function TaskDetails({ task, maxSandboxDuration = 300 }: TaskDetailsProps
                                 )}
                               </DropdownMenuItem>
                             ) : (
-                              <DropdownMenuItem onClick={handleStopSandbox} disabled={isStoppingSandbox}>
+                              <DropdownMenuItem
+                                disabled={isStoppingSandbox}
+                                onClick={() => {
+                                  setConfirmAction({
+                                    title: 'Stop the sandbox?',
+                                    description:
+                                      'The running environment is torn down. Uncommitted changes in the sandbox are lost, and starting it again takes a fresh boot.',
+                                    actionLabel: 'Stop sandbox',
+                                    run: handleStopSandbox,
+                                  })
+                                }}
+                              >
                                 {isStoppingSandbox ? (
                                   <>
                                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -2261,7 +2290,18 @@ export function TaskDetails({ task, maxSandboxDuration = 300 }: TaskDetailsProps
                           <>
                             {task.sandboxUrl && <DropdownMenuSeparator />}
                             {task.sandboxUrl ? (
-                              <DropdownMenuItem onClick={handleStopSandbox} disabled={isStoppingSandbox}>
+                              <DropdownMenuItem
+                                disabled={isStoppingSandbox}
+                                onClick={() => {
+                                  setConfirmAction({
+                                    title: 'Stop the sandbox?',
+                                    description:
+                                      'The running environment is torn down. Uncommitted changes in the sandbox are lost, and starting it again takes a fresh boot.',
+                                    actionLabel: 'Stop sandbox',
+                                    run: handleStopSandbox,
+                                  })
+                                }}
+                              >
                                 {isStoppingSandbox ? (
                                   <>
                                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -2664,6 +2704,27 @@ export function TaskDetails({ task, maxSandboxDuration = 300 }: TaskDetailsProps
           onMergeInitiated={handleMergeInitiated}
         />
       )}
+
+      {/* Shared confirmation for destructive one-off actions (stop sandbox, close PR) */}
+      <AlertDialog open={confirmAction !== null} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmAction?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                confirmAction?.run()
+                setConfirmAction(null)
+              }}
+            >
+              {confirmAction?.actionLabel}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Close Tab Confirmation Dialog */}
       <AlertDialog open={showCloseTabDialog} onOpenChange={setShowCloseTabDialog}>

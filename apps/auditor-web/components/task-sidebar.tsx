@@ -410,7 +410,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
                 size="sm"
                 className="h-8 w-8 p-0"
                 onClick={() => setShowDeleteDialog(true)}
-                disabled={true}
+                disabled={isDeleting || tasks.length === 0}
                 title="Delete Tasks"
               >
                 <Trash2 className="h-4 w-4" />

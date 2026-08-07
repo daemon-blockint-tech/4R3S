@@ -6,6 +6,8 @@ import { TaskDetails } from '@/components/task-details'
 import { SharedHeader } from '@/components/shared-header'
 import { TaskActions } from '@/components/task-actions'
 import { LogsPane } from '@/components/logs-pane'
+import { Button } from '@/components/ui/button'
+import Link from 'next/link'
 import type { Session } from '@/lib/session/types'
 
 interface TaskPageClientProps {
@@ -40,7 +42,7 @@ export function TaskPageClient({
   initialStars = 1200,
   maxSandboxDuration = 300,
 }: TaskPageClientProps) {
-  const { task, isLoading, error } = useTask(taskId)
+  const { task, isLoading, error, refetch } = useTask(taskId)
   const [logsPaneHeight, setLogsPaneHeight] = useState(40) // Default to collapsed height
 
   const repoInfo = useMemo(() => parseRepoFromUrl(task?.repoUrl ?? null), [task?.repoUrl])
@@ -64,6 +66,7 @@ export function TaskPageClient({
   }
 
   if (error || !task) {
+    const isMissing = error === 'Task not found' || (!error && !task)
     return (
       <div className="flex-1 bg-background">
         <div className="p-3">
@@ -71,9 +74,25 @@ export function TaskPageClient({
         </div>
         <div className="mx-auto p-3">
           <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <h2 className="text-lg font-semibold mb-2">Task Not Found</h2>
-              <p className="text-muted-foreground">{error || 'The requested task could not be found.'}</p>
+            <div className="text-center space-y-3">
+              {/* A failed request and a genuinely missing task need different answers:
+                  one is worth retrying, the other never will be. */}
+              <h2 className="text-lg font-semibold">{isMissing ? 'Task not found' : "Couldn't load this task"}</h2>
+              <p className="text-muted-foreground">
+                {isMissing
+                  ? 'This task does not exist, or it was deleted.'
+                  : 'We couldn’t reach the server. The task may still be fine.'}
+              </p>
+              <div className="flex items-center justify-center gap-2">
+                {!isMissing && (
+                  <Button variant="outline" size="sm" onClick={() => refetch()}>
+                    Retry
+                  </Button>
+                )}
+                <Button variant={isMissing ? 'default' : 'ghost'} size="sm" asChild>
+                  <Link href="/tasks">Back to tasks</Link>
+                </Button>
+              </div>
             </div>
           </div>
         </div>

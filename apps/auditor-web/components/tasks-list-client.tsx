@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Task } from '@/lib/db/schema'
 import { SharedHeader } from '@/components/shared-header'
 import { useTasks } from '@/components/app-layout'
@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AlertCircle, Trash2, Square, StopCircle, CheckSquare, X, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import type { Session } from '@/lib/session/types'
 import { Claude, Codex, Copilot, Cursor, Gemini, OpenCode } from '@/components/logos'
@@ -105,6 +106,7 @@ export function TasksListClient({ user, authProvider, initialStars = 1200 }: Tas
   const router = useRouter()
   const [tasks, setTasks] = useState<Task[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -112,24 +114,29 @@ export function TasksListClient({ user, authProvider, initialStars = 1200 }: Tas
   const [isDeleting, setIsDeleting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
 
-  useEffect(() => {
-    fetchTasks()
-  }, [])
-
-  const fetchTasks = async () => {
+  // No setIsLoading(true) here: this also runs after bulk delete/stop, where flashing
+  // the full-page loading state would be a regression. Callers that want it set it.
+  const fetchTasks = useCallback(async () => {
+    setLoadError(null)
     try {
       const response = await fetch('/api/tasks')
-      if (response.ok) {
-        const data = await response.json()
-        setTasks(data.tasks)
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`)
       }
+      const data = await response.json()
+      setTasks(data.tasks)
     } catch (error) {
       console.error('Error fetching tasks:', error)
+      setLoadError(error instanceof Error ? error.message : 'Failed to fetch tasks')
       toast.error('Failed to fetch tasks')
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    fetchTasks()
+  }, [fetchTasks])
 
   const filteredTasks = useMemo(() => {
     if (statusFilter === 'all') return tasks
@@ -351,25 +358,57 @@ export function TasksListClient({ user, authProvider, initialStars = 1200 }: Tas
             <div className="flex items-center justify-center h-64">
               <div className="text-muted-foreground">Loading tasks...</div>
             </div>
+          ) : loadError ? (
+            <Card>
+              <CardContent className="p-8 text-center space-y-3">
+                <div className="text-muted-foreground">
+                  Couldn&apos;t load your tasks. This is a loading problem, not an empty list.
+                </div>
+                <div className="text-xs text-muted-foreground">{loadError}</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsLoading(true)
+                    fetchTasks()
+                  }}
+                >
+                  Retry
+                </Button>
+              </CardContent>
+            </Card>
           ) : filteredTasks.length === 0 ? (
             <Card>
-              <CardContent className="p-8 text-center">
+              <CardContent className="p-8 text-center space-y-3">
                 <div className="text-muted-foreground">
                   {statusFilter === 'all' ? 'No tasks yet. Create your first task!' : `No ${statusFilter} tasks.`}
                 </div>
+                {statusFilter === 'all' ? (
+                  <Button size="sm" onClick={() => router.push('/')}>
+                    Create your first task
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setStatusFilter('all')}>
+                    Clear filter
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-2">
+              {/* The card stays a plain div: making it role="button" would nest the row's
+                  selection checkbox inside a button. Keyboard access comes from the title
+                  link below, which is a sibling of the checkbox rather than its ancestor. */}
               {filteredTasks.map((task) => (
                 <Card
                   key={task.id}
                   className={cn(
                     'transition-colors hover:bg-accent cursor-pointer p-0',
+                    'focus-within:ring-2 focus-within:ring-ring',
                     selectedTasks.has(task.id) && 'ring-2 ring-primary',
                   )}
                   onClick={(e) => {
-                    if ((e.target as HTMLElement).closest('input[type="checkbox"]')) {
+                    if ((e.target as HTMLElement).closest('input[type="checkbox"],a')) {
                       return
                     }
                     router.push(`/tasks/${task.id}`)
@@ -386,7 +425,14 @@ export function TasksListClient({ user, authProvider, initialStars = 1200 }: Tas
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          <h3 className="text-sm font-medium truncate flex-1">{task.title || task.prompt}</h3>
+                          <h3 className="text-sm font-medium truncate flex-1">
+                            <Link
+                              href={`/tasks/${task.id}`}
+                              className="block truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {task.title || task.prompt}
+                            </Link>
+                          </h3>
                           {task.status === 'error' && <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />}
                           {task.status === 'stopped' && (
                             <AlertCircle className="h-4 w-4 text-orange-500 flex-shrink-0" />

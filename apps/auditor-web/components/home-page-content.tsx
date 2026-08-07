@@ -31,10 +31,16 @@ import { githubConnectionAtom, githubConnectionInitializedAtom } from '@/lib/ato
 import { OpenRepoUrlDialog } from '@/components/open-repo-url-dialog'
 import { MultiRepoDialog } from '@/components/multi-repo-dialog'
 import {
-  getGitHubOAuthAction,
-  getGitHubOAuthButtonLabel,
-  startGitHubOAuth,
-} from '@/lib/auth/start-github-oauth'
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { getGitHubOAuthAction, getGitHubOAuthButtonLabel, startGitHubOAuth } from '@/lib/auth/start-github-oauth'
 
 interface HomePageContentProps {
   initialSelectedOwner?: string
@@ -66,6 +72,8 @@ export function HomePageContent({
   const [loadingVercel, setLoadingVercel] = useState(false)
   const [loadingGitHub, setLoadingGitHub] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false)
+  const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [showOpenRepoDialog, setShowOpenRepoDialog] = useState(false)
   const [showMultiRepoDialog, setShowMultiRepoDialog] = useState(false)
   const router = useRouter()
@@ -183,6 +191,7 @@ export function HomePageContent({
   }
 
   const handleDisconnectGitHub = async () => {
+    setIsDisconnecting(true)
     try {
       const response = await fetch('/api/auth/github/disconnect', {
         method: 'POST',
@@ -209,6 +218,9 @@ export function HomePageContent({
     } catch (error) {
       console.error('Failed to disconnect GitHub:', error)
       toast.error('Failed to disconnect GitHub')
+    } finally {
+      setIsDisconnecting(false)
+      setShowDisconnectConfirm(false)
     }
   }
 
@@ -314,7 +326,7 @@ export function HomePageContent({
                 Manage Access
               </DropdownMenuItem>
               {!isGitHubAuthUser && (
-                <DropdownMenuItem onClick={handleDisconnectGitHub}>
+                <DropdownMenuItem onClick={() => setShowDisconnectConfirm(true)}>
                   <Unlink className="h-4 w-4 mr-2" />
                   Disconnect GitHub
                 </DropdownMenuItem>
@@ -595,6 +607,30 @@ export function HomePageContent({
       {/* Dialogs */}
       <OpenRepoUrlDialog open={showOpenRepoDialog} onOpenChange={setShowOpenRepoDialog} onSubmit={handleOpenRepoUrl} />
       <MultiRepoDialog open={showMultiRepoDialog} onOpenChange={setShowMultiRepoDialog} />
+
+      <AlertDialog open={showDisconnectConfirm} onOpenChange={setShowDisconnectConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect GitHub?</AlertDialogTitle>
+            <AlertDialogDescription>
+              ARES loses access to your repositories and your cached owner and repo lists are cleared. Existing tasks
+              are kept, but you can&apos;t start new ones until you reconnect.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDisconnecting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDisconnecting}
+              onClick={(e) => {
+                e.preventDefault()
+                handleDisconnectGitHub()
+              }}
+            >
+              {isDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Sign In Dialog */}
       <Dialog open={showSignInDialog} onOpenChange={setShowSignInDialog}>
