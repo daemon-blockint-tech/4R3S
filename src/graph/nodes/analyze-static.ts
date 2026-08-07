@@ -5,6 +5,7 @@
  * source path is unavailable.
  */
 import { logger } from "../../config/logger.js";
+import { pathsMatch } from "../../tools/source.js";
 import {
   runSemgrep,
   type SemgrepFinding,
@@ -168,10 +169,40 @@ export function makeAnalyzeStaticNode() {
     // A scan that completed but could not parse every file found real issues in
     // the files it did read, so the findings stand — but the classes it never
     // reached are unexamined, and `ok` would claim otherwise.
+    // Did the scanner open any of the source we actually loaded?
+    //
+    // The audited party controls this answer. A committed `.semgrepignore` — which
+    // `--no-git-ignore` does NOT disable — hides files while leaving `scanned`
+    // non-empty, so the zero-file guard never fires. The result is a scan that
+    // opened none of the program's real source and still reports `ok`, next to a
+    // file count taken from the loader's walk, not the scanner's.
+    //
+    // Deliberately narrow: only a total miss degrades. Requiring full overlap
+    // would fire on every repository — semgrep's default template excludes
+    // `tests/`, which the loader does discover, and a Rust ruleset never lists an
+    // IDL `.json` in `scanned` at all. A banner that prints on every audit stops
+    // being a signal.
+    const loadedRust = (state.source?.files ?? [])
+      .map((f) => f.path)
+      .filter((p) => p.endsWith(".rs"));
+    const scanned = result.scanned;
+    const openedNone =
+      loadedRust.length > 0 &&
+      scanned !== undefined &&
+      !loadedRust.some((loaded) => scanned.some((s) => pathsMatch(s, loaded)));
+
     return {
       findings,
       coverage,
-      analyzers: result.partial ? status("degraded", result.partial) : status("ok"),
+      analyzers: result.partial
+        ? status("degraded", result.partial)
+        : openedNone
+          ? status(
+              "degraded",
+              `semgrep opened none of the ${loadedRust.length} source file(s) this audit loaded ` +
+                `(it scanned ${scanned!.length} other path(s)) — its silence carries no assurance`,
+            )
+          : status("ok"),
     };
   };
 }
