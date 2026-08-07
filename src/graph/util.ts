@@ -5,6 +5,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 import { logger } from "../config/logger.js";
+import { env } from "../config/env.js";
 import { messageText } from "../llm/message-text.js";
 import { withRetry } from "../llm/retry.js";
 import { isVulnId, getVuln } from "../knowledge/solana-vulns.js";
@@ -334,9 +335,21 @@ export async function chatText(
   system: string,
   human: string,
 ): Promise<string> {
+  // The deadline lives here, not in the client constructor.
+  //
+  // `ChatOpenAI` accepts a constructor `timeout`; `ChatOpenRouter` does not —
+  // it takes a per-request `AbortSignal`. Passing one here gives BOTH clients
+  // the same guarantee, and it is the guarantee `withRetry` depends on: without
+  // a deadline a stalled connection never produces an error, so the retry
+  // wrapper has nothing to react to and the audit hangs rather than failing.
+  //
+  // A fresh signal per attempt, deliberately: reusing one would leave every
+  // retry after the first pre-aborted.
   const res = await withRetry(
     () =>
-      chat.invoke([new SystemMessage(system), new HumanMessage(human)]),
+      chat.invoke([new SystemMessage(system), new HumanMessage(human)], {
+        signal: AbortSignal.timeout(env.OPENROUTER_TIMEOUT_MS),
+      }),
     { label: "chat.invoke" },
   );
   return messageText(res.content);
