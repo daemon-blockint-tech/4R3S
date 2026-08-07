@@ -364,7 +364,13 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
 
                     if should_be_validated {
                         self.scanner.findings.push(AstFinding {
-                            category: "signer-authorization".to_string(),
+                            // ENG-3 renamed this category to the canonical
+                            // catalog id (src/knowledge/solana-vulns.ts) at the
+                            // handler-param site but missed this Solitaire-field
+                            // site, so it emitted a category no catalog entry
+                            // matches -- the finding degrades to `other`
+                            // downstream despite being Critical.
+                            category: "missing-signer-check".to_string(),
                             severity: "Critical".to_string(),
                             file: self.path.clone(),
                             line: 0,
