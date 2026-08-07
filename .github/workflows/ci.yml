@@ -107,7 +107,20 @@ jobs:
 
       - name: Install app dependencies (license gate scope)
         run: |
-          npm ci --prefix apps/ares-sec
+          # --legacy-peer-deps is required, and only here.
+          #
+          # apps/ares-sec pins `typescript ~7.0.2`, and NO released
+          # `typescript-eslint` supports it — 8.66.0, the latest, still peers
+          # `typescript >=4.8.4 <6.1.0`. So `npm ci` fails ERESOLVE and takes the
+          # whole licence gate down with it.
+          #
+          # This install exists to enumerate dependency LICENCES, not to build or
+          # typecheck anything: the direct dependency set is identical either way,
+          # so the scan is unaffected. Using the flag here does not paper over the
+          # incompatibility for the app itself — `ares-sec-ci.yml` still builds it
+          # normally and will keep failing until the versions are reconciled,
+          # which is the right place for that to surface.
+          npm ci --prefix apps/ares-sec --legacy-peer-deps
           pnpm install --dir apps/auditor-web --frozen-lockfile --ignore-scripts
 
       - name: License check (npm)
