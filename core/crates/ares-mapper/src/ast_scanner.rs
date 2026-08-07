@@ -470,7 +470,16 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
         handler.has_program_id_check = self.program_id_checked;
 
         // Heuristic: signer check = explicit `.is_signer`, `.key()`, or `Signer` type
-        let body_str = quote::quote!(#node.block).to_string();
+        //
+        // This was `quote::quote!(#node.block).to_string()` — the same defect as
+        // `#node.sig.inputs.first()` above. Only `#node` interpolates; `.block`
+        // is emitted as the literal tokens `. block` and never evaluated, so the
+        // string held the *whole* `ItemFn`, attributes first. syn lowers `///`
+        // into `#[doc = "..."]`, so a doc comment reading "caller must be a
+        // Signer" set `has_signer_check` and silenced the Critical
+        // `missing-signer-check` finding at the top of this file. Deleting the
+        // doc comment made the identical code report Critical again.
+        let body_str = code_string(&node.block);
         handler.has_signer_check = body_str.contains("is_signer")
             || body_str.contains("Signer")
             || handler
@@ -736,6 +745,39 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
 /// that call is now redundant but harmless.
 fn type_string(ty: &syn::Type) -> String {
     quote::quote!(#ty).to_string().replace(' ', "")
+}
+
+/// Render arbitrary code as a whitespace-free string with every literal removed.
+///
+/// Kept separate from `type_string` because it drops literals as well: prose must
+/// not be able to decide a security verdict. Both carriers of English inside a
+/// token stream are literals — `#[doc = "..."]`, which is what syn lowers `///`
+/// into, and `msg!("caller must be Signer")` — and the heuristics that consume
+/// this string match on bare substrings, so a sentence *describing* a check would
+/// suppress the finding for its absence. Nothing is lost: every signal those
+/// heuristics look for (`is_signer`, `Signer`) is an identifier, never a literal.
+/// `type_string` does not strip literals because array types (`[u8; 32]`) carry
+/// meaningful ones.
+fn code_string<T: quote::ToTokens>(node: &T) -> String {
+    strip_literals(quote::quote!(#node))
+        .to_string()
+        .replace(' ', "")
+}
+
+/// Drop every literal token, descending into delimiter groups.
+fn strip_literals(tokens: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    use proc_macro2::{Group, TokenTree};
+    tokens
+        .into_iter()
+        .filter_map(|tt| match tt {
+            TokenTree::Literal(_) => None,
+            TokenTree::Group(g) => Some(TokenTree::Group(Group::new(
+                g.delimiter(),
+                strip_literals(g.stream()),
+            ))),
+            other => Some(other),
+        })
+        .collect()
 }
 
 /// True when `compact` (a whitespace-stripped `quote!` rendering) contains a
@@ -1050,6 +1092,69 @@ mod tests {
                 .iter()
                 .map(|f| &f.description)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_doc_comment_mentioning_signer_does_not_suppress_the_finding() {
+        // `has_signer_check` was computed from `quote!(#node.block)`, which holds
+        // the entire ItemFn including the `#[doc = "..."]` attributes syn lowers
+        // `///` into. This source and `flags_raw_account_info_without_signer_check`
+        // differ by nothing but a doc comment, so if documentation can change the
+        // verdict the two tests disagree — and the direction of the disagreement
+        // is a Critical false negative: a real missing-signer bug reported clean.
+        let s = scan(
+            r#"
+            /// Withdraws lamports. Caller must already be a verified Signer.
+            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            categories(&s).contains(&"missing-signer-check".to_string()),
+            "a doc comment is not a signer check; got {:?}",
+            categories(&s)
+        );
+    }
+
+    #[test]
+    fn a_string_literal_mentioning_signer_does_not_suppress_the_finding() {
+        // Same failure, other carrier: an error message is prose, not a check.
+        // `msg!("...Signer...")` next to a missing check is exactly the shape of
+        // code this detector exists to catch.
+        let s = scan(
+            r#"
+            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
+                msg!("authority must be a Signer");
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            categories(&s).contains(&"missing-signer-check".to_string()),
+            "a message string is not a signer check; got {:?}",
+            categories(&s)
+        );
+    }
+
+    #[test]
+    fn a_documented_handler_that_really_checks_is_still_suppressed() {
+        // The other half: stripping doc text and literals must not cost real
+        // suppression, or every documented Solana handler becomes a Critical.
+        let s = scan(
+            r#"
+            /// Withdraws lamports. Caller must already be a verified Signer.
+            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
+                if !authority.is_signer { return Err(ProgramError::MissingRequiredSignature); }
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            !categories(&s).contains(&"missing-signer-check".to_string()),
+            "a real is_signer check must still suppress the finding; got {:?}",
+            categories(&s)
         );
     }
 
