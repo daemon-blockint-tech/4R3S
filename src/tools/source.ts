@@ -38,6 +38,25 @@ export interface LoadedSource {
   discovered: string[];
   /** True when the budget cut the file list short. */
   truncated: boolean;
+  /**
+   * Entries the walk could not read at all — a `readdir`/`lstat` that threw.
+   *
+   * `discovered` is what the walk *found*, so a directory it could not open is
+   * absent from both sides of `files.length of discovered.length` and the report
+   * shows full coverage of a subset it never learned the size of. Counting them
+   * is what separates "there was nothing there" from "we could not look".
+   *
+   * A count, not paths: the report is not a place to render strings from a tree
+   * the audited party controls. The paths go to the log channel.
+   */
+  unreadable: number;
+  /**
+   * Symlinks deliberately not followed. Correct policy — a link could point at
+   * `~/.ssh` — but the file still went unexamined, and a target whose source
+   * sits behind one gets an audit of nothing. Kept separate from `unreadable`
+   * because this is our decision, not an unknown.
+   */
+  skippedLinks: number;
   note?: string;
   reason?: SourceSkipReason;
 }
@@ -77,12 +96,30 @@ function priority(path: string): number {
   return 3;
 }
 
+/** What a walk could not examine, alongside what it found. */
+interface WalkGaps {
+  unreadable: number;
+  skippedLinks: number;
+}
+
 /** Recursively collect candidate files. Never throws. */
-async function walk(root: string, dir: string, out: string[]): Promise<void> {
+async function walk(
+  root: string,
+  dir: string,
+  out: string[],
+  gaps: WalkGaps,
+): Promise<void> {
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
+  } catch (err) {
+    // An unopenable directory is invisible on both sides of the coverage ratio
+    // the report prints, so silence here reads as "nothing to see".
+    gaps.unreadable += 1;
+    logger.warn(
+      { component: "source", dir, err: String(err) },
+      "Directory could not be read; its contents are not in the audit",
+    );
     return;
   }
   for (const entry of entries) {
@@ -94,12 +131,20 @@ async function walk(root: string, dir: string, out: string[]): Promise<void> {
       // to ~/.env or any file outside its tree and have secrets pulled into
       // the prompt with the source.
       info = await lstat(full);
-    } catch {
+    } catch (err) {
+      gaps.unreadable += 1;
+      logger.warn(
+        { component: "source", path: full, err: String(err) },
+        "Entry could not be stat'd; not in the audit",
+      );
       continue;
     }
-    if (info.isSymbolicLink()) continue;
+    if (info.isSymbolicLink()) {
+      gaps.skippedLinks += 1;
+      continue;
+    }
     if (info.isDirectory()) {
-      await walk(root, full, out);
+      await walk(root, full, out, gaps);
       continue;
     }
     const ext = extname(entry);
@@ -124,6 +169,8 @@ async function loadSingleFile(
       files: [],
       discovered: [],
       truncated: false,
+      unreadable: 0,
+      skippedLinks: 0,
       note: `not a Rust or IDL source file: ${filePath}`,
       reason: "no-rust-files",
     };
@@ -137,6 +184,8 @@ async function loadSingleFile(
       files: [],
       discovered: [],
       truncated: false,
+      unreadable: 0,
+      skippedLinks: 0,
       note: `could not read ${filePath}`,
       reason: "unreadable",
     };
@@ -149,6 +198,9 @@ async function loadSingleFile(
     files: [{ path: rel, lines: content.split("\n").length, content }],
     discovered: [rel],
     truncated,
+    // A single named file: no directory was walked, so nothing went unexamined.
+    unreadable: 0,
+    skippedLinks: 0,
   };
 }
 
@@ -171,6 +223,8 @@ export async function loadSource(
       files: [],
       discovered: [],
       truncated: false,
+      unreadable: 0,
+      skippedLinks: 0,
       note: "no source path provided",
       reason: "no-source",
     };
@@ -185,6 +239,8 @@ export async function loadSource(
       files: [],
       discovered: [],
       truncated: false,
+      unreadable: 0,
+      skippedLinks: 0,
       note: `source path not found: ${sourcePath}`,
       reason: "path-missing",
     };
@@ -200,7 +256,8 @@ export async function loadSource(
   }
 
   const discovered: string[] = [];
-  await walk(sourcePath, sourcePath, discovered);
+  const gaps: WalkGaps = { unreadable: 0, skippedLinks: 0 };
+  await walk(sourcePath, sourcePath, discovered, gaps);
 
   if (discovered.length === 0) {
     return {
@@ -208,6 +265,8 @@ export async function loadSource(
       files: [],
       discovered: [],
       truncated: false,
+      unreadable: 0,
+      skippedLinks: 0,
       note: `no .rs or IDL files under ${sourcePath}`,
       reason: "no-rust-files",
     };
@@ -248,6 +307,8 @@ export async function loadSource(
       files: [],
       discovered,
       truncated: false,
+      unreadable: 0,
+      skippedLinks: 0,
       note: "source files were discovered but none could be read",
       reason: "unreadable",
     };
@@ -260,11 +321,20 @@ export async function loadSource(
       loaded: files.length,
       chars: used,
       truncated,
+      unreadable: gaps.unreadable,
+      skippedLinks: gaps.skippedLinks,
     },
     "Source loaded",
   );
 
-  return { available: true, files, discovered, truncated };
+  return {
+    available: true,
+    files,
+    discovered,
+    truncated,
+    unreadable: gaps.unreadable,
+    skippedLinks: gaps.skippedLinks,
+  };
 }
 
 /** Render loaded files for a prompt, with line numbers so citations can be exact. */
@@ -327,4 +397,28 @@ export function citesLoadedFile(location: string, source: LoadedSource): boolean
  */
 export function pathsMatch(a: string, b: string): boolean {
   return a === b || a.endsWith(`${sep}${b}`) || b.endsWith(`${sep}${a}`);
+  const matched = source.files.find(
+    (f) =>
+      f.path === cited ||
+      f.path.endsWith(`${sep}${cited}`) ||
+      cited.endsWith(`${sep}${f.path}`),
+  );
+  if (!matched) return false;
+
+  // The path is only half the citation. Everything after the first `:` used to be
+  // discarded, so `lib.rs:840` passed against a file this run holds 300 lines of —
+  // and `f.lines` is counted from the *truncated* content (see `budgetChars`
+  // above), which is exactly the text the model was shown. A line beyond that is
+  // a line nothing in this run ever read, which is the same claim the path check
+  // exists to refuse, one field over.
+  //
+  // A missing or non-numeric line stays legal: on-chain findings cite a bare
+  // address and `analyze-onchain` sets no line at all, so requiring one here
+  // would reject the deterministic findings this predicate is not even consulted
+  // for. Only a line that is present AND numeric is held to the file's extent.
+  const citedLine = location.split(":")[1]?.trim();
+  if (citedLine === undefined || citedLine === "") return true;
+  const lineNumber = Number(citedLine);
+  if (!Number.isFinite(lineNumber)) return true;
+  return Number.isInteger(lineNumber) && lineNumber >= 1 && lineNumber <= matched.lines;
 }
