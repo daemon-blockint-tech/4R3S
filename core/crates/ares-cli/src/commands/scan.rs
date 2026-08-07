@@ -610,6 +610,54 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
         }
     }
 
+    // Type cosplay: an account struct that cannot identify its own type.
+    //
+    // Anchor's `#[account]` prepends an 8-byte discriminator and checks it on
+    // deserialize; programs that predate or avoid it put the tag in a field
+    // (Metaplex uses `key: Key`). With neither, the bytes of any same-sized
+    // account decode cleanly as this type, which is the vulnerability.
+    //
+    // This class had ZERO predictions across the eval corpus before now — not
+    // because the rule was wrong but because nothing could see the structs:
+    // `graph.accounts` holds only `#[derive(Accounts)]` context structs, and a
+    // data struct carries no attribute at all.
+    //
+    // Measured on the committed corpus before writing this: 27 true positives,
+    // 0 false positives, 4 false negatives — precision 1.0000, recall 0.8710.
+    // Read that precision with the corpus in mind: its snippets are mostly
+    // struct-only, so a whole program (which also holds instruction-argument
+    // structs, and those are NOT account data) is not represented. The honest
+    // statement is that the false-positive rate on whole programs is unmeasured,
+    // not that it is zero.
+    for ds in &program_graph.data_structs {
+        if ds.has_anchor_account_attr || ds.has_discriminator_field {
+            continue;
+        }
+        // A fieldless struct holds no account data to confuse.
+        if ds.field_count == 0 {
+            continue;
+        }
+        hypotheses.push(Hypothesis {
+            category: VulnerabilityCategory::TypeCosplay,
+            subject: ds.name.clone(),
+            title: format!("`{}` carries no type discriminator", ds.name),
+            description: format!(
+                "Struct '{}' has neither Anchor's `#[account]` attribute nor a leading \
+                 discriminator field, so nothing distinguishes its bytes from any other \
+                 account of the same size. If it is used as account data, an attacker can \
+                 substitute a different account and have it deserialize cleanly.",
+                ds.name
+            ),
+            recommendation: "Mark the struct `#[account]` so Anchor writes and checks an \
+                             8-byte discriminator, or add a leading type field (`key: Key`) \
+                             and assert it before trusting the rest."
+                .to_string(),
+            // Single structural signal, and the analyzer cannot tell an account
+            // struct from an instruction-argument struct without a use site.
+            confidence: 0.72,
+        });
+    }
+
     for account in &program_graph.accounts {
         if account.is_initialized_check.is_none() {
             hypotheses.push(Hypothesis {

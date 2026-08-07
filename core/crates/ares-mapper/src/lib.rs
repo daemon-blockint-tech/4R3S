@@ -16,6 +16,13 @@ pub struct ProgramGraph {
     pub modules: Vec<ModuleNode>,
     pub instructions: Vec<InstructionNode>,
     pub accounts: Vec<AccountNode>,
+    /// Every `struct` in the program, whether or not Anchor manages it.
+    ///
+    /// `accounts` holds only `#[derive(Accounts)]` context structs. A program's
+    /// *data* structs — the ones whose bytes live in an account — carry no such
+    /// attribute, so nothing in the graph could see them, and the type-cosplay
+    /// class had zero predictions across the whole eval corpus.
+    pub data_structs: Vec<DataStructNode>,
     pub cpi_calls: Vec<CpiCall>,
     pub dependencies: Vec<String>,
     pub all_source_files: Vec<PathBuf>,
@@ -73,6 +80,23 @@ pub struct InstructionNode {
     pub effects: Vec<(String, AccountEffect)>,
 }
 
+/// A plain `struct` and what it carries to distinguish its own type.
+///
+/// Type cosplay is deserializing one account's bytes as another type. Anchor's
+/// `#[account]` prepends an 8-byte discriminator that makes that fail; a bare
+/// struct has nothing, so any account of the same size decodes cleanly as it.
+#[derive(Debug, Clone, Default)]
+pub struct DataStructNode {
+    pub name: String,
+    /// `#[account]` — Anchor writes and checks an 8-byte type discriminator.
+    pub has_anchor_account_attr: bool,
+    /// A leading field that names the type (`key: Key`, `discriminator`, `tag`).
+    /// The manual equivalent of Anchor's discriminator; Metaplex uses `key: Key`.
+    pub has_discriminator_field: bool,
+    pub field_count: usize,
+    pub file_path: PathBuf,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AccountNode {
     pub name: String,
@@ -91,6 +115,104 @@ pub struct CpiCall {
     pub instruction: String,
     pub file_path: PathBuf,
     pub line_number: u32,
+}
+
+/// A field whose name says which type the bytes are.
+///
+/// Anchor's `#[account]` writes an 8-byte discriminator; programs that predate
+/// it, or avoid it, put the tag in a field instead — Metaplex uses `key: Key`.
+/// Either one makes deserializing the wrong type fail, which is what type
+/// cosplay needs to be absent.
+fn is_discriminator_field(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "key" | "discriminator" | "account_type" | "tag" | "variant" | "kind" | "state_type"
+    )
+}
+
+/// Collect every `struct` declaration and whether it can identify its own type.
+///
+/// Line-based, matching the rest of this walker: the input is one Solana program
+/// and the shapes are declaration-level, so a full parse buys nothing here that
+/// `ast_scanner` does not already do on the paths that need it.
+fn collect_data_structs(content: &str, path: &Path, out: &mut Vec<DataStructNode>) {
+    let lines: Vec<&str> = content.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if !(trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ")) {
+            continue;
+        }
+        let name = trimmed
+            .trim_start_matches("pub ")
+            .trim_start_matches("struct ")
+            .trim()
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+
+        // Attributes sit above the declaration. Walk back over attribute and
+        // comment lines only, so an unrelated earlier struct's attributes are
+        // never attributed to this one.
+        let mut has_anchor_account_attr = false;
+        let mut j = i;
+        while j > 0 {
+            let above = lines[j - 1].trim();
+            if above.starts_with("#[") {
+                if above.contains("#[account") {
+                    has_anchor_account_attr = true;
+                }
+                j -= 1;
+            } else if above.starts_with("//") || above.is_empty() {
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+
+        // Body up to the closing brace, or the end of the file for a tuple
+        // struct / a truncated snippet.
+        let mut body = String::new();
+        let mut depth = 0usize;
+        for l in lines.iter().skip(i) {
+            depth += l.matches('{').count();
+            body.push_str(l);
+            body.push('\n');
+            if depth > 0 && l.contains('}') {
+                break;
+            }
+        }
+
+        let mut field_count = 0usize;
+        let mut has_discriminator_field = false;
+        for field in body.lines().skip(1) {
+            let f = field.trim();
+            if f.starts_with("//") || f.starts_with("#[") {
+                continue;
+            }
+            if let Some((lhs, _)) = f.split_once(':') {
+                let fname = lhs.trim().trim_start_matches("pub ").trim();
+                if fname.is_empty() || fname.contains(' ') {
+                    continue;
+                }
+                field_count += 1;
+                if is_discriminator_field(fname) {
+                    has_discriminator_field = true;
+                }
+            }
+        }
+
+        out.push(DataStructNode {
+            name,
+            has_anchor_account_attr,
+            has_discriminator_field,
+            field_count,
+            file_path: path.to_path_buf(),
+        });
+    }
 }
 
 impl MapperAgent {
@@ -150,6 +272,14 @@ impl MapperAgent {
                     is_entrypoint: content.contains("entrypoint!"),
                 });
             }
+
+            // Every `struct` in the file, with what it carries to identify its
+            // own type. Collected separately from `accounts` because that list
+            // only holds `#[derive(Accounts)]` context structs — a program's
+            // *data* structs carry no attribute at all, so nothing in the graph
+            // could see them and the type-cosplay class produced zero findings
+            // across the whole eval corpus.
+            collect_data_structs(&content, path, &mut graph.data_structs);
 
             // Detect instructions (functions in #[program] modules)
             for (line_no, line) in content.lines().enumerate() {
@@ -742,5 +872,104 @@ mod unchecked_arithmetic_tests {
         let i = g.instructions.first().expect("one instruction");
         assert!(!i.has_unchecked_arithmetic);
         assert!(!i.has_arithmetic);
+    }
+}
+
+#[cfg(test)]
+mod data_struct_tests {
+    use super::*;
+
+    fn structs_in(src: &str) -> Vec<DataStructNode> {
+        let mut out = Vec::new();
+        collect_data_structs(src, Path::new("lib.rs"), &mut out);
+        out
+    }
+
+    /// The vulnerable shape: no `#[account]`, no type field. Nothing
+    /// distinguishes these bytes from any other account of the same size.
+    #[test]
+    fn a_bare_struct_carries_no_discriminator() {
+        let s = structs_in(
+            "pub struct PayoutTicket {\n    pub recipient: Pubkey,\n    pub amount_paid: u64,\n}\n",
+        );
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].name, "PayoutTicket");
+        assert!(!s[0].has_anchor_account_attr);
+        assert!(!s[0].has_discriminator_field);
+        assert_eq!(s[0].field_count, 2);
+    }
+
+    /// Anchor writes and checks an 8-byte discriminator, so this is safe and
+    /// must not be flagged — the whole point of the attribute.
+    #[test]
+    fn an_anchor_account_attribute_is_recognised() {
+        let s = structs_in("#[account]\npub struct Vault {\n    pub total: u64,\n}\n");
+        assert_eq!(s.len(), 1);
+        assert!(s[0].has_anchor_account_attr);
+    }
+
+    #[test]
+    fn an_anchor_attribute_survives_a_doc_comment_between_it_and_the_struct() {
+        // `#[account]` / `/// docs` / `pub struct` is ordinary Anchor style.
+        let s =
+            structs_in("#[account]\n/// The vault.\npub struct Vault {\n    pub total: u64,\n}\n");
+        assert!(
+            s[0].has_anchor_account_attr,
+            "doc comment must not detach the attribute"
+        );
+    }
+
+    /// The manual equivalent: Metaplex tags its accounts with a leading `key`.
+    #[test]
+    fn a_leading_type_field_counts_as_a_discriminator() {
+        for field in [
+            "key: Key",
+            "discriminator: u64",
+            "account_type: AccountType",
+            "tag: u8",
+        ] {
+            let s = structs_in(&format!(
+                "pub struct S {{\n    pub {field},\n    pub owner: Pubkey,\n}}\n"
+            ));
+            assert!(s[0].has_discriminator_field, "{field} should count");
+        }
+    }
+
+    /// The attribute belongs to the struct it precedes, not to a later one.
+    /// Getting this wrong marks an undiscriminated struct as safe.
+    #[test]
+    fn an_earlier_structs_attribute_does_not_attach_to_a_later_one() {
+        let s = structs_in(
+            "#[account]\npub struct Safe {\n    pub a: u64,\n}\n\npub struct Unsafe {\n    pub b: u64,\n}\n",
+        );
+        assert_eq!(s.len(), 2);
+        assert!(s[0].has_anchor_account_attr);
+        assert!(
+            !s[1].has_anchor_account_attr,
+            "the attribute is not inherited"
+        );
+    }
+
+    #[test]
+    fn field_count_ignores_comments_and_attributes() {
+        let s = structs_in(
+            "pub struct S {\n    // a note\n    #[serde(skip)]\n    pub a: u64,\n    pub b: Pubkey,\n}\n",
+        );
+        assert_eq!(s[0].field_count, 2);
+    }
+
+    #[test]
+    fn a_tuple_struct_and_an_empty_struct_report_no_fields() {
+        assert_eq!(
+            structs_in("pub struct AmountRange(pub u64, pub u64);\n")[0].field_count,
+            0
+        );
+        assert_eq!(structs_in("pub struct Marker {}\n")[0].field_count, 0);
+    }
+
+    #[test]
+    fn a_generic_or_lifetime_parameter_is_not_part_of_the_name() {
+        let s = structs_in("pub struct Ctx<'info> {\n    pub a: u64,\n}\n");
+        assert_eq!(s[0].name, "Ctx");
     }
 }
