@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import signal
 from pathlib import Path
 
 from arq.connections import RedisSettings
@@ -33,6 +35,21 @@ async def run_audit(ctx, job_id: str, source: str) -> None:
     await _set_status(redis, job_id, status="running")
     try:
         await _audit_and_record(redis, job_id, source)
+    except asyncio.CancelledError:
+        # CancelledError is a BaseException in 3.8+, so the "last resort"
+        # handler below never sees it. arq cancels the job task on worker
+        # shutdown, on abort_job, and when its own job_timeout expires
+        # (arq/worker.py wraps the coroutine in asyncio.wait_for), and every
+        # one of those left the job reading "running" until its 24h TTL
+        # expired — the exact hole that handler exists to close, reached by
+        # the one exception class it cannot catch. Record a terminal status,
+        # then re-raise so arq's retry policy still applies; a retry
+        # overwrites this with "running" again on its next attempt.
+        await _set_status(
+            redis, job_id, status="failed",
+            error="audit was cancelled before it finished",
+        )
+        raise
     except Exception as err:
         # Last resort. Every path above this records a status before returning,
         # but anything unanticipated — a PermissionError from the subprocess, a
@@ -56,27 +73,48 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
             cwd=REPO_ROOT,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # npm is only a launcher: `npm run audit` executes the script
+            # through an intermediate shell, so the process actually running
+            # the audit is a grandchild. SIGKILL is not propagated to
+            # descendants, so killing `proc` alone reaped npm and left that
+            # grandchild alive — reparented to init, finishing all 13 graph
+            # nodes, spending the LLM budget MAX_CONCURRENT_AUDITS exists to
+            # cap, and billing a run this worker had already reported as
+            # killed. setsid() puts the whole tree in one process group so
+            # _kill_audit_tree can take all of it down at once.
+            #
+            # It also unblocks the `await proc.wait()` below, which is worse
+            # than it looks: that survivor inherits this pipe pair, so the read
+            # transports never see EOF, and asyncio only resolves wait()'s
+            # future once *every* pipe has disconnected (base_subprocess.py
+            # _try_finish -> _call_connection_lost). Reproduced: killing the
+            # wrapper alone leaves wait() pending forever, so the "was killed"
+            # status was never even written and the job held its worker slot
+            # until arq cancelled it.
+            start_new_session=True,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=AUDIT_TIMEOUT_SECS
             )
         except asyncio.TimeoutError:
-            # The process can exit on its own between the timeout firing and
-            # this kill, in which case kill() raises ProcessLookupError
-            # (verified: kill() on an already-reaped process does raise).
-            # Letting that escape would replace a clean "timed out" status with
-            # a crashed task and a job stuck at "running".
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+            _kill_audit_tree(proc)
             await proc.wait()
             await _set_status(
                 redis, job_id, status="failed",
                 error=f"audit exceeded {AUDIT_TIMEOUT_SECS}s and was killed",
             )
             return
+        except asyncio.CancelledError:
+            # Cancellation (arq shutdown, abort_job, or arq's own job_timeout)
+            # used to skip the kill entirely, so a cancelled job orphaned its
+            # audit tree just as surely as a timed-out one did. The caller
+            # records the status; this only has to make sure nothing outlives
+            # the job. No await here: the task is already unwinding, and the
+            # group is SIGKILLed, so the loop's child watcher reaps npm without
+            # this coroutine having to survive another suspension point.
+            _kill_audit_tree(proc)
+            raise
     except FileNotFoundError as err:
         # npm/node missing from the worker's PATH — an environment defect,
         # not an audit failure. Distinguish it so it isn't logged as "the
@@ -111,6 +149,27 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
     await _set_status(
         redis, job_id, status="failed", error=_last_error_line(stderr_text)
     )
+
+
+def _kill_audit_tree(proc) -> None:
+    """SIGKILL everything npm spawned, not just npm.
+
+    `start_new_session=True` made `proc` the leader of its own process group,
+    so proc.pid doubles as the group id. POSIX keeps a pid reserved while a
+    process group of that id still has members, so this stays correct even
+    after asyncio has reaped npm and only the grandchild is left — which is
+    precisely the case that matters, since npm exits the moment its own child
+    is signalled but the audit does not.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        # The whole group can exit on its own between the timeout firing and
+        # this call (verified: signalling an already-reaped process does
+        # raise). That is the outcome we wanted; letting it escape would
+        # replace a clean "timed out" status with a crashed task and a job
+        # stuck at "running".
+        pass
 
 
 def _last_error_line(stderr_text: str) -> str:
@@ -156,4 +215,12 @@ class WorkerSettings:
     functions = [run_audit]
     redis_settings = RedisSettings()
     max_jobs = MAX_CONCURRENT_AUDITS
+    # arq's own default is 300s — half of AUDIT_TIMEOUT_SECS — and arq enforces
+    # it by wrapping the job coroutine in asyncio.wait_for. Leaving it at the
+    # default made this module's entire timeout branch dead code: arq cancelled
+    # at 300s, so the only path that kills the audit tree and records a `failed`
+    # status for a slow audit could never run at any duration. arq's timeout is
+    # meant to be the backstop here, not the budget; the margin is room for the
+    # kill, the reap, and the status write after our own timeout fires.
+    job_timeout = AUDIT_TIMEOUT_SECS + 60
 

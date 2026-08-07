@@ -18,7 +18,13 @@ not because they looked risky in review:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
+import os
+import signal
+import subprocess
+import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -238,6 +244,181 @@ class TestWorkerNeverLeavesJobStuck:
         statuses = [w["status"] for w in redis.writes]
         assert statuses == ["running", "failed"]
         assert "PermissionError" in redis.writes[-1]["error"]
+
+
+# --- timeout, cancellation, and the tree the audit actually runs in ----------
+# Two defects that only make sense together. arq's default job_timeout is 300s,
+# half of AUDIT_TIMEOUT_SECS, and arq enforces it by wrapping the job coroutine
+# in asyncio.wait_for — so arq cancelled the job before the worker's own timeout
+# branch could ever fire, and CancelledError is a BaseException that the
+# worker's catch-all could not see. When that branch did fire, the kill it
+# performed hit npm alone and not the audit npm had launched.
+#
+# The fixture below is a stand-in for `npm run audit` — running the real CLI
+# needs a live OPENROUTER_API_KEY and ~90s of LLM spend per run, which is why
+# this file's header rules it out — but the processes it spawns and the signals
+# that kill them are real. What it reproduces is npm's process *shape*: a
+# wrapper whose actual work happens in a grandchild. That shape is the bug.
+
+
+def _npm_like_script(tmp_path: Path) -> tuple[Path, Path]:
+    """Write a wrapper that launches its work in a grandchild, like npm does.
+
+    Returns the script and the file it reports the grandchild's pid in.
+    """
+    pid_file = tmp_path / "grandchild.pid"
+    script = tmp_path / "npm-like"
+    script.write_text(
+        "#!/bin/sh\n"
+        # Ignores the `run audit -- --source ...` argv the worker passes, the
+        # same way it ignores everything else npm does.
+        "sh -c 'while :; do sleep 0.05; done' &\n"
+        # Rename, not write-in-place: a reader must never see a partial pid.
+        f'echo $! > "{pid_file}.tmp" && mv "{pid_file}.tmp" "{pid_file}"\n'
+        "wait\n"
+    )
+    script.chmod(0o755)
+    return script, pid_file
+
+
+def _grandchild_pid(pid_file: Path, timeout: float = 5.0) -> int:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pid_file.exists():
+            return int(pid_file.read_text())
+        time.sleep(0.02)
+    raise AssertionError("fixture never reported a grandchild pid")
+
+
+def _process_is_gone(pid: int, timeout: float = 5.0) -> bool:
+    """True once the pid is no longer a running process.
+
+    A zombie counts as gone: the audit is dead, and whether anything has reaped
+    it yet is a property of whatever init the CI runner uses, not of the worker
+    under test. `os.kill(pid, 0)` succeeds for zombies, so ask ps for the state
+    rather than asserting on a detail this code does not control. Polls because
+    reparenting and reaping are not instantaneous; the full budget is only ever
+    spent on a run that is about to fail anyway.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        state = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
+        ).stdout.strip()
+        if not state or state.startswith("Z"):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def _force_reap(pid_file: Path) -> None:
+    """A failed assertion must not leave a spin loop running past the suite."""
+    try:
+        os.kill(int(pid_file.read_text()), signal.SIGKILL)
+    except (OSError, ValueError):
+        pass
+
+
+def _arq_job_timeout_s() -> float:
+    """The timeout arq will actually enforce for WorkerSettings.
+
+    Resolved through arq's own code rather than read off the class, because
+    get_kwargs keeps only attributes that are Worker() parameters — a
+    misspelled setting would be silently dropped and fall back to arq's default
+    here exactly as it would in production, which is the whole failure mode.
+    """
+    from arq.utils import to_seconds
+    from arq.worker import Worker, get_kwargs
+
+    arq_default = inspect.signature(Worker).parameters["job_timeout"].default
+    configured = get_kwargs(worker.WorkerSettings).get("job_timeout", arq_default)
+    return to_seconds(configured)
+
+
+class TestTimeoutKillsTheAuditAndNotJustNpm:
+    class _RecordingRedis:
+        def __init__(self):
+            self.writes: list[dict] = []
+
+        async def set(self, key, value, ex=None):
+            self.writes.append(json.loads(value))
+
+    def test_arq_does_not_cancel_the_job_before_the_worker_times_out(self):
+        # If this inverts, every assertion below becomes unreachable in
+        # production no matter how correct the kill path is.
+        assert _arq_job_timeout_s() > worker.AUDIT_TIMEOUT_SECS
+
+    def test_a_cancelled_job_records_a_status_and_kills_the_audit(self, tmp_path, monkeypatch):
+        redis = self._RecordingRedis()
+        script, pid_file = _npm_like_script(tmp_path)
+        monkeypatch.setattr(worker, "NPM_BIN", str(script))
+
+        async def cancel_mid_audit():
+            task = asyncio.create_task(
+                worker.run_audit({"redis": redis}, "job-cancelled", "target.rs")
+            )
+            # Poll off-loop so the subprocess actually gets to start; cancelling
+            # before it exists would test nothing.
+            await asyncio.to_thread(_grandchild_pid, pid_file)
+            task.cancel()
+            # Still has to propagate: arq decides retries from it.
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        try:
+            asyncio.run(cancel_mid_audit())
+
+            assert [w["status"] for w in redis.writes] == ["running", "failed"]
+            assert "cancelled" in redis.writes[-1]["error"]
+            assert _process_is_gone(_grandchild_pid(pid_file)), (
+                "cancelling the job orphaned the audit it started"
+            )
+        finally:
+            _force_reap(pid_file)
+
+    def test_the_workers_own_timeout_wins_at_arqs_real_budget_ratio(self, tmp_path, monkeypatch):
+        """Both defects in one run, at production's ratio.
+
+        Drives the real coroutine inside the real wrapper arq uses —
+        `asyncio.wait_for(task, job_timeout_s)` — with both budgets scaled by
+        the same factor, so what is under test is the relationship between
+        them rather than two numbers asserted apart. At arq's 300s default
+        against AUDIT_TIMEOUT_SECS=600 the outer budget expires first: the kill
+        never runs, the audit is orphaned, and nothing terminal is recorded.
+
+        The outer wrapper is also what keeps a regression here loud. Killing
+        the wrapper without its group leaves `await proc.wait()` pending
+        forever — the survivor holds the inherited pipes open, and asyncio only
+        resolves wait() once every pipe has disconnected — so without a bound
+        this test would hang rather than fail.
+        """
+        redis = self._RecordingRedis()
+        script, pid_file = _npm_like_script(tmp_path)
+        monkeypatch.setattr(worker, "NPM_BIN", str(script))
+
+        scaled_audit_timeout = 2
+        scale = scaled_audit_timeout / worker.AUDIT_TIMEOUT_SECS
+        arq_budget = _arq_job_timeout_s() * scale  # read before patching
+        monkeypatch.setattr(worker, "AUDIT_TIMEOUT_SECS", scaled_audit_timeout)
+
+        async def under_arqs_own_wrapper():
+            await asyncio.wait_for(
+                worker.run_audit({"redis": redis}, "job-both", "target.rs"),
+                timeout=arq_budget,
+            )
+
+        try:
+            asyncio.run(under_arqs_own_wrapper())
+
+            assert [w["status"] for w in redis.writes] == ["running", "failed"]
+            assert "was killed" in redis.writes[-1]["error"]
+            assert _process_is_gone(_grandchild_pid(pid_file))
+        finally:
+            _force_reap(pid_file)
 
 
 # --- source containment ------------------------------------------------------
