@@ -561,7 +561,17 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
         // recall 0.0000 for this class across every target that parsed. Claiming
         // a finding from an unreadable body would also be the exact inversion of
         // "better that an agent knows it is blind".
-        if instruction.has_signer_check == Some(false) {
+        // Gated to native entry points. `has_signer_check` is read from the BODY,
+        // and in Anchor the signer constraint is not in the body — it is
+        // `Signer<'info>` in the accounts struct. Firing on an Anchor handler
+        // produced 74 predictions against a corpus with ZERO missing-signer
+        // ground-truth rows: every one a false positive, and the largest single
+        // drag on measured precision. The detector is kept rather than deleted
+        // because it is correct for native programs; this corpus contains none.
+        if instruction.has_signer_check == Some(false)
+            && instruction.is_native_entry_point
+            && !instruction.is_anchor_handler
+        {
             hypotheses.push(Hypothesis {
                 category: VulnerabilityCategory::SignerAuthorization,
                 subject: instruction.name.clone(),
@@ -578,7 +588,9 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
             });
         }
         // Same inversion as the signer check above.
-        if instruction.has_owner_check == Some(false) {
+        // Conjoined with an actual raw-data read: a missing owner check is only
+        // exploitable where the handler decodes an account's bytes.
+        if instruction.has_owner_check == Some(false) && instruction.touches_raw_account_data {
             hypotheses.push(Hypothesis {
                 category: VulnerabilityCategory::OwnershipCheck,
                 subject: instruction.name.clone(),

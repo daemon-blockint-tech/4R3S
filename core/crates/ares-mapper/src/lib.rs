@@ -69,6 +69,19 @@ pub struct InstructionNode {
     pub has_signer_check: Option<bool>,
     pub has_owner_check: Option<bool>,
     pub has_cpi_program_id_check: bool,
+    /// The handler takes `&[AccountInfo]` — a native (non-Anchor) entry point,
+    /// where a signer check must be written by hand in the body.
+    pub is_native_entry_point: bool,
+    /// The handler takes `Context<T>` — Anchor. The signer constraint lives in
+    /// the accounts struct (`Signer<'info>`), NOT in the body, so reading the
+    /// body for one and finding nothing says nothing at all.
+    pub is_anchor_handler: bool,
+    /// The body reads or writes an account's raw bytes or lamports.
+    ///
+    /// This is what makes a missing owner check *matter*. Without an owner
+    /// assertion an account owned by another program can be substituted — but
+    /// only code that decodes those bytes is exposed by it.
+    pub touches_raw_account_data: bool,
     pub uses_cpi: bool,
     /// True when the body performs arithmetic at all — including the *safe*
     /// `checked_*` forms. On its own this is not a vulnerability signal; see
@@ -315,11 +328,49 @@ impl MapperAgent {
                     let rest = &content.lines().skip(line_no).collect::<Vec<_>>().join("\n");
                     let body = extract_function_body(rest);
 
+                    // Calling convention, read from the signature rather than the
+                    // body. It decides whether an absent signer idiom means
+                    // anything: Anchor puts the constraint in the accounts struct,
+                    // so an Anchor body with no idiom is the normal, correct shape.
+                    let sig_line = line.trim();
+                    let is_native_entry_point = sig_line.contains("&[AccountInfo")
+                        || sig_line.contains("& [AccountInfo")
+                        || sig_line.contains("accounts: &[");
+                    let is_anchor_handler =
+                        sig_line.contains("Context<") || sig_line.contains("Context <");
+
+                    // The concrete forms a program uses to reach an account's
+                    // bytes. `.try_borrow` is a prefix on purpose: `try_borrow_data`,
+                    // `try_borrow_mut_data`, `try_borrow_lamports` and the bare
+                    // `(*acc.data).try_borrow_mut()` are the same access, and
+                    // listing them separately missed the bare form that three
+                    // corpus targets use.
+                    let touches_raw_account_data = body.as_ref().is_some_and(|b| {
+                        [
+                            ".data.borrow",
+                            ".data).borrow",
+                            ".try_borrow",
+                            ".lamports.borrow",
+                            ".lamports).borrow",
+                            "try_from_slice",
+                            "::unpack",
+                            ".unpack",
+                            "deserialize",
+                        ]
+                        .iter()
+                        .any(|needle| b.contains(needle))
+                    });
+
                     let has_signer = body.as_ref().map(|b| {
                         b.contains("is_signer")
+                            // solana-program's helper; its absence here made every
+                            // program using it read as unchecked.
+                            || b.contains("assert_signer")
                             || b.contains("Signer<")
                             || b.contains("has_one")
                             || b.contains("constraint = signer")
+                        // NOT `signer(`: it also matches `CpiContext::new_with_signer(`,
+                        // a CPI call rather than a signer assertion.
                     });
 
                     let has_owner = body.as_ref().map(|b| {
@@ -376,6 +427,9 @@ impl MapperAgent {
                         name: instruction_name.clone(),
                         function_name: fn_name.to_string(),
                         has_signer_check: has_signer,
+                        is_native_entry_point,
+                        is_anchor_handler,
+                        touches_raw_account_data,
                         has_owner_check: has_owner,
                         has_cpi_program_id_check: has_cpi_check,
                         uses_cpi,
@@ -1137,5 +1191,95 @@ mod data_struct_tests {
     fn a_generic_or_lifetime_parameter_is_not_part_of_the_name() {
         let s = structs_in("pub struct Ctx<'info> {\n    pub a: u64,\n}\n");
         assert_eq!(s[0].name, "Ctx");
+    }
+}
+
+#[cfg(test)]
+mod tightening_tests {
+    use super::*;
+    use std::fs;
+
+    async fn graph_for(src: &str, name: &str) -> ProgramGraph {
+        let root = std::env::temp_dir().join(format!("ares-tighten-{}-{name}", std::process::id()));
+        let s = root.join("src");
+        fs::create_dir_all(&s).unwrap();
+        fs::write(s.join("lib.rs"), src).unwrap();
+        let g = MapperAgent::new(&root).analyze().await.unwrap();
+        fs::remove_dir_all(&root).ok();
+        g
+    }
+
+    /// An Anchor handler keeps its signer constraint in the accounts struct, not
+    /// the body. Reading the body and finding nothing says nothing — and firing
+    /// on it produced 74 predictions against a corpus with zero ground-truth
+    /// rows for the class.
+    #[tokio::test]
+    async fn an_anchor_handler_is_not_a_native_entry_point() {
+        let g = graph_for(
+            "pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> { Ok(()) }",
+            "anchor",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(i.is_anchor_handler);
+        assert!(!i.is_native_entry_point);
+    }
+
+    #[tokio::test]
+    async fn a_native_handler_is_an_entry_point() {
+        let g = graph_for(
+            "pub fn process(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult { Ok(()) }",
+            "native",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(i.is_native_entry_point);
+        assert!(!i.is_anchor_handler);
+    }
+
+    /// `signer(` also matches `CpiContext::new_with_signer(` — a CPI call, not a
+    /// signer assertion. Counting it marked unchecked handlers safe.
+    #[tokio::test]
+    async fn a_cpi_with_signer_seeds_is_not_a_signer_check() {
+        let g = graph_for(
+            "pub fn f(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {\n    let c = CpiContext::new_with_signer(a, b, seeds);\n    Ok(())\n}",
+            "cpisigner",
+        )
+        .await;
+        assert_eq!(g.instructions[0].has_signer_check, Some(false));
+    }
+
+    #[tokio::test]
+    async fn assert_signer_counts_as_a_signer_check() {
+        let g = graph_for(
+            "pub fn f(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {\n    assert_signer(authority)?;\n    Ok(())\n}",
+            "assertsigner",
+        )
+        .await;
+        assert_eq!(g.instructions[0].has_signer_check, Some(true));
+    }
+
+    /// The bare `(*acc.data).try_borrow_mut()` form, which the per-spelling list
+    /// missed — three corpus targets use exactly it.
+    #[tokio::test]
+    async fn a_bare_try_borrow_counts_as_touching_raw_data() {
+        let g = graph_for(
+            "pub fn f(accounts: &[AccountInfo]) -> ProgramResult {\n    let d = (*acc.data).try_borrow_mut()?;\n    Ok(())\n}",
+            "rawdata",
+        )
+        .await;
+        assert!(g.instructions[0].touches_raw_account_data);
+    }
+
+    /// The other direction: a handler that never reads raw bytes has nothing an
+    /// owner confusion could expose, so it must not carry the signal.
+    #[tokio::test]
+    async fn a_handler_that_reads_no_raw_data_does_not_carry_the_signal() {
+        let g = graph_for(
+            "pub fn f(accounts: &[AccountInfo]) -> ProgramResult {\n    msg!(\"noop\");\n    Ok(())\n}",
+            "nodata",
+        )
+        .await;
+        assert!(!g.instructions[0].touches_raw_account_data);
     }
 }
