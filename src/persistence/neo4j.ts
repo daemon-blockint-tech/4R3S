@@ -5,7 +5,11 @@
  * configured. Downstream code treats `undefined` as "graph layer unavailable"
  * and skips graph expansion, so the agent runs fine without Neo4j.
  */
-import neo4j, { type Driver, type Session } from "neo4j-driver";
+import neo4j, {
+  type Driver,
+  type QueryResult,
+  type Session,
+} from "neo4j-driver";
 
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
@@ -64,17 +68,39 @@ export function hasNeo4j(): boolean {
 export const NEO4J_TX_CONFIG = { timeout: env.NEO4J_TIMEOUT_MS };
 
 /**
+ * The session surface callers get: `run`, with the deadline already applied.
+ *
+ * Handing out the raw driver `Session` made the deadline above opt-in, and
+ * three of the four call sites opted out by simply not passing a third
+ * argument — including the REMEMBER writeback (`knowledge-writer.ts`) that the
+ * driver comment names as the reason deadlines exist here at all. A stalled
+ * write on that path never settles, so the `try/catch` around it never fires
+ * and the audit hangs after VERIFY with no further log line. Narrowing the type
+ * is what makes forgetting impossible rather than merely discouraged.
+ */
+export interface Neo4jSession {
+  run(cypher: string, params?: Record<string, unknown>): Promise<QueryResult>;
+}
+
+/** Bind `NEO4J_TX_CONFIG` to a session's `run`. */
+export function deadlined(session: Pick<Session, "run">): Neo4jSession {
+  return {
+    run: (cypher, params) => session.run(cypher, params, NEO4J_TX_CONFIG),
+  };
+}
+
+/**
  * Run `fn` with a fresh session, always closing it afterward. Returns
  * `undefined` when the driver is not configured.
  */
 export async function withNeo4jSession<T>(
-  fn: (session: Session) => Promise<T>,
+  fn: (session: Neo4jSession) => Promise<T>,
 ): Promise<T | undefined> {
   const driver = getNeo4jDriver();
   if (!driver) return undefined;
   const session = driver.session({ defaultAccessMode: neo4j.session.READ });
   try {
-    return await fn(session);
+    return await fn(deadlined(session));
   } finally {
     await session.close();
   }
