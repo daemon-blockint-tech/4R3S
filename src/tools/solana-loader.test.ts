@@ -90,6 +90,11 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
+  // `getConnection` reads `HELIUS_RPC_URL ?? SOLANA_RPC_URL`, so leaving the
+  // former set points this test at a real third-party RPC provider and the
+  // synthetic addresses below simply miss. Clear it: the endpoint under test has
+  // to be the one this file is serving, whatever the ambient environment holds.
+  delete process.env.HELIUS_RPC_URL;
   process.env.SOLANA_RPC_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   ({ loadProgram } = await import("./solana.js"));
 });

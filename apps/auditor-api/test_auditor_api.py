@@ -620,10 +620,14 @@ class TestCveScanEmptyPackageArrayIsDegraded:
 class TestCveScanAgainstTheRealCommittedLockfile:
     """Ground truth: scan the repo's own core/Cargo.lock through the real
     HTTP surface, rather than only unit-testing match.py in isolation. This
-    caught the exact 4 RustSec advisories core-ci.yml's `cargo audit --ignore
-    ...` step already lists as accepted risk (RUSTSEC-2026-0187/0194/0195/
-    0204), confirming this service reproduces that existing gate's findings
-    independently rather than by construction."""
+    reproduces the RustSec advisories core-ci.yml's `cargo audit --ignore ...`
+    step lists as accepted risk, confirming this service finds them
+    independently rather than by construction.
+
+    The list started at four. RUSTSEC-2026-0187 (lopdf stack overflow, patched
+    in >=0.42) left it when the printpdf 0.7 -> 0.12.5 bump pulled lopdf 0.44.0
+    — so this test is also the check that the ignore list and the lockfile have
+    not drifted apart, in both directions."""
 
     def test_scanning_core_cargo_lock_finds_the_known_accepted_advisories(self):
         lockfile_path = REPO_ROOT / "core" / "Cargo.lock"
@@ -635,12 +639,16 @@ class TestCveScanAgainstTheRealCommittedLockfile:
         assert body["outcome"] == "ok"
         found_ids = {m["advisory_id"] for m in body["matches"]}
         for accepted in (
-            "RUSTSEC-2026-0187",
             "RUSTSEC-2026-0194",
             "RUSTSEC-2026-0195",
             "RUSTSEC-2026-0204",
         ):
             assert accepted in found_ids
+        # Asserting the absence is the half that catches a regression: if a
+        # future dependency drags a pre-0.42 lopdf back in, the advisory
+        # reappears here while `cargo audit` stays green only if someone
+        # re-adds the ignore.
+        assert "RUSTSEC-2026-0187" not in found_ids
 
     def test_workspace_local_crates_are_excluded_from_the_scanned_count(self):
         lockfile_path = REPO_ROOT / "core" / "Cargo.lock"

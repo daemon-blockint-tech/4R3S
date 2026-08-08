@@ -13,7 +13,13 @@
 # assuming compatibility.
 fastapi==0.141.1
 arq==0.28.0
-redis==8.1.0
+# Capped by arq, not by preference: arq 0.28.0 (the latest release) requires
+# `redis[hiredis]>=4.2.0,<6`. Dependabot bumped this to 8.1.0 in #120 and pip
+# could not resolve the result at all — `ResolutionImpossible`, which took the
+# auditor-api job down on main. No newer arq lifts the cap, so redis 6+ is
+# unreachable until arq itself moves. .github/dependabot.yml ignores major and
+# minor bumps here for that reason; drop the ignore when arq widens the range.
+redis==5.3.1
 pydantic==2.13.4
 
 # Server. Not pinned to a verified version: uvicorn is the dev entrypoint

@@ -89,32 +89,44 @@ python eval/fetch_neodyme_workshop.py     #  4 programs,  4 rows
 python eval/build_incident_repros.py      #  3 programs,  3 rows
 
 # 2. Stage — one Anchor-shaped directory per target
-python eval/stage_ares_core_targets.py --staging-root /tmp/ares-staging
+#
+# Stage INSIDE the repo, not under /tmp. ares-policy's default sandbox sets
+# `allowed_read_paths: ["."]` (core/crates/ares-policy/src/lib.rs), so a target
+# outside the working directory is refused before the mapper ever opens it:
+#
+#   ERROR ares_policy: POLICY VIOLATION: Path outside allowed read paths
+#
+# That refusal is what produced the "0 prediction row(s)" recorded at step 4 in
+# the original run below. It was read at the time as "the engine finds nothing",
+# and it is not — every one of the 159 scans was rejected by the sandbox before
+# any analysis ran. eval/data/ is gitignored, so staging there commits nothing.
+python eval/stage_ares_core_targets.py --staging-root eval/data/staging
 # → staged 159 target(s), wrote staging_manifest.json
 
 # 3. Scan — one ares-cli invocation per target
-cd core
-mkdir -p /tmp/ares-reports
-for dir in /tmp/ares-staging/*/; do
+# Run from the REPO ROOT (the sandbox root is the working directory) and build
+# the binary once rather than paying cargo's dispatch on all 159 invocations.
+(cd core && cargo build --release --bin ares)
+mkdir -p eval/data/reports
+for dir in eval/data/staging/*/; do
   name=$(basename "$dir")
   [ "$name" = "staging_manifest.json" ] && continue
-  cargo run --quiet --bin ares -- scan "$dir" \
-    --fuzz false --poc false --max-duration 120 --output /tmp/ares-reports
+  ./core/target/release/ares scan "$dir" \
+    --fuzz false --poc false --max-duration 120 --output eval/data/reports
 done
 # → 159 reports
 
 # 4. Convert — reports → scorer CSV
-cd ..
 python eval/convert_ares_core_reports.py \
-  --reports-dir /tmp/ares-reports \
-  --staging-manifest /tmp/ares-staging/staging_manifest.json
-# → "wrote 0 prediction row(s)"  /  "no findings across any staged target"
+  --reports-dir eval/data/reports \
+  --staging-manifest eval/data/staging/staging_manifest.json
+# → "wrote 220 prediction row(s)", 0% mapped to 'other'
 
 # 5. Score
 python eval/score_detections.py \
   --truth eval/data/ground_truth.csv \
   --predictions eval/predictions/ares-latest.csv \
-  --by category --target-f1 0.94
+  --by category severity
 ```
 
 ## Dataset composition — read this before quoting the number

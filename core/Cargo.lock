@@ -222,7 +222,6 @@ dependencies = [
  "ares-core",
  "chrono",
  "pretty_assertions",
- "printpdf",
  "serde",
  "serde_json",
  "tracing",
