@@ -1,3 +1,5 @@
+numpy>=2.5.1
+pandas>=2.2
 numpy>=2.0
 pandas>=3.0.5
 # Floors below are set by security advisories, not by API needs:
