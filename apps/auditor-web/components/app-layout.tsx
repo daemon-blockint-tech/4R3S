@@ -10,6 +10,8 @@ import Link from 'next/link'
 import { getSidebarWidth, setSidebarWidth, getSidebarOpen, setSidebarOpen } from '@/lib/utils/cookies'
 import { nanoid } from 'nanoid'
 import { ConnectorsProvider } from '@/components/connectors-provider'
+import { useAtomValue } from 'jotai'
+import { sessionAtom, sessionInitializedAtom } from '@/lib/atoms/session'
 
 interface AppLayoutProps {
   children: React.ReactNode
@@ -105,6 +107,9 @@ export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, i
   const [isResizing, setIsResizing] = useState(false)
   const [isDesktop, setIsDesktop] = useState(!initialIsMobile)
   const [hasMounted, setHasMounted] = useState(false)
+  const session = useAtomValue(sessionAtom)
+  const sessionInitialized = useAtomValue(sessionInitializedAtom)
+  const isAuthenticated = Boolean(session.user?.id)
 
   // Update sidebar width and save to cookie
   const updateSidebarWidth = (newWidth: number) => {
@@ -144,19 +149,29 @@ export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, i
     setHasMounted(true)
   }, [isDesktop, initialIsMobile, initialSidebarOpen])
 
-  // Fetch tasks on component mount
+  // Fetch tasks when signed in
   useEffect(() => {
-    fetchTasks()
-  }, [])
+    if (!sessionInitialized) return
 
-  // Poll for task updates every 5 seconds
+    if (!isAuthenticated) {
+      setTasks([])
+      setIsLoading(false)
+      return
+    }
+
+    fetchTasks()
+  }, [sessionInitialized, isAuthenticated])
+
+  // Poll for task updates every 5 seconds (signed-in only)
   useEffect(() => {
+    if (!sessionInitialized || !isAuthenticated) return
+
     const interval = setInterval(() => {
       fetchTasks()
     }, 5000)
 
     return () => clearInterval(interval)
-  }, [])
+  }, [sessionInitialized, isAuthenticated])
 
   const toggleSidebar = useCallback(() => {
     updateSidebarOpen(!isSidebarOpen)

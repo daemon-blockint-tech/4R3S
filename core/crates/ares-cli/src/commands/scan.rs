@@ -230,6 +230,10 @@ pub async fn execute(
     // Phase 2: Executable PoC generation using category-specific BanksClient harnesses
     if poc {
         info!("[4/5] Exploit Constructor: Generating proof-of-concept tests...");
+        // Create the output/poc directory up front — PoC writes below would
+        // otherwise fail with ENOENT on a fresh output dir (the report-level
+        // create_dir_all only runs at the end of the scan).
+        tokio::fs::create_dir_all(output.join("poc")).await?;
         // Parse the target IDL once so each PoC can embed real instruction data
         // (Anchor discriminator + args) instead of the placeholder `&[]` (POC-1).
         let target_idl = program_target
@@ -399,11 +403,8 @@ pub async fn execute(
                 "FuzzerOrchestrator".to_string(),
                 "Triager".to_string(),
             ],
-            tools_used: vec![
-                format!("trident-{}", trident_version),
-                "cargo-audit".to_string(),
-                "rust-analyzer".to_string(),
-            ],
+            // Provenance: only tools actually executed during this scan.
+            tools_used: vec![format!("trident-{}", trident_version)],
         },
         summary,
     };
@@ -438,6 +439,8 @@ pub async fn execute(
 }
 
 /// Find Anchor IDL file in the project.
+/// Deterministic: directory entries are sorted, and an IDL named after the
+/// program (`<program>.json`) is preferred over an arbitrary first match.
 fn find_idl_file(program_path: &Path) -> Option<PathBuf> {
     let idl_paths = vec![
         program_path.join("target/idl"),
@@ -445,14 +448,31 @@ fn find_idl_file(program_path: &Path) -> Option<PathBuf> {
         program_path.join("target/deploy"),
     ];
 
+    let program_name = program_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
+
     for dir in idl_paths {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    return Some(path);
-                }
+        let mut json_files: Vec<PathBuf> = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+                .collect(),
+            Err(_) => continue,
+        };
+        json_files.sort();
+
+        if let Some(ref name) = program_name {
+            let preferred = dir.join(format!("{}.json", name));
+            if json_files.contains(&preferred) {
+                return Some(preferred);
             }
+        }
+
+        if let Some(first) = json_files.into_iter().next() {
+            return Some(first);
         }
     }
     None
@@ -493,6 +513,10 @@ async fn discover_fuzz_targets(fuzz_tests_dir: &Path) -> AresResult<Vec<String>>
             }
         }
     }
+
+    // Sort so fuzz targets run in a deterministic order (finding IDs are
+    // assigned in execution order).
+    targets.sort();
 
     Ok(targets)
 }

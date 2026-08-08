@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { useTheme } from 'next-themes'
+import { useTheme } from '@/components/theme-provider'
 
 // Monaco types for editor and monaco instances
 type MonacoEditor = Parameters<OnMount>[0]

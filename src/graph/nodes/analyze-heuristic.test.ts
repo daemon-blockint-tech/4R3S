@@ -18,6 +18,7 @@
  *   citable" from "never read the source at all".
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { FENCE_OPEN, FENCE_CLOSE } from "../util.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -129,8 +130,13 @@ describe("analyze-heuristic: source reaches the model", () => {
 
     await makeAnalyzeHeuristicNode(deps(chat))(stateWith(source));
 
-    expect(prompts[0]).toContain("BEGIN PROGRAM SOURCE");
-    expect(prompts[0]).toContain("END PROGRAM SOURCE");
+    // The marker moved from a bespoke `BEGIN PROGRAM SOURCE` pair to the shared
+    // `fenceUntrusted` sentinel. The intent this test guards is unchanged — the
+    // model must be able to tell code from instructions — but the fence is now
+    // one definition used for every attacker-reachable payload (source, recalled
+    // memory, CUA transcripts) rather than a marker per call site.
+    expect(prompts[0]).toContain(FENCE_OPEN);
+    expect(prompts[0]).toContain(FENCE_CLOSE);
   });
 
   it("tells the model it is blind when there is no source, instead of staying silent", async () => {

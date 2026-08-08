@@ -4,7 +4,8 @@ import { db } from '@/lib/db/client'
 import { tasks, insertTaskSchema, connectors, taskMessages } from '@/lib/db/schema'
 import { generateId } from '@/lib/utils/id'
 import { createSandbox } from '@/lib/sandbox/creation'
-import { executeAgentInSandbox, AgentType } from '@/lib/sandbox/agents'
+import { executeAgentInSandbox } from '@/lib/sandbox/agents'
+import { resolveSandboxAgent } from '@/lib/agents/lmstudio-ui'
 import { pushChangesToBranch, shutdownSandbox } from '@/lib/sandbox/git'
 import { unregisterSandbox } from '@/lib/sandbox/sandbox-registry'
 import { detectPackageManager } from '@/lib/sandbox/package-manager'
@@ -25,6 +26,8 @@ import { getMaxSandboxDuration } from '@/lib/db/settings'
 import { buildRequestContext, runWithRequestContextAsync } from '@/lib/observability/context'
 import { logger } from '@/lib/observability/logger'
 import { hashId } from '@/lib/observability/redaction'
+import { isLlmConfigured } from '@/lib/llm/provider'
+import { recordTaskUsageForTask } from '@/lib/db/usage'
 
 import { withObservedRoute } from '@/lib/observability/route-handler'
 
@@ -151,11 +154,11 @@ async function createTask(request: NextRequest) {
       after(async () => {
         try {
           // Check if AI Gateway API key is available
-          if (!process.env.AI_GATEWAY_API_KEY) {
+          if (!isLlmConfigured()) {
             logger.debug('AI branch name generation skipped', {
               component: 'tasks.lifecycle',
               correlationId: postCorrelationId,
-              meta: { taskId, reason: 'ai_gateway_unconfigured' },
+              meta: { taskId, reason: 'llm_unconfigured' },
             })
             return
           }
@@ -241,11 +244,11 @@ async function createTask(request: NextRequest) {
       after(async () => {
         try {
           // Check if AI Gateway API key is available
-          if (!process.env.AI_GATEWAY_API_KEY) {
+          if (!isLlmConfigured()) {
             logger.debug('AI title generation skipped', {
               component: 'tasks.lifecycle',
               correlationId: postCorrelationId,
-              meta: { taskId, reason: 'ai_gateway_unconfigured' },
+              meta: { taskId, reason: 'llm_unconfigured' },
             })
             return
           }
@@ -335,7 +338,7 @@ async function createTask(request: NextRequest) {
             newTask.id,
             validatedData.prompt,
             validatedData.repoUrl || '',
-            validatedData.maxDuration || maxSandboxDuration,
+            Math.min(validatedData.maxDuration || maxSandboxDuration, maxSandboxDuration),
             validatedData.selectedAgent || 'claude',
             validatedData.selectedModel,
             validatedData.installDependencies || false,
@@ -458,6 +461,7 @@ async function processTaskWithTimeout(
       const timeoutLogger = createTaskLogger(taskId)
       await timeoutLogger.error('Task execution timed out')
       await timeoutLogger.updateStatus('error', 'Task execution timed out. The operation took too long to complete.')
+      await recordTaskUsageForTask(taskId)
     } else {
       // Re-throw other errors to be handled by the original error handler
       throw error
@@ -724,7 +728,7 @@ async function processTask(
     const agentResult = await executeAgentInSandbox(
       sandbox,
       sanitizedPrompt,
-      selectedAgent as AgentType,
+      resolveSandboxAgent(selectedAgent),
       logger,
       selectedModel,
       mcpServers,
@@ -782,7 +786,7 @@ async function processTask(
           // Ignore URL parsing errors
         }
 
-        if (process.env.AI_GATEWAY_API_KEY) {
+        if (isLlmConfigured()) {
           commitMessage = await generateCommitMessage({
             description: prompt,
             repoName,
@@ -825,6 +829,7 @@ async function processTask(
         // Update task as completed
         await logger.updateStatus('completed')
         await logger.updateProgress(100, 'Task completed successfully')
+        await recordTaskUsageForTask(taskId, { startTime: new Date(taskStartTime) })
 
         console.log('Task completed successfully')
       }
@@ -861,11 +866,11 @@ async function processTask(
       }
     }
 
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-
-    // Log the error and update task status
+    // Log the error and update task status; raw error details stay in server
+    // logs only (see console.error above) and never reach the user-facing log
     await logger.error('Error occurred during task processing')
-    await logger.updateStatus('error', errorMessage)
+    await logger.updateStatus('error', 'Task failed due to an internal error')
+    await recordTaskUsageForTask(taskId, { startTime: new Date(taskStartTime) })
   }
 }
 

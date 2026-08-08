@@ -1,5 +1,5 @@
 use ares_core::AresResult;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::info;
 
 use crate::{AccountEffect, ProgramGraph};
@@ -7,12 +7,18 @@ use crate::{AccountEffect, ProgramGraph};
 /// Cross-instruction data-flow analyzer.
 /// Detects vulnerabilities that only appear when looking at the interaction
 /// between multiple instructions (TOCTOU, missing re-validation, re-entrancy).
+// BTreeMap iteration is sorted by account name, keeping finding order and
+// descriptions deterministic.
 #[derive(Debug, Clone, Default)]
 pub struct CrossInstructionAnalyzer {
     /// For each account name, which instructions write to it.
-    pub writes: HashMap<String, Vec<String>>,
+    pub writes: BTreeMap<String, Vec<String>>,
     /// For each account name, which instructions read from it.
-    pub reads: HashMap<String, Vec<String>>,
+    // BTreeMap, not HashMap: iteration order is part of the output here, and
+    // GOLDEN RULE 2 requires the same input to produce the same report. `creates`
+    // and `closes` are gone because nothing ever constructed
+    // `AccountEffect::Create`/`Close` — see the note on the enum.
+    pub reads: BTreeMap<String, Vec<String>>,
 }
 
 /// A vulnerability that only manifests across instruction boundaries.
@@ -136,7 +142,8 @@ impl CrossInstructionAnalyzer {
             }
 
             // Collect all accounts this instruction writes to AND passes to CPI
-            let written_accounts: HashSet<String> = instr
+            // (BTreeSet so the intersection below is sorted/deterministic).
+            let written_accounts: BTreeSet<String> = instr
                 .effects
                 .iter()
                 .filter(|(_, e)| {
@@ -148,7 +155,7 @@ impl CrossInstructionAnalyzer {
                 .map(|(name, _)| name.clone())
                 .collect();
 
-            let cpi_accounts: HashSet<String> = instr
+            let cpi_accounts: BTreeSet<String> = instr
                 .effects
                 .iter()
                 .filter(|(_, e)| matches!(e, AccountEffect::CpiPass))

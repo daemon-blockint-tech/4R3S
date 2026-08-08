@@ -55,12 +55,13 @@ fn generate_dashboard_html(json: &Value) -> String {
         .get("total_tested")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
+    // Key names mirror the benchmark summary written by benchmark/execute.rs.
     let total_detections = summary
-        .get("total_detections")
+        .get("total_known_audit_findings_detected")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let avg_rate = summary
-        .get("avg_detection_rate")
+        .get("avg_known_audit_recall")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
     let total_economic = summary

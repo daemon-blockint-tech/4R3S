@@ -39,6 +39,7 @@
  * node_modules (55 of 716 for auditor-web) — the transitive tail, where a GPL
  * dependency actually arrives unnoticed, lives in the virtual store.
  */
+import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -76,9 +77,16 @@ function discoverTrees() {
 }
 
 function npmPackages(tree) {
+  // Resolved from node_modules, NOT `npx -y`. `npx -y` downloads whatever the
+  // registry serves at check time, which would make the licence gate itself an
+  // unpinned network fetch — a supply-chain hole in the check that exists to
+  // close supply-chain holes. The package is a pinned devDependency.
+  const bin = createRequire(import.meta.url).resolve(
+    "license-checker-rseidelsohn/bin/license-checker-rseidelsohn.js",
+  );
   const json = execFileSync(
-    "npx",
-    ["-y", "license-checker-rseidelsohn", "--json", "--production", "--start", tree.abs],
+    process.execPath,
+    [bin, "--json", "--production", "--start", tree.abs],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
   return Object.entries(JSON.parse(json)).map(([id, entry]) => ({ id, licenses: toArray(entry.licenses) }));

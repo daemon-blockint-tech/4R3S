@@ -77,6 +77,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     switch (method) {
       case 'textDocument/definition': {
+        // Coerce position to integers; raw values are interpolated into the generated script
+        const line = Number(position?.line)
+        const character = Number(position?.character)
+        if (!Number.isInteger(line) || !Number.isInteger(character) || line < 0 || character < 0) {
+          return NextResponse.json({ error: 'Invalid position' }, { status: 400 })
+        }
+
         // Execute TypeScript language service query in sandbox
         const scriptPath = '.lsp-helper.mjs'
 
@@ -87,8 +94,8 @@ import fs from 'fs';
 import path from 'path';
 
 const filename = '${absoluteFilename.replace(/'/g, "\\'")}';
-const line = ${position.line};
-const character = ${position.character};
+const line = ${line};
+const character = ${character};
 
 // Find tsconfig.json
 let configPath = process.cwd();

@@ -163,24 +163,37 @@ impl<'a> SemanticValidator<'a> {
     /// Rule 2: If the account is a PDA (has seeds) or is owned by the program
     /// implicitly, a missing owner check is often a false positive.
     fn check_owner(&self, finding: &Finding) -> ValidationResult {
-        // Look for accounts that have seeds in the graph
-        let pda_names: Vec<String> = self
-            .graph
-            .accounts
-            .iter()
-            .filter(|a| a.seeds.is_some())
-            .map(|a| a.name.clone())
-            .collect();
+        // Suppress only when the finding's OWN account has PDA seeds — the
+        // presence of an unrelated seeded account elsewhere in the graph says
+        // nothing about this finding. The account name is recovered from the
+        // title ("<category>: <account>") or from the quoted name in the
+        // description (same heuristic as check_revalidation).
+        let account_name = finding
+            .title
+            .split(": ")
+            .nth(1)
+            .map(|s| s.to_string())
+            .or_else(|| {
+                finding
+                    .description
+                    .split('\'')
+                    .nth(1)
+                    .map(|s| s.to_string())
+            });
 
-        if !pda_names.is_empty() {
-            return ValidationResult {
-                finding: finding.clone(),
-                suppressed: true,
-                reason: Some(format!(
-                    "Account(s) with seeds ({:?}) have implicit program ownership - owner check FP suppressed.",
-                    pda_names
-                )),
-            };
+        if let Some(name) = account_name {
+            if let Some(account) = self.graph.accounts.iter().find(|a| a.name == name) {
+                if account.seeds.is_some() {
+                    return ValidationResult {
+                        finding: finding.clone(),
+                        suppressed: true,
+                        reason: Some(format!(
+                            "Account '{}' has PDA seeds - implicit program ownership; owner check FP suppressed.",
+                            name
+                        )),
+                    };
+                }
+            }
         }
 
         ValidationResult {

@@ -21,7 +21,7 @@ Open http://localhost:3000
 Create `.env.local`:
 
 ```env
-POSTGRES_URL=postgres://ares:ares_dev_password@localhost:5432/ares
+POSTGRES_URL=postgres://ares:ares_dev_password@localhost:5433/ares
 JWE_SECRET=<random-32+-chars>
 ENCRYPTION_KEY=<random-32+-chars>
 NEXT_PUBLIC_AUTH_PROVIDERS=github

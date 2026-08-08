@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, integer, jsonb, boolean, uniqueIndex } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, integer, jsonb, boolean, uniqueIndex, date } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 
 // Log entry types
@@ -9,6 +9,25 @@ export const logEntrySchema = z.object({
 })
 
 export type LogEntry = z.infer<typeof logEntrySchema>
+
+// Plans catalog — subscription tiers and usage limits
+export const plans = pgTable('plans', {
+  code: text('code').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description'),
+  priceLabel: text('price_label').notNull(),
+  priceCents: integer('price_cents'),
+  computeHoursLimit: integer('compute_hours_limit').notNull(),
+  onDemandRunsLimit: integer('on_demand_runs_limit').notNull(),
+  features: jsonb('features').$type<string[]>().default([]).notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  stripePriceId: text('stripe_price_id'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export type Plan = typeof plans.$inferSelect
+export type InsertPlan = typeof plans.$inferInsert
 
 // Users table - user profile and primary OAuth account
 export const users = pgTable(
@@ -28,6 +47,10 @@ export const users = pgTable(
     email: text('email'),
     name: text('name'),
     avatarUrl: text('avatar_url'),
+    planId: text('plan_id')
+      .notNull()
+      .default('free')
+      .references(() => plans.code, { onDelete: 'restrict', onUpdate: 'cascade' }),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
     lastLoginAt: timestamp('last_login_at').defaultNow().notNull(),
@@ -49,6 +72,7 @@ export const insertUserSchema = z.object({
   email: z.string().email().optional(),
   name: z.string().optional(),
   avatarUrl: z.string().url().optional(),
+  planId: z.string().optional(),
   createdAt: z.date().optional(),
   updatedAt: z.date().optional(),
   lastLoginAt: z.date().optional(),
@@ -65,6 +89,7 @@ export const selectUserSchema = z.object({
   email: z.string().nullable(),
   name: z.string().nullable(),
   avatarUrl: z.string().nullable(),
+  planId: z.string(),
   createdAt: z.date(),
   updatedAt: z.date(),
   lastLoginAt: z.date(),
@@ -72,6 +97,53 @@ export const selectUserSchema = z.object({
 
 export type User = z.infer<typeof selectUserSchema>
 export type InsertUser = z.infer<typeof insertUserSchema>
+
+// Daily usage snapshots per user
+export const usageSnapshots = pgTable(
+  'usage_snapshots',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    usageDate: date('usage_date').notNull(),
+    computeSeconds: integer('compute_seconds').default(0).notNull(),
+    onDemandRuns: integer('on_demand_runs').default(0).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    userIdUsageDateUnique: uniqueIndex('usage_snapshots_user_id_usage_date_idx').on(table.userId, table.usageDate),
+  }),
+)
+
+export type UsageSnapshot = typeof usageSnapshots.$inferSelect
+export type InsertUsageSnapshot = typeof usageSnapshots.$inferInsert
+
+// User UI preferences (1:1 with users)
+export const userSettings = pgTable(
+  'user_settings',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    theme: text('theme').default('system').notNull(),
+    emailNotifications: boolean('email_notifications').default(false).notNull(),
+    prUpdates: boolean('pr_updates').default(false).notNull(),
+    timezone: text('timezone'),
+    locale: text('locale').default('en'),
+    preferences: jsonb('preferences').$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    userIdUnique: uniqueIndex('user_settings_user_id_idx').on(table.userId),
+  }),
+)
+
+export type UserSettings = typeof userSettings.$inferSelect
+export type InsertUserSettings = typeof userSettings.$inferInsert
 
 export const tasks = pgTable('tasks', {
   id: text('id').primaryKey(),
@@ -113,6 +185,9 @@ export const tasks = pgTable('tasks', {
   deletedAt: timestamp('deleted_at'),
 })
 
+// Server-side cap (minutes) for sandbox lifetime; also the default when the client omits it
+const SERVER_MAX_SANDBOX_DURATION_MINUTES = parseInt(process.env.MAX_SANDBOX_DURATION || '300', 10)
+
 // Manual Zod schemas for validation
 export const insertTaskSchema = z.object({
   id: z.string().optional(),
@@ -120,10 +195,15 @@ export const insertTaskSchema = z.object({
   prompt: z.string().min(1, 'Prompt is required'),
   title: z.string().optional(),
   repoUrl: z.string().url('Must be a valid URL').optional(),
-  selectedAgent: z.enum(['claude', 'codex', 'copilot', 'cursor', 'gemini', 'opencode']).default('claude'),
+  selectedAgent: z.enum(['claude', 'codex', 'copilot', 'cursor', 'gemini', 'opencode', 'lmstudio']).default('claude'),
   selectedModel: z.string().optional(),
   installDependencies: z.boolean().default(false),
-  maxDuration: z.number().default(parseInt(process.env.MAX_SANDBOX_DURATION || '300', 10)),
+  maxDuration: z
+    .number()
+    .int()
+    .min(1)
+    .max(SERVER_MAX_SANDBOX_DURATION_MINUTES)
+    .default(SERVER_MAX_SANDBOX_DURATION_MINUTES),
   keepAlive: z.boolean().default(false),
   enableBrowser: z.boolean().default(false),
   status: z.enum(['pending', 'processing', 'completed', 'error', 'stopped']).default('pending'),

@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getUserApiKey } from '@/lib/api-keys/user-keys'
+import { db } from '@/lib/db/client'
+import { keys } from '@/lib/db/schema'
+import { eq, and } from 'drizzle-orm'
+import { getServerSession } from '@/lib/session/get-server-session'
+import { isLmStudioConfigured } from '@/lib/llm/lmstudio'
+import { isLmStudioAgent } from '@/lib/agents/lmstudio-ui'
 
-type Provider = 'openai' | 'gemini' | 'cursor' | 'anthropic' | 'aigateway'
+type KeyProvider = 'openai' | 'gemini' | 'cursor' | 'anthropic' | 'aigateway'
 
 // Map agents to their required providers
-const AGENT_PROVIDER_MAP: Record<string, Provider | null> = {
+const AGENT_PROVIDER_MAP: Record<string, KeyProvider | null> = {
   claude: 'aigateway', // Claude uses Vercel AI Gateway
   codex: 'aigateway', // Codex uses Vercel AI Gateway
   copilot: null, // Copilot uses user's GitHub token from their account
@@ -36,12 +41,27 @@ function isGeminiModel(model: string): boolean {
 
 export async function GET(req: NextRequest) {
   try {
+    const session = await getServerSession()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(req.url)
     const agent = searchParams.get('agent')
     const model = searchParams.get('model')
 
     if (!agent) {
       return NextResponse.json({ error: 'Agent parameter is required' }, { status: 400 })
+    }
+
+    // Local (LM Studio) agent — Codex CLI against OpenAI-compatible /v1/responses
+    if (isLmStudioAgent(agent)) {
+      return NextResponse.json({
+        success: true,
+        hasKey: isLmStudioConfigured(),
+        provider: 'lmstudio',
+        agentName: 'Local (LM Studio)',
+      })
     }
 
     let provider = AGENT_PROVIDER_MAP[agent]
@@ -63,6 +83,16 @@ export async function GET(req: NextRequest) {
       })
     }
 
+    // Codex can run against local LM Studio when explicitly configured server-side
+    if (agent === 'codex' && isLmStudioConfigured()) {
+      return NextResponse.json({
+        success: true,
+        hasKey: true,
+        provider: 'lmstudio',
+        agentName: 'Codex',
+      })
+    }
+
     // Override provider based on model for multi-provider agents
     if (model && (agent === 'cursor' || agent === 'opencode')) {
       if (isAnthropicModel(model)) {
@@ -76,9 +106,14 @@ export async function GET(req: NextRequest) {
       // For cursor with no recognizable pattern, keep the default 'cursor' provider
     }
 
-    // Check if API key is available (either user's or system)
-    const apiKey = await getUserApiKey(provider!)
-    const hasKey = !!apiKey
+    // Check only the user's stored keys; platform env keys must not leak
+    // provider configuration through this status endpoint
+    const userKey = await db
+      .select({ value: keys.value })
+      .from(keys)
+      .where(and(eq(keys.userId, session.user.id), eq(keys.provider, provider!)))
+      .limit(1)
+    const hasKey = !!userKey[0]?.value
 
     return NextResponse.json({
       success: true,

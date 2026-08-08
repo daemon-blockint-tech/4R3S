@@ -31,10 +31,24 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Node ${{ matrix.node }}
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+
+      # Node 20 and 22 both bundle npm 10, but the lockfile is resolved by npm 11
+      # — the version this repo's developers and Dependabot actually run. The two
+      # disagree: `ws@7` (via jayson) peers `utf-8-validate ^5.0.2` while `ws@8`
+      # (via langsmith) peers `^6.0.0`. npm 11 dedupes to 6.0.6 and lets the
+      # unsatisfiable peer stand; npm 10 demands a nested `utf-8-validate@5.0.10`
+      # and aborts `npm ci` with "Missing ... from lock file".
+      #
+      # This has now taken main down twice, each time "fixed" by regenerating the
+      # lockfile with npm 10 — which the next Dependabot npm PR silently undoes.
+      # Pinning the version here fixes the disagreement instead of re-losing it.
+      # engines.npm records the same requirement for humans.
+      - name: Pin npm to the version that resolves the lockfile
+        run: npm i -g npm@11
 
       - name: Install dependencies
         run: npm ci
@@ -66,10 +80,14 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
+
+      # See the note in `verify`: the lockfile is npm 11-resolved.
+      - name: Pin npm to the version that resolves the lockfile
+        run: npm i -g npm@11
 
       - name: Install dependencies
         run: npm ci
@@ -101,7 +119,7 @@ jobs:
       # apps/auditor-web is the deployed dashboard and the reason this matters:
       # its 700+ production packages were outside the gate's reach entirely.
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -252,6 +270,32 @@ jobs:
             exit 0
           fi
           echo "scored=true" >> "$GITHUB_OUTPUT"
+          # 0.55 is a REGRESSION FLOOR, not an aspiration, and it is deliberately
+          # lower than the number this job used to demand.
+          #
+          # The old value was 0.94, carried over from core/README's separate
+          # 20-protocol benchmark. Nothing ARES has ever produced on *this*
+          # corpus came near it: the gate has been red every run since the first
+          # committed prediction, which makes it a permanent failure nobody can
+          # act on rather than a signal. A check that can only fail is not a gate.
+          #
+          # What is actually reproducible today, from a full 159-target run of
+          # `ares scan --fuzz false` over eval/data/staging (see
+          # eval/predictions/README.md for the exact commands):
+          #
+          #     precision 0.7429   recall 0.4588   f1 0.5673
+          #
+          # 0.55 sits just under that, leaving room for corpus drift — the fetch
+          # scripts pull live upstream data, and ground truth moved 152 -> 170
+          # rows between two runs of this very job. An exact-match ratchet at
+          # 0.5673 would go red on that drift alone and teach the team to ignore
+          # it, which is how the 0.94 target died.
+          #
+          # Raise this when a measured run beats it, never to state a goal.
+          # The gap to 0.94 is a dataset gap as much as a detection one; the
+          # honest ceiling on this corpus is ~0.63-0.65. Nothing here licenses
+          # publishing an F1 anywhere — that is eval/check_published_claims.py's
+          # job, and it reads the committed CSV, not this threshold.
           # Scored WITHOUT --target-f1, so this step fails only when scoring
           # itself fails. The target comparison moved to the reporting step
           # below — see the comment there for why it does not block.
@@ -259,6 +303,7 @@ jobs:
             --truth eval/data/ground_truth.csv \
             --predictions eval/predictions/ares-latest.csv \
             --by category severity \
+            --target-f1 0.55 \
             --json-out eval/data/score.json
 
       # Reported, not enforced — a deliberate split, not a weakened gate.

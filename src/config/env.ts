@@ -8,7 +8,17 @@
 import dotenv from "dotenv";
 import { z } from "zod";
 
-dotenv.config();
+// Not under test. CI has no `.env`, so loading one locally means the suite runs
+// against different config than the suite that gates merges — and the difference
+// is silent. It bit `solana-loader.test.ts`: that test stands up a local JSON-RPC
+// server and points `SOLANA_RPC_URL` at it, but `getConnection` prefers
+// `HELIUS_RPC_URL`, which only ever exists in a developer's `.env`. The test then
+// sent its synthetic addresses to a real third-party RPC provider and failed on
+// the miss — green in CI, red on any laptop with a Helius key, and reaching the
+// network from a suite documented as hermetic.
+if (!process.env.VITEST) {
+  dotenv.config();
+}
 
 /**
  * A boolean flag read from the environment; only the exact string "true"

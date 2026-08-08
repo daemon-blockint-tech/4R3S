@@ -1,11 +1,48 @@
 import { Sandbox } from '@vercel/sandbox'
 import { runCommandInSandbox, runInProject, PROJECT_DIR } from '../commands'
+import { writeInstructionFile } from '../instruction-file'
 import { AgentExecutionResult } from '../types'
 import { redactSensitiveInfo } from '@/lib/utils/logging'
 import { TaskLogger } from '@/lib/utils/task-logger'
 import { connectors } from '@/lib/db/schema'
+import {
+  getLmStudioApiKey,
+  getLmStudioBaseUrl,
+  getLmStudioModel,
+  isLmStudioConfigured,
+} from '@/lib/llm/lmstudio'
 
 type Connector = typeof connectors.$inferSelect
+
+type CodexBackend = 'lmstudio' | 'vercel' | 'openai'
+
+function resolveCodexBackend():
+  | { ok: true; backend: CodexBackend; apiKey: string }
+  | { ok: false; error: string } {
+  if (isLmStudioConfigured()) {
+    return { ok: true, backend: 'lmstudio', apiKey: getLmStudioApiKey() }
+  }
+
+  const apiKey = process.env.AI_GATEWAY_API_KEY
+  if (!apiKey) {
+    return {
+      ok: false,
+      error:
+        'No LLM configured for Codex. Set LM Studio vars (LLM_PROVIDER=lmstudio, LM_STUDIO_MODEL) or AI_GATEWAY_API_KEY.',
+    }
+  }
+
+  const isOpenAIKey = apiKey.startsWith('sk-')
+  const isVercelKey = apiKey.startsWith('vck_')
+  if (!isOpenAIKey && !isVercelKey) {
+    return {
+      ok: false,
+      error: `Invalid API key format. Expected "sk-" (OpenAI), "vck_" (Vercel), or LM Studio mode.`,
+    }
+  }
+
+  return { ok: true, backend: isVercelKey ? 'vercel' : 'openai', apiKey }
+}
 
 // Helper function to run command and log it in project directory
 async function runAndLogCommand(sandbox: Sandbox, command: string, args: string[], logger: TaskLogger) {
@@ -75,40 +112,25 @@ export async function executeCodexInSandbox(
       }
     }
 
+    const codexAuth = resolveCodexBackend()
+    if (!codexAuth.ok) {
+      return {
+        success: false,
+        error: codexAuth.error,
+        cliName: 'codex',
+        changesDetected: false,
+      }
+    }
+
+    const { backend, apiKey } = codexAuth
+    const isVercelKey = backend === 'vercel'
+    const isLmStudio = backend === 'lmstudio'
+
+    if (logger && isLmStudio) {
+      await logger.info('Using LM Studio OpenAI-compatible backend for Codex')
+    }
+
     // Set up authentication - we'll use API key method since we're in a sandbox
-    if (!process.env.AI_GATEWAY_API_KEY) {
-      return {
-        success: false,
-        error: 'AI Gateway API key not found. Please set AI_GATEWAY_API_KEY environment variable.',
-        cliName: 'codex',
-        changesDetected: false,
-      }
-    }
-
-    // Validate API key format - can be either OpenAI (sk-) or Vercel (vck_)
-    const apiKey = process.env.AI_GATEWAY_API_KEY
-    const isOpenAIKey = apiKey?.startsWith('sk-')
-    const isVercelKey = apiKey?.startsWith('vck_')
-
-    if (!apiKey || (!isOpenAIKey && !isVercelKey)) {
-      const errorMsg = `Invalid API key format. Expected to start with "sk-" (OpenAI) or "vck_" (Vercel), but got: "${apiKey?.substring(0, 15) || 'undefined'}"`
-
-      if (logger) {
-        await logger.error(errorMsg)
-      }
-      return {
-        success: false,
-        error: errorMsg,
-        cliName: 'codex',
-        changesDetected: false,
-      }
-    }
-
-    if (logger) {
-      const keyType = isVercelKey ? 'Vercel AI Gateway' : 'OpenAI'
-      await logger.info('Using API key for authentication')
-    }
-
     // According to the official Codex CLI docs, we should use 'exec' for non-interactive execution
     // The correct syntax is: codex exec "instruction"
     // We can also specify model with --model flag
@@ -134,7 +156,7 @@ export async function executeCodexInSandbox(
       cmd: 'codex',
       args: ['--version'],
       env: {
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
+        OPENAI_API_KEY: isLmStudio ? apiKey : process.env.OPENAI_API_KEY!,
         HOME: '/home/vercel-sandbox',
       },
       sudo: false,
@@ -147,9 +169,24 @@ export async function executeCodexInSandbox(
 
     // Create configuration file based on API key type
     // Use selectedModel if provided, otherwise fall back to default
-    const modelToUse = selectedModel || 'openai/gpt-4o'
+    const modelToUse = selectedModel || (isLmStudio ? getLmStudioModel() : 'openai/gpt-4o')
     let configToml
-    if (isVercelKey) {
+    if (isLmStudio) {
+      // Codex uses POST /v1/responses — supported by LM Studio OpenAI-compatible server
+      configToml = `model = "${modelToUse}"
+model_provider = "lm-studio"
+
+[model_providers.lm-studio]
+name = "LM Studio"
+base_url = "${getLmStudioBaseUrl()}"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+
+# Debug settings
+[debug]
+log_requests = true
+`
+    } else if (isVercelKey) {
       // Use Vercel AI Gateway configuration for vck_ keys
       // Based on the curl example, it uses /chat/completions endpoint, not responses
       configToml = `model = "${modelToUse}"
@@ -291,12 +328,16 @@ url = "${server.baseUrl}"
       }
     }
 
-    const logCommand = `${codexCommand} "${instruction}"`
+    // Deliver the instruction via a sandbox file so the prompt is never
+    // interpolated into the shell command string
+    const instructionArg = await writeInstructionFile(sandbox, instruction)
+
+    const logCommand = `${codexCommand} ${instructionArg}`
 
     await logger.command(logCommand)
     if (logger) {
       await logger.command(logCommand)
-      const providerName = isVercelKey ? 'Vercel AI Gateway' : 'OpenAI API'
+      const providerName = isLmStudio ? 'LM Studio' : isVercelKey ? 'Vercel AI Gateway' : 'OpenAI API'
       await logger.info(
         `Executing Codex with model ${modelToUse} via ${providerName} and bypassed sandbox restrictions`,
       )
@@ -304,8 +345,9 @@ url = "${server.baseUrl}"
 
     // Use the same pattern as other working agents (Claude, etc.)
     // Execute with environment variables using sh -c like Claude does
-    const envPrefix = `AI_GATEWAY_API_KEY="${process.env.AI_GATEWAY_API_KEY}" HOME="/home/vercel-sandbox" CI="true"`
-    const fullCommand = `${envPrefix} ${codexCommand} "${instruction}"`
+    const apiEnvKey = isLmStudio ? 'OPENAI_API_KEY' : 'AI_GATEWAY_API_KEY'
+    const envPrefix = `${apiEnvKey}="${apiKey}" HOME="/home/vercel-sandbox" CI="true"`
+    const fullCommand = `${envPrefix} ${codexCommand} ${instructionArg}`
 
     // Use the standard runInProject helper like other agents
     const result = await runInProject(sandbox, 'sh', ['-c', fullCommand])
