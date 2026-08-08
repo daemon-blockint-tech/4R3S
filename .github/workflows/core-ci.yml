@@ -12,6 +12,18 @@ on:
     # outside core/, so they must be listed explicitly or a PR touching only
     # one of them would never trigger this workflow.
     paths: [ "core/**", "src/knowledge/vuln-catalog.generated.json", "eval/mappings/ares-core-categories.json", ".github/workflows/core-ci.yml" ]
+  # No `paths:` filter on pull_request, deliberately, and it costs a Rust
+  # toolchain on TS-only PRs.
+  #
+  # These three jobs have to be *required* status checks, because the incident
+  # that made that necessary was a cargo bump merged into a red main. But
+  # GitHub cannot require a check that does not report: a path-filtered
+  # workflow simply never runs on an unrelated PR, and branch protection then
+  # parks that PR on "Expected — waiting for status to be reported" forever.
+  # The filter and the requirement are mutually exclusive, so the filter goes.
+  #
+  # `push` above keeps its filter — nothing is gated on push, so there is no
+  # deadlock to avoid and no reason to burn the minutes twice.
   # No `paths:` filter here, deliberately — it costs a Rust toolchain on
   # TS-only PRs and buys the ability to make these three jobs REQUIRED.
   #

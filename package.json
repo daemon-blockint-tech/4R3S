@@ -7,6 +7,7 @@
   "type": "module",
   "engines": {
     "node": ">=20",
+    "npm": "^10"
     "npm": ">=11"
   },
   "scripts": {

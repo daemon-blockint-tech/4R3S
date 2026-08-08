@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Prove the Verify-Claims release gate rejects and accepts for the right reasons.
 
+This checks the gate *mechanism*, on synthetic predictions derived from a real
+ground truth file. It is a separate question from how ARES scores: a threshold
+comparison that silently stopped rejecting would let any real score through, and
+the real score alone cannot reveal that. So this runs regardless of whether
+eval/predictions/ares-latest.csv exists, and at its own threshold — the one
+passed here describes the synthetic cases below, not the system.
 This checks the gate MECHANISM, on synthetic predictions derived from a real
 ground truth file. That is a different question from how ARES scores, and it
 stays worth asking now that eval/predictions/ares-latest.csv exists: a threshold
