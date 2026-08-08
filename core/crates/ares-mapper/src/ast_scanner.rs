@@ -482,10 +482,21 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
         let body_str = code_string(&node.block);
         handler.has_signer_check = body_str.contains("is_signer")
             || body_str.contains("Signer")
-            || handler
-                .params
-                .iter()
-                .any(|p| p.is_ctx && p.ty.contains("Signer"));
+            // Any parameter typed `Signer` is the check — not only a `Context`.
+            //
+            // `code_string(&node.block)` renders the BODY, so a `Signer<'info>`
+            // in the SIGNATURE is not in `body_str` at all, and the `p.is_ctx &&`
+            // conjunct then made this arm unreachable for exactly the shape it
+            // exists to recognise: `is_ctx` is set only for `Context<..>` /
+            // `ExecutionContext`, never for a bare `&Signer<'info>` argument.
+            //
+            // The result was a Critical false positive on correct Anchor code:
+            // `process_withdraw(authority: &Signer<'info>, ..)` reported
+            // `missing-signer-check`, where the parameter type IS the assertion.
+            // Trading a false negative (prose suppressing a finding) for a false
+            // positive on guarded code is the trade this repo has twice retired
+            // rules for.
+            || handler.params.iter().any(|p| p.ty.contains("Signer"));
 
         if is_instruction
             || is_solitaire_handler
@@ -1209,6 +1220,68 @@ mod tests {
              an entry point; got {:?}",
             categories(&s)
         );
+    }
+
+    /// The regression that reached main: an Anchor `Signer<'info>` parameter IS
+    /// the signer assertion, so flagging it Critical is a false positive on
+    /// correct code.
+    ///
+    /// `code_string(&node.block)` renders the BODY, so a `Signer` appearing in
+    /// the SIGNATURE is never in it, and the parameter arm that should have
+    /// caught it was gated behind `p.is_ctx` — true only for `Context<..>`,
+    /// never for a bare `&Signer<'info>`. The arm was unreachable for exactly
+    /// the shape it exists to recognise.
+    #[test]
+    fn an_anchor_signer_parameter_is_a_signer_check() {
+        let s = scan(
+            r#"
+            pub fn process_withdraw<'info>(
+                authority: &Signer<'info>,
+                vault: &AccountInfo<'info>,
+            ) -> ProgramResult {
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            !categories(&s).contains(&"missing-signer-check".to_string()),
+            "a Signer<'info> parameter must not read as a missing signer check; got {:?}",
+            categories(&s)
+        );
+    }
+
+    /// The other direction, kept so the fix that introduced the regression is
+    /// not undone along with it: prose must NOT satisfy the check. `syn` lowers
+    /// `///` into `#[doc = "..."]`, and rendering the whole `ItemFn` let a
+    /// comment saying "must be a Signer" silence a Critical finding.
+    #[test]
+    fn a_doc_comment_mentioning_signer_still_does_not_suppress_the_finding() {
+        let s = scan(
+            r#"
+            /// The caller must be a Signer. This is documentation, not a check.
+            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
+                Ok(())
+            }
+            "#,
+        );
+        assert!(
+            categories(&s).contains(&"missing-signer-check".to_string()),
+            "a doc comment must not count as a signer check; got {:?}",
+            categories(&s)
+        );
+    }
+
+    /// And a genuinely unchecked raw handler still fires.
+    #[test]
+    fn a_raw_account_info_handler_with_no_check_still_fires() {
+        let s = scan(
+            r#"
+            pub fn process_withdraw(authority: AccountInfo) -> ProgramResult {
+                Ok(())
+            }
+            "#,
+        );
+        assert!(categories(&s).contains(&"missing-signer-check".to_string()));
     }
 }
 
