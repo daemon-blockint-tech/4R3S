@@ -62,6 +62,23 @@ const EVIDENCE_MAX = 2000;
 export const FENCE_OPEN = "<<<BEGIN UNTRUSTED DATA>>>";
 export const FENCE_CLOSE = "<<<END UNTRUSTED DATA>>>";
 
+/** How much untrusted text may enter one prompt. */
+export const FENCE_MAX = 20_000;
+
+/**
+ * Remove anything that looks like a fence marker, however spaced or cased.
+ *
+ * Exported because a caller that packs a prompt to the fence budget has to
+ * measure the text the fence will actually emit, not the text it was handed:
+ * the replacement is longer than the shortest marker it rewrites (`<<END>>`,
+ * 7 chars, becomes 22), so a payload can inflate itself past a budget computed
+ * from its raw length — and in VERIFY, a block that overflows loses its tail
+ * while the critic is still asked to rule on it.
+ */
+export function stripFenceMarkers(text: string): string {
+  return text.replace(/<{2,}\s*(?:BEGIN|END)[^>]*>{2,}/gi, "[fence marker removed]");
+}
+
 /**
  * Wrap attacker-reachable text so a model can tell data from instructions.
  *
@@ -76,13 +93,14 @@ export const FENCE_CLOSE = "<<<END UNTRUSTED DATA>>>";
  * being persuaded by prose inside it; what it removes is the cheap structural
  * trick, and it gives the system prompt something concrete to refer to.
  */
-export function fenceUntrusted(text: string, max = 20_000): string {
-  const stripped = text
-    // Any BEGIN/END sentinel in the payload, however spaced or cased.
-    .replace(/<{2,}\s*(?:BEGIN|END)[^>]*>{2,}/gi, "[fence marker removed]")
-    .slice(0, max);
-  const truncated = text.length > max ? "\n[truncated at fence budget]" : "";
-  return [FENCE_OPEN, stripped + truncated, FENCE_CLOSE].join("\n");
+export function fenceUntrusted(text: string, max = FENCE_MAX): string {
+  const stripped = stripFenceMarkers(text);
+  // Flagged on the stripped length — that is the text the slice cuts. Comparing
+  // the raw length instead both missed real cuts (a payload that grew past the
+  // budget only once its markers were rewritten) and announced cuts that never
+  // happened.
+  const truncated = stripped.length > max ? "\n[truncated at fence budget]" : "";
+  return [FENCE_OPEN, stripped.slice(0, max) + truncated, FENCE_CLOSE].join("\n");
 }
 
 /** Words models reach for that aren't on our scale, mapped to the closest level. */
@@ -254,12 +272,6 @@ export function coerceVerdicts(raw: unknown, count: number): Verdict[] {
 }
 
 /**
- * Apply VERIFY verdicts to the merged findings: set each finding's `status` and
- * `confidence`, and drop those judged `false-positive`. A finding with no
- * verdict is kept and marked `suspected` (never silently dropped). Returns the
- * surviving findings and the count dropped.
- */
-/**
  * Whether `confirmed` can mean anything for this finding.
  *
  * VERIFY is handed each finding's own `evidence` string and nothing else, so
@@ -268,12 +280,22 @@ export function coerceVerdicts(raw: unknown, count: number): Verdict[] {
  * therefore allowed only where something mechanical, outside the model, backs
  * the finding:
  *
- *   - `static`, whose evidence is Semgrep's own output; or
- *   - any finding whose `location` was checked against the files actually
- *     loaded off disk (`citesLoadedFile`). That check is code, not opinion: it
- *     fails a finding that points at a file nobody read.
+ *   - `static`, whose evidence is Semgrep's own output;
+ *   - a `deterministic` finding, decoded from bytes with no model in its path; or
+ *   - a `heuristic` finding whose `location` was checked against the files
+ *     actually loaded off disk (`citesLoadedFile`). That check is code, not
+ *     opinion: it fails a finding that points at a file nobody read.
  *
- * A finding already flagged speculative qualifies under neither.
+ * The citation route is `heuristic` only, because `analyze-heuristic` is the one
+ * node that puts `formatSourceForPrompt(source)` — paths and numbered lines — in
+ * its prompt. `analyze-onchain` is shown `JSON.stringify(program)` and
+ * `analyze-cua` a browser transcript; neither model ever saw a file, so "the
+ * location matches something we loaded" tests nothing about what they wrote and
+ * is satisfied by naming any real path. That is reachable by the audited party:
+ * their own docs page can assert a bug at `src/lib.rs:42`, and the CUA finding
+ * that repeats it cites a file the loader did read.
+ *
+ * A finding already flagged speculative qualifies under none of the three.
  *
  * This matters beyond the label. REMEMBER persists only `confirmed`,
  * non-speculative findings into durable memory that later audits recall as
@@ -288,21 +310,48 @@ function canBeConfirmed(f: Finding, source?: LoadedSource): boolean {
   // not self-certification. `coerceFindings` never sets this, so no model output
   // can reach it.
   if (f.deterministic) return true;
+  if (f.source !== "heuristic") return false;
   return Boolean(source?.available) && citesLoadedFile(f.location, source!);
 }
 
+/**
+ * Apply VERIFY verdicts to the merged findings: set each finding's `status` and
+ * `confidence`, and drop those judged `false-positive` — except where the
+ * finding is `deterministic`, which no verdict may erase. A finding with no
+ * verdict is kept and marked `suspected` (never silently dropped). Returns the
+ * surviving findings and the counts dropped, clamped and refused.
+ */
 export function applyVerdicts(
   findings: Finding[],
   verdicts: Verdict[],
   source?: LoadedSource,
-): { kept: Finding[]; dropped: number; clamped: number } {
+): { kept: Finding[]; dropped: number; clamped: number; refusedDeletion: number } {
   const byIndex = new Map(verdicts.map((v) => [v.index, v]));
   const kept: Finding[] = [];
   let dropped = 0;
   let clamped = 0;
+  let refusedDeletion = 0;
   findings.forEach((f, i) => {
     const v = byIndex.get(i);
-    if (v?.status === "false-positive") {
+    // The mirror of the `confirmed` clamp below. `canBeConfirmed` refuses to
+    // promote a finding the critic had no artifact to check; the critic equally
+    // has no artifact with which to *refute* a field decoded from RPC bytes, and
+    // a `deterministic` finding is the only kind with no model anywhere in its
+    // derivation path. One JSON field would otherwise erase it — including the
+    // upgrade-authority finding, which is the one thing this auditor can settle
+    // mechanically, and whose deletion leaves a report that reads as clean.
+    //
+    // No carve-out for the severity-`info` "program-controlled" note, whose own
+    // evidence says the controlling program's threshold "was not checked here":
+    // that caveat is disclosed in the text rather than hidden, the decoded half
+    // (the authority is a PDA owned by program Y) is still bytes, and an
+    // exemption keyed on severity or category would be a hole shaped exactly
+    // like the finding an audited party most wants gone. A verdict may still
+    // lower its confidence; it may not make it disappear.
+    const refused = v?.status === "false-positive" && Boolean(f.deterministic);
+    if (refused) {
+      refusedDeletion += 1;
+    } else if (v?.status === "false-positive") {
       dropped += 1;
       return;
     }
@@ -310,7 +359,11 @@ export function applyVerdicts(
     // verbatim. Refuse it where the critic had no artifact to check it against:
     // a demotion to `suspected` costs nothing, whereas a fabricated finding
     // shipped as `confirmed` is the failure this pass exists to prevent.
-    let status = v?.status ?? "suspected";
+    //
+    // A refused deletion lands on `suspected` too: a kept finding must not carry
+    // the `false-positive` label the verdict asked for, or REPORT would print
+    // the rejection while the finding sits under it.
+    let status = refused ? "suspected" : (v?.status ?? "suspected");
     if (status === "confirmed" && !canBeConfirmed(f, source)) {
       status = "suspected";
       clamped += 1;
@@ -321,7 +374,7 @@ export function applyVerdicts(
       confidence: v?.confidence ?? f.confidence,
     });
   });
-  return { kept, dropped, clamped };
+  return { kept, dropped, clamped, refusedDeletion };
 }
 
 /**
