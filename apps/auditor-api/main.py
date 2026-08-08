@@ -25,6 +25,13 @@ from arq.connections import RedisSettings
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ValidationError, field_validator
 
+# Sibling top-level module (see the sys.path note below for why that is the
+# convention here). Reused rather than re-implemented so `audit-result:{id}`
+# has exactly one writer: a record this API writes at submission time must be
+# indistinguishable in shape and TTL from one the worker writes later, or a
+# poller would have to know which process wrote what it is reading.
+from worker import _set_status
+
 app = FastAPI(title="ares-auditor-api")
 
 REDIS_SETTINGS = RedisSettings()  # host/port from env via arq defaults
@@ -125,21 +132,33 @@ async def submit_audit(req: AuditRequest) -> AuditAccepted:
     redis = await create_pool(REDIS_SETTINGS)
     try:
         job = await redis.enqueue_job("run_audit", job_id, req.source, _job_id=job_id)
+
+        # arq returns None when a job with this id already exists (it checks
+        # job_key and result_key and bails out — see ArqRedis.enqueue_job).
+        # Discarding that return value meant answering 202 with a job_id nothing
+        # would ever process, so the caller would poll a 404 forever with no
+        # indication the submission had been dropped. A uuid4 collision is
+        # vanishingly unlikely, but checking costs nothing and the alternative
+        # failure is silent. Raising inside the try still closes the pool.
+        if job is None:
+            raise HTTPException(
+                status_code=503,
+                detail=f"queue rejected job {job_id}: an entry with that id already exists",
+            )
+
+        # Record the queued state before answering 202. Nothing wrote this key
+        # until the worker's `_set_status(..., "running")`, which only runs once
+        # a slot frees — so with MAX_CONCURRENT_AUDITS=2 and AUDIT_TIMEOUT_SECS=600
+        # a backlogged job answered 404 for up to ten minutes on the very route
+        # this API tells callers to poll. 404 already means "unknown job_id", so
+        # that made one code mean two things; a client treating it as terminal
+        # reports the audit lost and re-submits, and since the id is a fresh
+        # uuid4 that queues a SECOND full audit of the same target — doubling the
+        # LLM spend the concurrency cap exists to limit. `queued` is a value
+        # AuditStatus already documents and AuditAccepted already returns.
+        await _set_status(redis, job_id, status="queued")
     finally:
         await redis.close()
-
-    # arq returns None when a job with this id already exists (it checks
-    # job_key and result_key and bails out — see ArqRedis.enqueue_job).
-    # Discarding that return value meant answering 202 with a job_id nothing
-    # would ever process, so the caller would poll a 404 forever with no
-    # indication the submission had been dropped. A uuid4 collision is
-    # vanishingly unlikely, but checking costs nothing and the alternative
-    # failure is silent.
-    if job is None:
-        raise HTTPException(
-            status_code=503,
-            detail=f"queue rejected job {job_id}: an entry with that id already exists",
-        )
 
     return AuditAccepted(job_id=job_id)
 

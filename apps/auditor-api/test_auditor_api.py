@@ -202,6 +202,11 @@ class TestDroppedEnqueue:
             async def enqueue_job(self, *args, **kwargs):
                 return object()  # any non-None Job stand-in
 
+            async def set(self, key, value, ex=None):
+                # An accepted submission now also records its queued state on
+                # the same connection — see TestQueuedJobIsVisibleBeforeTheWorkerStarts.
+                pass
+
             async def close(self):
                 pass
 
@@ -213,6 +218,130 @@ class TestDroppedEnqueue:
         resp = client.post("/audits", json={"source": "target.rs"})
         assert resp.status_code == 202
         assert resp.json()["status"] == "queued"
+
+
+class TestQueuedJobIsVisibleBeforeTheWorkerStarts:
+    """`GET /audits/{id}` answered 404 for a job that had been accepted but not
+    started. `submit_audit` only enqueued; the first writer of
+    `audit-result:{id}` was the worker's `_set_status(..., "running")`, which
+    runs only once one of MAX_CONCURRENT_AUDITS slots frees — so with a 600s
+    AUDIT_TIMEOUT_SECS a backlogged job was invisible for ~10 minutes on the
+    route this API documents as fire-and-poll. 404 already means "unknown
+    job_id", so the same code meant two things: a client treating it as
+    terminal reports the audit lost and re-submits, and because the id is a
+    fresh uuid4 that queues a SECOND full audit of the same target — doubling
+    the LLM spend MAX_CONCURRENT_AUDITS exists to limit.
+    """
+
+    class _SharedRedis:
+        """One store both planes talk through, because that is what production
+        has: the API's pool and the worker's `ctx["redis"]` are two handles on
+        the same Redis. Giving each side its own store would make the
+        overwrite assertions below vacuously true. `ex` is recorded because a
+        queued record with the wrong TTL is a record that disappears (or
+        outlives its job) without anyone noticing.
+        """
+
+        def __init__(self, accept: bool = True):
+            self.store: dict[str, str] = {}
+            self.ttls: dict[str, int | None] = {}
+            self._accept = accept
+
+        async def enqueue_job(self, *args, **kwargs):
+            # A Job stand-in when accepting; arq's "already queued" None when not.
+            return object() if self._accept else None
+
+        async def set(self, key, value, ex=None):
+            self.store[key] = value
+            self.ttls[key] = ex
+
+        async def get(self, key):
+            return self.store.get(key)
+
+        async def close(self):
+            pass
+
+    def _client(self, monkeypatch, tmp_path, accept: bool = True):
+        monkeypatch.setattr(main, "REPO_ROOT", tmp_path)
+        (tmp_path / "target.rs").write_text("// fixture")
+        redis = self._SharedRedis(accept=accept)
+
+        async def fake_create_pool(_settings):
+            return redis
+
+        monkeypatch.setattr(main, "create_pool", fake_create_pool)
+        return TestClient(main.app), redis
+
+    def _submit(self, client) -> str:
+        resp = client.post("/audits", json={"source": "target.rs"})
+        assert resp.status_code == 202
+        return resp.json()["job_id"]
+
+    def test_a_submitted_job_polls_as_queued_instead_of_404(self, monkeypatch, tmp_path):
+        client, _ = self._client(monkeypatch, tmp_path)
+        job_id = self._submit(client)
+
+        # No worker has run: this is exactly the backlogged case.
+        resp = client.get(f"/audits/{job_id}")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "queued"
+
+    def test_an_unknown_job_id_still_answers_404(self, monkeypatch, tmp_path):
+        # 404 has to keep meaning one thing. Asserted against a store that
+        # already holds a real queued job, so a blanket 200 would not pass.
+        client, _ = self._client(monkeypatch, tmp_path)
+        self._submit(client)
+
+        resp = client.get("/audits/00000000-0000-4000-8000-000000000000")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "unknown job_id"
+
+    def test_a_queued_record_is_shaped_and_expired_like_a_worker_written_one(
+        self, monkeypatch, tmp_path
+    ):
+        # A poller must not be able to tell which process wrote what it reads.
+        client, redis = self._client(monkeypatch, tmp_path)
+        job_id = self._submit(client)
+        key = f"audit-result:{job_id}"
+
+        assert json.loads(redis.store[key]) == {
+            "job_id": job_id, "status": "queued", "report": None, "error": None,
+        }
+        assert redis.ttls[key] == 86400
+
+        asyncio.run(worker._set_status(redis, job_id, status="running"))
+        assert json.loads(redis.store[key]).keys() == {"job_id", "status", "report", "error"}
+        assert redis.ttls[key] == 86400
+
+    def test_the_worker_overwrites_the_queued_record_when_it_runs(self, monkeypatch, tmp_path):
+        client, redis = self._client(monkeypatch, tmp_path)
+        job_id = self._submit(client)
+        assert client.get(f"/audits/{job_id}").json()["status"] == "queued"
+
+        # Stands in for `npm run audit` — the real CLI needs an
+        # OPENROUTER_API_KEY and ~90s of LLM spend per run (see this file's
+        # header) — but the exec, the exit code and the captured stdout the
+        # worker records are real.
+        script = tmp_path / "npm-like"
+        script.write_text("#!/bin/sh\necho 'FINDINGS: none'\n")
+        script.chmod(0o755)
+        monkeypatch.setattr(worker, "NPM_BIN", str(script))
+
+        asyncio.run(worker.run_audit({"redis": redis}, job_id, str(tmp_path / "target.rs")))
+
+        body = client.get(f"/audits/{job_id}").json()
+        assert body["status"] == "done"
+        assert body["report"] == "FINDINGS: none"
+
+    def test_a_rejected_enqueue_leaves_nothing_to_poll(self, monkeypatch, tmp_path):
+        # Ordering guard: the queued record is written only after the enqueue
+        # is known to have been accepted. Writing it first would leave a
+        # dropped submission reading "queued" for the full 24h TTL — a job
+        # nothing will ever run, reported as waiting for a slot.
+        client, redis = self._client(monkeypatch, tmp_path, accept=False)
+        resp = client.post("/audits", json={"source": "target.rs"})
+        assert resp.status_code == 503
+        assert redis.store == {}
 
 
 class TestWorkerNeverLeavesJobStuck:
