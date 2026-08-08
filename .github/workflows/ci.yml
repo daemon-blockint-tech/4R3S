@@ -36,6 +36,20 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
+      # Node 20 and 22 both bundle npm 10, but the lockfile is resolved by npm 11
+      # — the version this repo's developers and Dependabot actually run. The two
+      # disagree: `ws@7` (via jayson) peers `utf-8-validate ^5.0.2` while `ws@8`
+      # (via langsmith) peers `^6.0.0`. npm 11 dedupes to 6.0.6 and lets the
+      # unsatisfiable peer stand; npm 10 demands a nested `utf-8-validate@5.0.10`
+      # and aborts `npm ci` with "Missing ... from lock file".
+      #
+      # This has now taken main down twice, each time "fixed" by regenerating the
+      # lockfile with npm 10 — which the next Dependabot npm PR silently undoes.
+      # Pinning the version here fixes the disagreement instead of re-losing it.
+      # engines.npm records the same requirement for humans.
+      - name: Pin npm to the version that resolves the lockfile
+        run: npm i -g npm@11
+
       - name: Install dependencies
         run: npm ci
 
@@ -70,6 +84,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # See the note in `verify`: the lockfile is npm 11-resolved.
+      - name: Pin npm to the version that resolves the lockfile
+        run: npm i -g npm@11
 
       - name: Install dependencies
         run: npm ci
