@@ -16,6 +16,7 @@ sealevel-attacks:4-initialization,missing-owner-check,low,suspected,False,high
 sealevel-attacks:4-initialization,type-cosplay,low,suspected,False,medium
 sealevel-attacks:8-pda-sharing,arbitrary-cpi,low,suspected,False,critical
 sealevel-attacks:9-closing-accounts,missing-owner-check,low,suspected,False,high
+solana-vuln-rust:train:04113a779705,arbitrary-cpi,low,suspected,False,critical
 solana-vuln-rust:train:04113a779705,integer-overflow-underflow,low,suspected,False,medium
 solana-vuln-rust:train:08f0560dca07,missing-owner-check,low,suspected,False,high
 solana-vuln-rust:train:09d2e4dfbe98,integer-overflow-underflow,low,suspected,False,medium
@@ -127,7 +128,9 @@ solana-vuln-rust:train:648db1b0bd16,integer-overflow-underflow,low,suspected,Fal
 solana-vuln-rust:train:67dedee270e1,missing-owner-check,low,suspected,False,high
 solana-vuln-rust:train:689c0e1b63be,missing-owner-check,low,suspected,False,high
 solana-vuln-rust:train:6bae2130540f,missing-signer-check,low,suspected,False,critical
+solana-vuln-rust:train:6bae2130540f,arbitrary-cpi,low,suspected,False,critical
 solana-vuln-rust:train:6db5934a380c,missing-signer-check,low,suspected,False,critical
+solana-vuln-rust:train:6db5934a380c,arbitrary-cpi,low,suspected,False,critical
 solana-vuln-rust:train:6e663c1ff0cb,missing-owner-check,low,suspected,False,high
 solana-vuln-rust:train:7095574512c2,type-cosplay,low,suspected,False,medium
 solana-vuln-rust:train:7095574512c2,type-cosplay,low,suspected,False,medium
@@ -208,6 +211,7 @@ solana-vuln-rust:train:e433758dd558,type-cosplay,low,suspected,False,medium
 solana-vuln-rust:train:e433758dd558,type-cosplay,low,suspected,False,medium
 solana-vuln-rust:train:e6a71b4b7540,integer-overflow-underflow,low,suspected,False,medium
 solana-vuln-rust:train:e83d0a9d7518,missing-signer-check,low,suspected,False,critical
+solana-vuln-rust:train:e83d0a9d7518,arbitrary-cpi,low,suspected,False,critical
 solana-vuln-rust:train:e83d0a9d7518,integer-overflow-underflow,low,suspected,False,medium
 solana-vuln-rust:train:e8fcf9b2dd5e,type-cosplay,low,suspected,False,medium
 solana-vuln-rust:train:e8fcf9b2dd5e,type-cosplay,low,suspected,False,medium

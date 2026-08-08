@@ -701,11 +701,43 @@ impl MapperAgent {
                             || b.contains("constraint = owner")
                     });
 
+                    // A CPI program-id check is a COMPARISON, not a mention.
+                    //
+                    // This tested `b.contains("program_id")`, which the
+                    // vulnerable construction satisfies by itself:
+                    //
+                    //     let ix = Instruction {
+                    //         program_id: *target_program.key,   // field name
+                    //         ...
+                    //     };
+                    //     invoke(&ix, &[source.clone(), destination.clone()])?;
+                    //
+                    // `uses_cpi` is true and `has_cpi_check` was ALSO true, so
+                    // `uses_cpi && !has_cpi_check` never fired. The check meant to
+                    // detect missing validation was satisfied by the very line
+                    // performing the unvalidated call — including on
+                    // `arbitrary-cpi-stub`, a stub written to be caught, whose
+                    // source carries the comment `// VULNERABILITY: arbitrary-cpi`.
+                    //
+                    // Anchor's `Program<'info, T>` counts and is read from the
+                    // parameters: it validates the program id at the type level,
+                    // so no comparison appears in the body at all.
                     let has_cpi_check = body.as_ref().is_some_and(|b| {
-                        b.contains("program_id")
-                            || b.contains("key() !=")
-                            || b.contains("expected_program")
-                    });
+                        let code = strip_line_comments(b);
+                        [
+                            "key() ==",
+                            "key() !=",
+                            ".key ==",
+                            ".key !=",
+                            "program_id ==",
+                            "program_id !=",
+                            "require_keys_eq!",
+                            "require_keys_neq!",
+                            "expected_program",
+                        ]
+                        .iter()
+                        .any(|needle| code.contains(needle))
+                    }) || mentions_type(params, "Program<");
 
                     let uses_cpi = body.as_ref().is_some_and(|b| {
                         b.contains("invoke(")
@@ -1697,6 +1729,102 @@ mod data_struct_tests {
     fn a_plain_struct_is_not_an_event() {
         let s = structs_in("pub struct Vault {\n    pub total: u64,\n}\n");
         assert!(!s[0].is_anchor_event);
+    }
+}
+
+#[cfg(test)]
+mod cpi_check_tests {
+    //! A CPI program-id check is a COMPARISON, not a mention of the words.
+    use super::*;
+    use std::fs;
+
+    async fn graph_for(src: &str, name: &str) -> ProgramGraph {
+        let root = std::env::temp_dir().join(format!("ares-cpi-{}-{name}", std::process::id()));
+        let s = root.join("src");
+        fs::create_dir_all(&s).unwrap();
+        fs::write(s.join("lib.rs"), src).unwrap();
+        let g = MapperAgent::new(&root).analyze().await.unwrap();
+        fs::remove_dir_all(&root).ok();
+        g
+    }
+
+    /// The exact shape of `dataset/solana-common-attack-vectors/
+    /// arbitrary-cpi-stub`, a stub written to be caught, whose source carries
+    /// the comment `// VULNERABILITY: arbitrary-cpi`. The old test was
+    /// `body.contains("program_id")`, which this satisfies by NAMING the field
+    /// it populates — so `uses_cpi && !has_cpi_program_id_check` never fired and
+    /// the scan reported zero findings.
+    #[tokio::test]
+    async fn a_program_id_field_initialiser_is_not_a_validation() {
+        let g = graph_for(
+            "pub fn process(accounts: &[AccountInfo]) -> ProgramResult {\n\
+             \x20   let ix = Instruction {\n\
+             \x20       program_id: *target_program.key,\n\
+             \x20       accounts: vec![],\n\
+             \x20       data: vec![],\n\
+             \x20   };\n\
+             \x20   invoke(&ix, &[source.clone()])?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "field-init",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(i.uses_cpi, "invoke( is a CPI");
+        assert!(
+            !i.has_cpi_program_id_check,
+            "populating `program_id:` is the unvalidated call, not a check"
+        );
+    }
+
+    /// The comparisons that ARE checks must keep counting, or this trades a
+    /// false negative for a false positive on correct code.
+    #[tokio::test]
+    async fn a_real_comparison_counts_as_a_validation() {
+        for guard in [
+            "    if *target_program.key != spl_token::id() { return Err(E); }",
+            "    require_keys_eq!(target_program.key(), spl_token::id());",
+            "    if target_program.key() == expected { }",
+        ] {
+            let g = graph_for(
+                &format!(
+                    "pub fn process(accounts: &[AccountInfo]) -> ProgramResult {{\n\
+                     {guard}\n\
+                     \x20   invoke(&ix, &[source.clone()])?;\n\
+                     \x20   Ok(())\n\
+                     }}\n"
+                ),
+                "guarded",
+            )
+            .await;
+            let i = g.instructions.first().expect("one instruction");
+            assert!(
+                i.has_cpi_program_id_check,
+                "this validates the CPI target: {guard}"
+            );
+        }
+    }
+
+    /// Anchor's `Program<'info, T>` validates the program id at the type level,
+    /// so a correct Anchor CPI has no comparison in its body at all. Read from
+    /// the parameters, or every Anchor handler becomes a false positive.
+    #[tokio::test]
+    async fn an_anchor_program_account_counts_as_a_validation() {
+        let g = graph_for(
+            "pub fn process(token_program: Program<'info, Token>) -> Result<()> {\n\
+             \x20   let cpi = CpiContext::new(token_program.to_account_info(), accs);\n\
+             \x20   token::transfer(cpi, amount)?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "anchor-program",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(i.uses_cpi, "CpiContext is a CPI");
+        assert!(
+            i.has_cpi_program_id_check,
+            "`Program<'info, T>` is the type-level program-id check"
+        );
     }
 }
 
