@@ -40,7 +40,13 @@ config = { workspace = true }
 chrono = "0.4"
 which = { workspace = true }
 walkdir = { workspace = true }
-printpdf = "0.12.5"
+# Pinned to 0.7 deliberately. `commands/pdf.rs` is written against the 0.7 API
+# (PdfLayerReference / IndirectFontRef / use_text). 0.12 removed all three, so
+# the automated 0.7 -> 0.12.5 bump did not compile and took Core CI red. For a
+# 0.x crate a *minor* bump is a breaking change, which is why dependabot.yml
+# now ignores minor updates here. Porting pdf.rs to the 0.12 API is real work,
+# not a version pin — track it separately before unpinning.
+printpdf = "0.7.0"
 
 reqwest = { workspace = true }
 tracing-appender = "0.2.5"

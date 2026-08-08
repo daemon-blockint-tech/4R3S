@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Prove the Verify-Claims release gate rejects and accepts for the right reasons.
 
-ARES has no committed prediction output yet, so CI cannot score the real system.
-This checks the gate mechanism instead, on synthetic predictions derived from a
-real ground truth file:
+This checks the gate *mechanism*, on synthetic predictions derived from a real
+ground truth file. It is a separate question from how ARES scores: a threshold
+comparison that silently stopped rejecting would let any real score through, and
+the real score alone cannot reveal that. So this runs regardless of whether
+eval/predictions/ares-latest.csv exists, and at its own threshold — the one
+passed here describes the synthetic cases below, not the system.
 
   perfect       every label reproduced           -> F1 1.00 -> exit 0
   degraded      a fraction of labels dropped     -> F1 < target -> exit 1
@@ -75,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"GATE SELF-TEST FAILED — {failure}", file=sys.stderr)
         return 1
     print(f"gate self-test passed: {len(cases)} cases behaved as specified at --target-f1 {args.target_f1}")
-    print("ARES itself is unscored; these are synthetic predictions.")
+    print("These are synthetic predictions — nothing here is an ARES score.")
     return 0
 
 

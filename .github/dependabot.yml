@@ -54,6 +54,16 @@ updates:
       core-cargo:
         patterns:
           - "*"
+    ignore:
+      # Cargo treats a 0.x *minor* bump as breaking, but dependabot labels it
+      # "version-update:semver-minor" and the group rolls it up with unrelated
+      # patches. That is exactly how printpdf went 0.7.0 -> 0.12.5 inside a PR
+      # titled "2 updates" and took Core CI red: the 0.12 API dropped
+      # PdfLayerReference, IndirectFontRef and use_text, which pdf.rs is built
+      # on. Patches still flow; a minor bump on a 0.x crate now has to be a
+      # deliberate port, which is what it always was.
+      - dependency-name: "printpdf"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: pip
     directory: "/eval"
@@ -66,6 +76,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # redis's upper bound here belongs to arq (`redis[hiredis]<6,>=4.2.0`),
+      # but requirements.txt states it as a bare pin, so dependabot bumped it
+      # to 8.1.0 and made the file unsatisfiable. Patch/minor updates inside
+      # 5.x still flow; crossing the major boundary requires arq to move first.
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major"]
 
   # Keep the GitHub Actions used in .github/workflows pinned to current versions.
   - package-ecosystem: github-actions

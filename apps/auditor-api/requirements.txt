@@ -13,7 +13,12 @@
 # assuming compatibility.
 fastapi==0.141.1
 arq==0.28.0
-redis==8.1.0
+# Ceiling is arq's, not ours: arq 0.28.0 declares `redis[hiredis]<6,>=4.2.0`.
+# An automated bump to 8.1.0 made the file unsatisfiable (ResolutionImpossible)
+# and took the auditor-api CI job red — pip cannot honour both pins at once.
+# Do not raise this past 5.x until arq itself widens the range; dependabot.yml
+# ignores major bumps here for that reason.
+redis==5.3.1
 pydantic==2.13.4
 
 # Server. Not pinned to a verified version: uvicorn is the dev entrypoint
