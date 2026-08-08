@@ -11,7 +11,7 @@
  * "keep third-party **strong-copyleft (GPL/AGPL)** dependencies out of any
  * published artifact (LGPL and permissive are fine)":
  *
- *   - GPL-* and AGPL-* fail.
+ *   - The GPL and AGPL family fails, however it is spelled — see BANNED.
  *   - LGPL-* passes. It is a substring of "GPL", which is exactly the trap a
  *     naive grep falls into, so it is excluded explicitly and tested below.
  *   - MPL/EPL/CDDL pass. They are weak copyleft, and the rule does not ban them.
@@ -19,7 +19,9 @@
  *     third-party dependency.
  *   - UNKNOWN is reported but does not fail. A package that simply omits the
  *     field is not evidence of copyleft, and failing on it would make the gate
- *     noisy enough to get switched off — which is how the last one died.
+ *     noisy enough to get switched off — which is how the last one died. But a
+ *     package that DID declare something license-checker could not parse is not
+ *     unknown at all, so its own declaration is re-read first; see npmPackages.
  *
  * WHICH TREES, and why it is no longer just the root. This used to invoke
  * license-checker with no `--start`, so it walked only the tree rooted at
@@ -45,11 +47,45 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const BANNED = /(?<!L)GPL-|^AGPL/i;
+
+/**
+ * Match the GPL/AGPL *family*, not one punctuation of it.
+ *
+ * The previous `/(?<!L)GPL-|^AGPL/` required a literal hyphen after GPL, so it
+ * recognised canonical SPDX ids and nothing else — `GPL`, `GPLv2`, `GPLv3`,
+ * `GNU GPL` and `GNU General Public License v3.0` all tested false and shipped.
+ * Nothing normalises those away before they get here: license-checker passes a
+ * legacy `licenses: [{type: …}]` array through VERBATIM, and `pnpm licenses
+ * list` reports whatever the package declared, which is the 700+-package
+ * auditor-web tree.
+ *
+ * `\b` is the LGPL carve-out, which the rule requires (LGPL and permissive are
+ * fine; only strong copyleft is banned). There is no word boundary between the
+ * L and the GPL in "LGPL", so "LGPL-2.1" does not match — while "MIT OR
+ * GPL-2.0" still does. The second alternative catches the prose spelling, with
+ * the same carve-out for Lesser/Library (LGPL 2.0's original name).
+ */
+const BANNED = /\bA?GPL|(?<!LESSER )(?<!LIBRARY )GENERAL PUBLIC LICEN[SC]E/i;
 
 function toArray(raw) {
   if (raw === undefined || raw === null) return ["UNKNOWN"];
   return Array.isArray(raw) ? raw.map(String) : [String(raw)];
+}
+
+/**
+ * What a package's own package.json declares, in every shape npm has used:
+ * `license: "MIT"`, `license: {type}`, `licenses: [{type}]`, `licenses: ["MIT"]`.
+ */
+function declaredLicenses(dir) {
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
+  } catch {
+    return []; // unreadable or absent — nothing to add beyond what the walker said
+  }
+  const one = (v) => (typeof v === "string" ? v : typeof v?.type === "string" ? v.type : null);
+  const raw = pkg.license ?? pkg.licenses;
+  return (Array.isArray(raw) ? raw.map(one) : [one(raw)]).filter(Boolean);
 }
 
 /** Root package + every apps/* that is an npm or pnpm package. */
@@ -89,7 +125,16 @@ function npmPackages(tree) {
     [bin, "--json", "--production", "--start", tree.abs],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
-  return Object.entries(JSON.parse(json)).map(([id, entry]) => ({ id, licenses: toArray(entry.licenses) }));
+  return Object.entries(JSON.parse(json)).map(([id, entry]) => {
+    const licenses = toArray(entry.licenses);
+    // license-checker resolves anything that is not a parseable SPDX expression
+    // to UNKNOWN — "GPLv3" and "GNU GPL" included — and UNKNOWN is deliberately
+    // non-fatal above. So on this path a legacy spelling is not merely unmatched
+    // by BANNED, it never reaches BANNED at all: read what the package itself
+    // declared before trusting the walker's UNKNOWN.
+    if (entry.path && licenses.some((l) => /UNKNOWN/i.test(l))) licenses.push(...declaredLicenses(entry.path));
+    return { id, licenses };
+  });
 }
 
 function pnpmPackages(tree) {
