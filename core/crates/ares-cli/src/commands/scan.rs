@@ -41,9 +41,20 @@ pub async fn execute(
         program_path
     );
 
-    // Verify Trident is available
-    let trident_version = check_trident_installation().await?;
-    info!("Trident version: {}", trident_version);
+    // Only when it will actually be used. This ran unconditionally, so
+    // `--fuzz false` aborted with "trident-cli not found" before any analysis —
+    // the flag skipped the fuzzing WORK but not the fuzzing PREREQUISITE.
+    //
+    // That made a static-only scan impossible anywhere without a fuzzer
+    // installed: CI, a container, and the eval reproduction documented in
+    // eval/predictions/README.md, which is `--fuzz false` over 159 targets.
+    let trident_version = if fuzz {
+        let v = check_trident_installation().await?;
+        info!("Trident version: {}", v);
+        Some(v)
+    } else {
+        None
+    };
 
     // Phase 1: Initialize program target
     let target_name = program_path
@@ -81,10 +92,6 @@ pub async fn execute(
     info!("[2/5] Hypothesis Generator: Identifying potential vulnerability patterns...");
     let hypotheses = generate_initial_hypotheses(&program_graph);
     info!("Generated {} vulnerability hypotheses", hypotheses.len());
-
-    // Initialize Trident tool
-    let trident = TridentTool::new(config.trident_path.as_deref())?;
-    let trident = trident.with_working_dir(program_path.to_path_buf());
 
     // Phase 1: Fuzzing with Trident (if enabled)
     let mut findings: Vec<Finding> = Vec::new();
@@ -166,6 +173,12 @@ pub async fn execute(
 
     if fuzz {
         info!("[3/5] Fuzzer Orchestrator: Running Trident fuzz campaign...");
+
+        // Constructed here rather than above, for the same reason the version
+        // check moved: `TridentTool::new` resolves `trident` on PATH and errors
+        // if it is absent, and the binding is read nowhere outside this block.
+        let trident = TridentTool::new(config.trident_path.as_deref())?
+            .with_working_dir(program_path.to_path_buf());
 
         // Check if trident tests exist, otherwise initialize
         let fuzz_tests_dir = program_path.join("trident-tests");
@@ -397,14 +410,23 @@ pub async fn execute(
             generated_at: Utc::now(),
             ares_version: env!("CARGO_PKG_VERSION").to_string(),
             scan_duration_secs: elapsed_secs,
-            agent_pipeline: vec![
-                "Mapper".to_string(),
-                "HypothesisGenerator".to_string(),
-                "FuzzerOrchestrator".to_string(),
-                "Triager".to_string(),
-            ],
+            // Provenance, and it has to be literally true: the fuzzer is listed
+            // only when it ran. This vec was unconditional while the comment
+            // below already claimed "only tools actually executed", so every
+            // `--fuzz false` report named a stage that never executed and a
+            // tool that was never invoked.
+            agent_pipeline: {
+                let mut p = vec!["Mapper".to_string(), "HypothesisGenerator".to_string()];
+                if fuzz {
+                    p.push("FuzzerOrchestrator".to_string());
+                }
+                p.push("Triager".to_string());
+                p
+            },
             // Provenance: only tools actually executed during this scan.
-            tools_used: vec![format!("trident-{}", trident_version)],
+            tools_used: trident_version
+                .map(|v| vec![format!("trident-{}", v)])
+                .unwrap_or_default(),
         },
         summary,
     };
