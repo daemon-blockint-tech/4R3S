@@ -41,6 +41,36 @@ pub async fn execute(
         program_path
     );
 
+    // Refuse a target we cannot read, rather than reporting it clean.
+    //
+    // `MapperAgent::analyze` recognises only `<target>/programs/` or
+    // `<target>/src/` as a source root, and when neither exists it `warn!`s and
+    // returns an empty graph. A `warn!` is not part of the contract a caller
+    // consumes, so the scan then ran to completion and wrote a fully-formed
+    // report: exit 0, `findings: []`, a summary of all zeros, and a
+    // `target.name` taken from the last path segment. Scanning a path that does
+    // not exist at all produced the same thing — a clean bill of health for a
+    // program nobody read.
+    //
+    // Exit code, report existence and report shape were identical between
+    // "scanned and found nothing" and "scanned nothing". For an auditor those
+    // are the two claims that must never be confusable, so the check is here, at
+    // the boundary, and it is an error rather than a warning.
+    if !program_path.exists() {
+        return Err(ares_core::AresError::NotFound(format!(
+            "Program path does not exist: {}",
+            program_path.display()
+        )));
+    }
+    if !program_path.join("programs").is_dir() && !program_path.join("src").is_dir() {
+        return Err(ares_core::AresError::NotFound(format!(
+            "No source to scan at {}: expected a `programs/` or `src/` directory. \
+             ARES reads Solana program source, so a target without one cannot be \
+             audited — reporting it as clean would be a false all-clear.",
+            program_path.display()
+        )));
+    }
+
     // Only when it will actually be used. This ran unconditionally, so
     // `--fuzz false` aborted with "trident-cli not found" before any analysis —
     // the flag skipped the fuzzing WORK but not the fuzzing PREREQUISITE.

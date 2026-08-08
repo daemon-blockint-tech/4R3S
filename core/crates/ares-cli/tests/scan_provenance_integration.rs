@@ -131,3 +131,85 @@ async fn a_static_scan_does_not_need_the_fuzzer_and_does_not_claim_it() {
         "stages that ran must still be reported: {pipeline:?}"
     );
 }
+
+/// ORC2-F6: scanning a path that does not exist wrote a fully-formed report —
+/// exit 0, `findings: []`, an all-zero summary, and a `target.name` taken from
+/// the last path segment. Indistinguishable from a genuine clean audit.
+#[tokio::test]
+async fn a_missing_target_is_an_error_not_a_clean_report() {
+    let root = std::env::current_dir()
+        .expect("cwd")
+        .join(format!(".ares-orc2f6a-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let _scratch = Scratch(root.clone());
+    let output = root.join("out");
+    std::fs::create_dir_all(&output).expect("create out");
+
+    let missing = root.join("no-such-program");
+    let result = ares_v3::commands::scan::execute(
+        &missing,
+        &config(&output),
+        None,
+        false,
+        false,
+        false,
+        60,
+        &output,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "a target that does not exist must not scan cleanly"
+    );
+    assert_eq!(
+        std::fs::read_dir(&output)
+            .expect("out dir")
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .count(),
+        0,
+        "no report may be written for a target that was never read"
+    );
+}
+
+/// The same false all-clear by a different route: the directory exists but
+/// holds no `programs/` or `src/`. `MapperAgent::analyze` only `warn!`s and
+/// returns an empty graph, and a warning is not part of the contract a caller
+/// consumes — so the scan completed and reported the target clean.
+#[tokio::test]
+async fn a_target_with_no_source_root_is_an_error_not_a_clean_report() {
+    let root = std::env::current_dir()
+        .expect("cwd")
+        .join(format!(".ares-orc2f6b-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let _scratch = Scratch(root.clone());
+    let target = root.join("program");
+    let output = root.join("out");
+    // Exists, and even holds Rust — but not where the mapper looks.
+    std::fs::create_dir_all(&target).expect("create target");
+    std::fs::write(target.join("lib.rs"), "pub fn f() {}\n").expect("write stray rs");
+    std::fs::create_dir_all(&output).expect("create out");
+
+    let result = ares_v3::commands::scan::execute(
+        &target,
+        &config(&output),
+        None,
+        false,
+        false,
+        false,
+        60,
+        &output,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "a target with no source root must not scan cleanly"
+    );
+    let err = format!("{:?}", result.unwrap_err());
+    assert!(
+        err.contains("programs/") || err.contains("src/"),
+        "the error must say what was expected, or the caller cannot act on it: {err}"
+    );
+}
