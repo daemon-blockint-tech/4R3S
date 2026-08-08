@@ -732,15 +732,19 @@ impl MapperAgent {
                     // recoverable by the later analyzers, whereas flagging guarded
                     // code trains reviewers to ignore the category entirely.
                     let has_unchecked_arithmetic = body.as_ref().is_some_and(|b| {
-                        let mutating = b.contains(" += ")
-                            || b.contains(" -= ")
-                            || b.contains(" *= ")
-                            || b.contains(" /= ");
-                        let guarded = b.contains(".checked_")
-                            || b.contains(".saturating_")
-                            || b.contains(".wrapping_")
-                            || b.contains(".overflowing_");
-                        mutating && !guarded
+                        let code = strip_line_comments(b);
+                        let guarded = code.contains(".checked_")
+                            || code.contains(".saturating_")
+                            || code.contains(".wrapping_")
+                            || code.contains(".overflowing_");
+                        if guarded {
+                            return false;
+                        }
+                        let mutating = code.contains(" += ")
+                            || code.contains(" -= ")
+                            || code.contains(" *= ")
+                            || code.contains(" /= ");
+                        mutating || has_binary_arithmetic(&code)
                     });
 
                     let effects = extract_account_effects(body.as_deref());
@@ -1027,6 +1031,41 @@ fn parameter_list(signature: &str) -> &str {
     // rather than "" keeps a split signature readable; the caller only runs
     // `contains` over it.
     &signature[open + 1..]
+}
+
+/// Drop `//` comments so a `;`, an operator or a keyword inside prose cannot be
+/// read as code.
+fn strip_line_comments(text: &str) -> String {
+    text.lines()
+        .map(|l| l.split("//").next().unwrap_or(l))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether the code performs plain binary `+`, `-` or `*` between two values.
+///
+/// The rule used to look only for compound assignment (`+=`, `-=`, ...). On the
+/// eval corpus that is 16 of the 48 integer-overflow rows; the other 30 are
+/// ordinary `let total = amount * price;` — invisible, and the single largest
+/// block of false negatives in the whole scan.
+///
+/// Requires spaces on both sides and a value-like character either side, which
+/// is what separates `a + b` from `&mut *ptr`, `-1`, a `Foo + Bar` trait bound
+/// and a `'a + 'b` lifetime bound.
+fn has_binary_arithmetic(code: &str) -> bool {
+    for op in [" + ", " - ", " * "] {
+        for (at, _) in code.match_indices(op) {
+            let before = code[..at].chars().next_back();
+            let after = code[at + op.len()..].chars().next();
+            let lhs =
+                before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ')' || c == ']');
+            let rhs = after.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '(');
+            if lhs && rhs {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Extract function body from text starting at function declaration.
@@ -1467,6 +1506,62 @@ mod unchecked_arithmetic_tests {
             .await;
             let i = g.instructions.first().expect("one instruction");
             assert!(!i.has_unchecked_arithmetic, "{guard} must count as guarded");
+        }
+    }
+
+    /// The gap this widening closes. The rule matched compound assignment only,
+    /// which is 16 of the 48 integer-overflow rows in the eval corpus; the other
+    /// 30 are ordinary `let total = amount * price;` and were invisible — the
+    /// single largest block of false negatives in the whole scan.
+    #[tokio::test]
+    async fn plain_binary_arithmetic_is_unchecked() {
+        for expr in [
+            "        let total = amount * price;",
+            "        let remaining = vault.balance - amount;",
+            "        let new_total = vault.total + amount;",
+        ] {
+            let g = graph_for(expr).await;
+            let i = g.instructions.first().expect("one instruction");
+            assert!(
+                i.has_unchecked_arithmetic,
+                "unguarded binary arithmetic must be reported: {expr}"
+            );
+        }
+    }
+
+    /// The guard still wins over the widened detection, or this trades one false
+    /// positive class for a larger one.
+    #[tokio::test]
+    async fn a_guard_anywhere_still_suppresses_binary_arithmetic() {
+        let g = graph_for(
+            "        let fee = amount.checked_mul(rate).unwrap();\n        let total = fee + base;",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            !i.has_unchecked_arithmetic,
+            "a body that guards its arithmetic must not be flagged by the widened rule"
+        );
+    }
+
+    /// Shapes that contain the operator characters but are not arithmetic. Each
+    /// one would be a false positive on ordinary, correct code.
+    #[tokio::test]
+    async fn operator_lookalikes_are_not_arithmetic() {
+        for expr in [
+            // Prose in a comment — cashio-2022.rs carries exactly this shape.
+            "        // subtract the fee - then credit the vault + close it",
+            // Deref, not multiplication.
+            "        let v = *balance;",
+            // Negative literal, not subtraction.
+            "        let delta = -1;",
+        ] {
+            let g = graph_for(expr).await;
+            let i = g.instructions.first().expect("one instruction");
+            assert!(
+                !i.has_unchecked_arithmetic,
+                "not arithmetic, must not be flagged: {expr}"
+            );
         }
     }
 
