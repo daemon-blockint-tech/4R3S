@@ -12,9 +12,21 @@ on:
     # outside core/, so they must be listed explicitly or a PR touching only
     # one of them would never trigger this workflow.
     paths: [ "core/**", "src/knowledge/vuln-catalog.generated.json", "eval/mappings/ares-core-categories.json", ".github/workflows/core-ci.yml" ]
+  # No `paths:` filter here, deliberately — it costs a Rust toolchain on
+  # TS-only PRs and buys the ability to make these three jobs REQUIRED.
+  #
+  # That trade is settled by how main went red: a grouped Dependabot cargo bump
+  # (printpdf 0.7 -> 0.12.5) failed Core CI and was merged anyway. Branch
+  # protection is the fix, and it cannot cover a path-filtered workflow: GitHub
+  # does not treat a required check that never runs as satisfied, it parks the
+  # PR on "Expected — waiting for status to be reported" forever. So the filter
+  # and the requirement are mutually exclusive, and the requirement is the half
+  # that stops the incident.
+  #
+  # `push` above keeps its filter. Nothing is gated on push, so there is no
+  # deadlock to avoid there and no reason to spend the minutes twice.
   pull_request:
     branches: [ "main" ]
-    paths: [ "core/**", "src/knowledge/vuln-catalog.generated.json", "eval/mappings/ares-core-categories.json", ".github/workflows/core-ci.yml" ]
   workflow_dispatch:
 
 env:
