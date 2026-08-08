@@ -7,6 +7,12 @@ comparison that silently stopped rejecting would let any real score through, and
 the real score alone cannot reveal that. So this runs regardless of whether
 eval/predictions/ares-latest.csv exists, and at its own threshold — the one
 passed here describes the synthetic cases below, not the system.
+This checks the gate MECHANISM, on synthetic predictions derived from a real
+ground truth file. That is a different question from how ARES scores, and it
+stays worth asking now that eval/predictions/ares-latest.csv exists: a threshold
+comparison that quietly stopped rejecting would wave any real score through, and
+looking at the real score cannot reveal it. So the target passed here describes
+the synthetic cases below — never the system.
 
   perfect       every label reproduced           -> F1 1.00 -> exit 0
   degraded      a fraction of labels dropped     -> F1 < target -> exit 1

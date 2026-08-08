@@ -24,6 +24,19 @@ on:
   #
   # `push` above keeps its filter — nothing is gated on push, so there is no
   # deadlock to avoid and no reason to burn the minutes twice.
+  # No `paths:` filter here, deliberately — it costs a Rust toolchain on
+  # TS-only PRs and buys the ability to make these three jobs REQUIRED.
+  #
+  # That trade is settled by how main went red: a grouped Dependabot cargo bump
+  # (printpdf 0.7 -> 0.12.5) failed Core CI and was merged anyway. Branch
+  # protection is the fix, and it cannot cover a path-filtered workflow: GitHub
+  # does not treat a required check that never runs as satisfied, it parks the
+  # PR on "Expected — waiting for status to be reported" forever. So the filter
+  # and the requirement are mutually exclusive, and the requirement is the half
+  # that stops the incident.
+  #
+  # `push` above keeps its filter. Nothing is gated on push, so there is no
+  # deadlock to avoid there and no reason to spend the minutes twice.
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
@@ -80,9 +93,16 @@ jobs:
       # events that action fails the check on informational unmaintained/unsound
       # warnings, not just vulnerabilities. Plain `cargo audit` fails ONLY on
       # vulnerabilities and leaves warnings informational — the intended gate.
-      # The four ignored IDs are DoS-class advisories accepted on the ENG-1
-      # import, tracked for a follow-up dep bump (lopdf>=0.42, quick-xml>=0.41,
-      # crossbeam-epoch>=0.9.20). Runs in core/ via the workflow's
-      # defaults.run.working-directory.
+      # The ignored IDs are DoS-class advisories accepted on the ENG-1 import,
+      # tracked for a follow-up dep bump. Two of the three bumps are still
+      # outstanding: quick-xml is 0.39.4 (needs >=0.41) and crossbeam-epoch is
+      # 0.9.18 (needs >=0.9.20).
+      #
+      # RUSTSEC-2026-0187 (lopdf stack overflow, needs >=0.42) is NO LONGER
+      # ignored: the printpdf 0.7 -> 0.12.5 bump pulled lopdf 0.44.0, so the
+      # advisory does not apply. Dropped rather than left in place, because
+      # `cargo audit --ignore` accepts an ID that matches nothing without
+      # complaint — a stale entry silently pre-approves the vulnerability's
+      # return. Re-add only with a fresh justification.
       - name: Audit
-        run: cargo audit --ignore RUSTSEC-2026-0187 --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 --ignore RUSTSEC-2026-0204
+        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 --ignore RUSTSEC-2026-0204

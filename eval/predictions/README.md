@@ -9,6 +9,9 @@ the ARES engine end-to-end on the EVAL-3 corpus:
 #    The CLI crate has three names: directory `crates/ares-cli/`, package
 #    `ares-v3`, binary `ares`. `-p` takes the *package*, so `-p ares-cli`
 #    fails with "did not match any packages" — as this line used to say.
+#    `-p` takes the PACKAGE name. The CLI crate has three: directory
+#    `crates/ares-cli/`, package `ares-v3`, binary `ares`. This line said
+#    `-p ares-cli`, which exits with "did not match any packages".
 (cd core && cargo build --release -p ares-v3)
 
 # 2. fetch the corpus + ground truth
@@ -28,11 +31,19 @@ python eval/stage_ares_core_targets.py \
 #    every one of the 159 scans aborts without it. It is also the right setting
 #    on principle: this measures the deterministic static layer, and a fuzz
 #    campaign is not reproducible (GOLDEN RULE 2).
+#    `--fuzz false` is required, not a preference. Fuzzing defaults to ON, and
+#    Trident's init aborts on a staged dir ("Anchor.toml was not found in any
+#    parent directory") — so without it all 159 scans fail and step 5 converts
+#    an empty directory. It is also the correct setting on principle: this
+#    measures the deterministic static layer, and a fuzz campaign is not
+#    reproducible (GOLDEN RULE 2).
 for d in eval/data/staging/*/; do
   core/target/release/ares scan "$d" --fuzz false -o eval/data/reports
 done
 
 # 5. convert the reports into the 6-column schema score_detections.py expects
+#    (the flags are --reports-dir / --staging-manifest; this block used to name
+#     --reports / --manifest, which argparse rejects outright)
 python eval/convert_ares_core_reports.py \
   --reports-dir eval/data/reports \
   --staging-manifest eval/data/staging/staging_manifest.json \
@@ -55,6 +66,14 @@ scored it as **F1 0.0** and failed on a number ARES never actually produced
 (golden rule #3 — no trust-me numbers, and equally no trust-me zeros).
 
 ## Last measured run
+# 6. score — this is what the Verify-Claims job runs
+python eval/score_detections.py \
+  --truth eval/data/ground_truth.csv \
+  --predictions eval/predictions/ares-latest.csv \
+  --by category severity
+```
+
+## What that run produces
 
 | | |
 |---|---|
@@ -81,3 +100,22 @@ The engine's own 20-protocol benchmark (the source of `core/README`'s 0.94) is a
 separate measurement on a different corpus, reproduced via `ares benchmark`
 inside `core/`. It is not comparable to the number above and must never be
 presented as if it were.
+Reproduced independently twice, from two separate checkouts, byte-identical
+both times — which is what makes the committed CSV evidence rather than a
+snapshot of one machine.
+
+It is **not** a publishable accuracy claim: recall is below 0.5, and ten of the
+fourteen categories in the truth set score 0.0000 because the static rule set
+emits nothing for them at all. `eval/check_published_claims.py` decides what may
+appear in a README, and it reads the CSV — not this table.
+
+When the file is **absent**, the gate reports `ARES is UNSCORED — any published
+F1 is unverified` and passes; the guarded READMEs correspondingly say "not
+measured". A committed *empty* placeholder was worse than nothing: the gate
+scored it as **F1 0.0** and failed on a number ARES never actually produced
+(golden rule #3 — no trust-me numbers, and equally no trust-me zeros).
+
+The engine's own 20-protocol benchmark (the source of `core/README`'s 0.94) is a
+separate measurement on a different corpus, reproduced via `ares benchmark`
+inside `core/`. It is not comparable to the table above and must never be
+presented as though it were.
