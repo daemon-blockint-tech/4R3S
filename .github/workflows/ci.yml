@@ -332,7 +332,36 @@ jobs:
           # remaining 0.0011 could have been closed by nudging one more gate,
           # and that was declined as metric-fitting.
           #
-          # Fixing the corpus attribution is the way to raise this again.
+          # ---------------------------------------------------------------
+          # 0.54 -> 0.61 (DET-5), and the paragraph above is now history rather
+          # than justification. Declining to tune the gate turned out to be the
+          # right call for a better reason than principle: the recall was not
+          # in those 6 disputed rows at all.
+          #
+          # `has_unchecked_arithmetic` matched compound assignment only —
+          # `+=`, `-=`, `*=`, `/=`. That is 16 of the 48 integer-overflow rows
+          # in the corpus. The other 30 are ordinary `let total = amount *
+          # price;` and were invisible: the single largest block of false
+          # negatives in the whole scan, hiding behind a class that read as
+          # "precision 1.0000" because it barely fired.
+          #
+          #     precision  recall      F1
+          #        0.7429  0.4588  0.5673   the run the 0.55 floor came from
+          #        0.7604  0.4294  0.5489   DET-3 + DET-4
+          #        0.7826  0.5294  0.6316   + DET-5 binary arithmetic
+          #
+          # BOTH went up, and F1 now clears the ORIGINAL floor by 0.08. The
+          # integer-overflow class goes 7 TP -> 24 TP for 2 false positives
+          # (class precision 0.9231), and both of those are on real incident
+          # reproductions — mango-2022 and wormhole-2022 — where ground truth
+          # records only the headline vulnerability (oracle-price-manipulation,
+          # sysvar-spoofing) while the program does contain unchecked
+          # arithmetic. Label granularity, not a wrong finding.
+          #
+          # 0.61 keeps the same ~0.017 drift margin under the measurement that
+          # 0.55 kept under 0.5673.
+          #
+          # Fixing the corpus attribution is still the way to raise this again.
           # Scored WITHOUT --target-f1, so this step fails only when scoring
           # itself fails. The target comparison moved to the reporting step
           # below — see the comment there for why it does not block.
@@ -340,7 +369,7 @@ jobs:
             --truth eval/data/ground_truth.csv \
             --predictions eval/predictions/ares-latest.csv \
             --by category severity \
-            --target-f1 0.54 \
+            --target-f1 0.61 \
             --json-out eval/data/score.json
 
       # Reported, not enforced — a deliberate split, not a weakened gate.
