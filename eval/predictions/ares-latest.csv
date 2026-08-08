@@ -1,15 +1,11 @@
 target_id,category,confidence,status,speculative,severity
-neodyme-workshop:level1,missing-signer-check,low,suspected,False,critical
 neodyme-workshop:level1,missing-owner-check,low,suspected,False,high
 neodyme-workshop:level1,type-cosplay,low,suspected,False,medium
-neodyme-workshop:level2,missing-signer-check,low,suspected,False,critical
 neodyme-workshop:level2,missing-owner-check,low,suspected,False,high
 neodyme-workshop:level2,type-cosplay,low,suspected,False,medium
-neodyme-workshop:level3,missing-signer-check,low,suspected,False,critical
 neodyme-workshop:level3,missing-owner-check,low,suspected,False,high
 neodyme-workshop:level3,type-cosplay,low,suspected,False,medium
 neodyme-workshop:level3,type-cosplay,low,suspected,False,medium
-neodyme-workshop:level4,missing-signer-check,low,suspected,False,critical
 neodyme-workshop:level4,missing-owner-check,low,suspected,False,high
 sealevel-attacks:1-account-data-matching,missing-owner-check,low,suspected,False,high
 sealevel-attacks:3-type-cosplay,type-cosplay,low,suspected,False,medium
@@ -187,7 +183,6 @@ solana-vuln-rust:train:bdf7ca7c5ccd,type-cosplay,low,suspected,False,medium
 solana-vuln-rust:train:bdf7ca7c5ccd,type-cosplay,low,suspected,False,medium
 solana-vuln-rust:train:c54ece27b3df,missing-owner-check,low,suspected,False,high
 solana-vuln-rust:train:c95c0f5bcbc6,missing-owner-check,low,suspected,False,high
-solana-vuln-rust:train:d50393e25438,missing-owner-check,low,suspected,False,high
 solana-vuln-rust:train:d607a8471cdb,type-cosplay,low,suspected,False,medium
 solana-vuln-rust:train:d607a8471cdb,type-cosplay,low,suspected,False,medium
 solana-vuln-rust:train:d607a8471cdb,type-cosplay,low,suspected,False,medium

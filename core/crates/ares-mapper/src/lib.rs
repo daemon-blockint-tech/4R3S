@@ -99,6 +99,27 @@ pub struct InstructionNode {
     /// cause and most of the function-level eval corpus. The honest predicate
     /// is "was it handed an account", not "is it the entry point".
     pub takes_account_params: bool,
+    /// The signature takes an account through an Anchor wrapper that verifies
+    /// the owner on deserialization — `Account<'info, T>`, `AccountLoader`,
+    /// `InterfaceAccount`, `Program`, `Sysvar`.
+    ///
+    /// For these the owner check is the type, so a body with no explicit
+    /// assertion is the correct shape rather than a missing one. Reporting
+    /// "missing ownership check" against them is a false positive by
+    /// construction — measured as one on the eval corpus, where
+    /// `get_config_line(a: &Account<'info, CandyMachine>, ..)` was flagged High.
+    ///
+    /// Deliberately excludes `UncheckedAccount<'info>`, `AccountInfo` and
+    /// `Signer<'info>`: the first two are documented as unvalidated, and the
+    /// third checks a signature, not ownership.
+    pub uses_owner_checked_wrapper: bool,
+    /// The body reaches into an account (`next_account_info`, `.is_signer`,
+    /// `.key`, `.lamports`, ...) rather than only routing one onward.
+    ///
+    /// A native dispatcher that matches a discriminant and delegates never
+    /// touches an account itself, so the absence of a signer idiom in ITS body
+    /// says nothing — the check belongs in the callee.
+    pub touches_account_fields: bool,
     /// The body reads or writes an account's raw bytes or lamports.
     ///
     /// This is what makes a missing owner check *matter*. Without an owner
@@ -310,6 +331,22 @@ const ACCOUNT_BYTE_SOURCES: [&str; 6] = [
     "account_info",
     ".data",
 ];
+
+/// Whether `needle` appears in `text` at an identifier boundary — not as the
+/// tail of a longer identifier.
+///
+/// `UncheckedAccount<` ends in `Account<`, and a plain `contains` therefore
+/// reported Anchor's explicitly-unvalidated wrapper as owner-checked, which is
+/// the exact inversion of what it means.
+fn mentions_type(text: &str, needle: &str) -> bool {
+    text.match_indices(needle).any(|(at, _)| {
+        at == 0
+            || !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
+}
 
 /// Whether `ident` is the whole identifier at the start of `text`, not a prefix
 /// of a longer one — so a binding for `buf` is not matched by `buffer`.
@@ -575,19 +612,27 @@ impl MapperAgent {
                     // It still rejects `fn lamports(&self)` and
                     // `fn try_borrow_data(&self)` — `AccountInfo`'s own methods
                     // rather than handlers, and the class this gate exists for.
+                    // Anchor wrappers whose deserialization verifies the owner.
+                    // `UncheckedAccount` and `AccountInfo` are excluded because
+                    // they are documented as unvalidated, and `Signer` because
+                    // it checks a signature rather than ownership.
+                    let uses_owner_checked_wrapper = [
+                        "Account<",
+                        "AccountLoader<",
+                        "InterfaceAccount<",
+                        "Program<",
+                        "Sysvar<",
+                    ]
+                    .iter()
+                    .any(|w| mentions_type(params, w));
+
                     let takes_account_params = is_native_entry_point
                         || is_anchor_handler
                         || params.contains("AccountInfo")
-                        || [
-                            "Account<",
-                            "AccountLoader<",
-                            "InterfaceAccount<",
-                            "SystemAccount<",
-                            "UncheckedAccount<",
-                            "Signer<",
-                        ]
-                        .iter()
-                        .any(|w| params.contains(w));
+                        || uses_owner_checked_wrapper
+                        || ["SystemAccount<", "UncheckedAccount<", "Signer<"]
+                            .iter()
+                            .any(|w| params.contains(w));
 
                     // The concrete forms a program uses to reach an account's
                     // bytes. `.try_borrow` is a prefix on purpose: `try_borrow_data`,
@@ -595,6 +640,33 @@ impl MapperAgent {
                     // `(*acc.data).try_borrow_mut()` are the same access, and
                     // listing them separately missed the bare form that three
                     // corpus targets use.
+                    // Whether the body reaches into an account at all, as opposed
+                    // to routing one onward. A native `process_instruction` that
+                    // only matches on the discriminant and delegates —
+                    // `WalletInstruction::Deposit { amount } => deposit(program_id,
+                    // accounts, amount)` — never touches an account itself, and a
+                    // signer assertion does not belong in it. The check belongs
+                    // where the account is USED, which is the callee.
+                    //
+                    // Reading the dispatcher's body for a signer idiom and finding
+                    // none is therefore not evidence of anything, and it was the
+                    // bulk of the missing-signer false positives once the rustfmt
+                    // signature fix made these handlers visible at all.
+                    let touches_account_fields = body.as_ref().is_some_and(|b| {
+                        [
+                            "next_account_info",
+                            ".is_signer",
+                            ".key",
+                            ".lamports",
+                            ".data",
+                            ".owner",
+                            "accounts[",
+                            "accounts.iter",
+                        ]
+                        .iter()
+                        .any(|needle| b.contains(needle))
+                    });
+
                     let touches_raw_account_data = body.as_ref().is_some_and(|b| {
                         [
                             ".data.borrow",
@@ -680,6 +752,8 @@ impl MapperAgent {
                         is_native_entry_point,
                         is_anchor_handler,
                         takes_account_params,
+                        uses_owner_checked_wrapper,
+                        touches_account_fields,
                         touches_raw_account_data,
                         has_owner_check: has_owner,
                         has_cpi_program_id_check: has_cpi_check,
@@ -1703,6 +1777,59 @@ mod signature_tests {
             i.takes_account_params,
             "a `;` inside a comment must not end the signature"
         );
+    }
+
+    /// Anchor's `Account<'info, T>` verifies `owner == declared program` when it
+    /// deserializes, so the owner check is the type. A body with no explicit
+    /// assertion is the correct shape, and reporting one as missing is a false
+    /// positive by construction — measured as one on the eval corpus.
+    #[tokio::test]
+    async fn an_anchor_typed_account_carries_its_own_owner_check() {
+        let g = graph_for(
+            "pub fn get_config_line<'info>(\n\
+             \x20   a: &Account<'info, CandyMachine>,\n\
+             \x20   index: usize,\n\
+             ) -> Result<ConfigLine, ProgramError> {\n\
+             \x20   let d = a.to_account_info().data.borrow();\n\
+             \x20   Ok(ConfigLine::default())\n\
+             }\n",
+            "anchor-typed",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(i.takes_account_params, "it plainly does take an account");
+        assert!(
+            i.uses_owner_checked_wrapper,
+            "`Account<'info, T>` is owner-checked by Anchor"
+        );
+    }
+
+    /// The exclusions are the point: these wrappers do NOT verify an owner, so
+    /// a missing check against them is still a real finding.
+    #[tokio::test]
+    async fn unchecked_and_signer_wrappers_are_not_owner_checked() {
+        for (src, name) in [
+            (
+                "pub fn f(a: &UncheckedAccount<'info>) -> ProgramResult {\n    Ok(())\n}\n",
+                "unchecked",
+            ),
+            (
+                "pub fn f(a: &Signer<'info>) -> ProgramResult {\n    Ok(())\n}\n",
+                "signer",
+            ),
+            (
+                "pub fn f(a: &AccountInfo) -> ProgramResult {\n    Ok(())\n}\n",
+                "raw-info",
+            ),
+        ] {
+            let g = graph_for(src, name).await;
+            let i = g.instructions.first().expect("one instruction");
+            assert!(i.takes_account_params, "{name} takes an account");
+            assert!(
+                !i.uses_owner_checked_wrapper,
+                "{name} does not verify an owner and must stay reportable"
+            );
+        }
     }
 
     /// A predicate about what a function RECEIVES must not be answered by its
