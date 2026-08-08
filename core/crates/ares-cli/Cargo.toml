@@ -40,13 +40,15 @@ config = { workspace = true }
 chrono = "0.4"
 which = { workspace = true }
 walkdir = { workspace = true }
-# Pinned to 0.7 deliberately. `commands/pdf.rs` is written against the 0.7 API
-# (PdfLayerReference / IndirectFontRef / use_text). 0.12 removed all three, so
-# the automated 0.7 -> 0.12.5 bump did not compile and took Core CI red. For a
-# 0.x crate a *minor* bump is a breaking change, which is why dependabot.yml
-# now ignores minor updates here. Porting pdf.rs to the 0.12 API is real work,
-# not a version pin — track it separately before unpinning.
-printpdf = "0.7.0"
+# 0.12.5, matching the `Op`-based API `commands/pdf.rs` is written against —
+# CORE-1 did the port, so the "track it separately before unpinning" note this
+# comment used to carry is discharged. Do NOT pin back to 0.7: pdf.rs no longer
+# compiles against it, and 0.7 pulls lopdf 0.31, which reintroduces
+# RUSTSEC-2026-0187 — an advisory core-ci.yml no longer ignores, so the pin
+# fails `cargo audit` as well as the build. dependabot.yml still withholds
+# minor and major bumps here, because a minor bump on a 0.x crate is a breaking
+# change and needs a deliberate port; that guard stays.
+printpdf = "0.12.5"
 
 reqwest = { workspace = true }
 tracing-appender = "0.2.5"
