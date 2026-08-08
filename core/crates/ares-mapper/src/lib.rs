@@ -1,4 +1,5 @@
 use ares_core::AresResult;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
@@ -23,6 +24,15 @@ pub struct ProgramGraph {
     /// attribute, so nothing in the graph could see them, and the type-cosplay
     /// class had zero predictions across the whole eval corpus.
     pub data_structs: Vec<DataStructNode>,
+    /// Type names the program uses somewhere only *account data* appears.
+    ///
+    /// `data_structs` cannot distinguish an account's stored type from an
+    /// instruction-argument struct, an event payload or a plain helper — the
+    /// declaration looks identical. Only the use site can, and type cosplay is
+    /// a property of stored bytes, so a struct with no such use site has no
+    /// account to be substituted for. Sorted, because everything the graph
+    /// feeds must be reproducible byte-for-byte (GOLDEN RULE 2).
+    pub account_data_types: BTreeSet<String>,
     pub cpi_calls: Vec<CpiCall>,
     pub dependencies: Vec<String>,
     pub all_source_files: Vec<PathBuf>,
@@ -76,6 +86,19 @@ pub struct InstructionNode {
     /// the accounts struct (`Signer<'info>`), NOT in the body, so reading the
     /// body for one and finding nothing says nothing at all.
     pub is_anchor_handler: bool,
+    /// The signature names an account the caller supplies — `&[AccountInfo]`,
+    /// a bare `&AccountInfo` parameter, or `Context<T>`.
+    ///
+    /// Wider than the two convention flags on purpose. Every `pub fn` in the
+    /// crate lands in `instructions`, including byte-decoding helpers like
+    /// `unpack_amount(input: &[u8])`, and those match `touches_raw_account_data`
+    /// (`try_from_slice`) while having no reason to contain the word `owner` —
+    /// so the ownership rule reported them as High. But narrowing to entry
+    /// points would throw away the *other* real shape: a helper handed
+    /// individual accounts (`bank: &AccountInfo`) is exactly the Cashio root
+    /// cause and most of the function-level eval corpus. The honest predicate
+    /// is "was it handed an account", not "is it the entry point".
+    pub takes_account_params: bool,
     /// The body reads or writes an account's raw bytes or lamports.
     ///
     /// This is what makes a missing owner check *matter*. Without an owner
@@ -114,6 +137,12 @@ pub struct DataStructNode {
     pub name: String,
     /// `#[account]` — Anchor writes and checks an 8-byte type discriminator.
     pub has_anchor_account_attr: bool,
+    /// `#[event]` — an Anchor event payload. It is emitted into the transaction
+    /// log and never stored in an account, so it has no account to be
+    /// substituted for. Tracked separately because client code in the same
+    /// crate decodes events with `try_from_slice`, the same idiom that marks a
+    /// type as account data.
+    pub is_anchor_event: bool,
     /// A leading field that names the type (`key: Key`, `discriminator`, `tag`).
     /// The manual equivalent of Anchor's discriminator; Metaplex uses `key: Key`.
     pub has_discriminator_field: bool,
@@ -182,12 +211,16 @@ fn collect_data_structs(content: &str, path: &Path, out: &mut Vec<DataStructNode
         // comment lines only, so an unrelated earlier struct's attributes are
         // never attributed to this one.
         let mut has_anchor_account_attr = false;
+        let mut is_anchor_event = false;
         let mut j = i;
         while j > 0 {
             let above = lines[j - 1].trim();
             if above.starts_with("#[") {
                 if above.contains("#[account") {
                     has_anchor_account_attr = true;
+                }
+                if above.contains("#[event") {
+                    is_anchor_event = true;
                 }
                 j -= 1;
             } else if above.starts_with("//") || above.is_empty() {
@@ -232,10 +265,175 @@ fn collect_data_structs(content: &str, path: &Path, out: &mut Vec<DataStructNode
         out.push(DataStructNode {
             name,
             has_anchor_account_attr,
+            is_anchor_event,
             has_discriminator_field,
             field_count,
             file_path: path.to_path_buf(),
         });
+    }
+}
+
+/// The identifier immediately preceding byte offset `end`, if there is one.
+fn ident_ending_at(s: &str, end: usize) -> Option<String> {
+    let head = &s[..end];
+    let start = head
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    let name = &head[start..];
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// Type names this file uses somewhere only an account's *data* appears.
+///
+/// A struct declaration says nothing about whether its bytes are ever stored
+/// in an account: an accounts context, an instruction-argument struct, an event
+/// payload and a real account type are all just `pub struct X { .. }`. Type
+/// cosplay can only happen to stored bytes, so the use site is the evidence.
+///
+/// Deliberately narrow. An unrecognised spelling costs one missed finding;
+/// a loose match (say, every `::<T>` turbofish) puts back the false positives
+/// this exists to remove — the rule already fired on every context struct in
+/// the program.
+/// The byte spellings that mean "these bytes came out of an account".
+const ACCOUNT_BYTE_SOURCES: [&str; 6] = [
+    ".data.borrow",
+    ".try_borrow_data",
+    ".try_borrow_mut_data",
+    ".data.borrow_mut",
+    "account_info",
+    ".data",
+];
+
+/// Whether `ident` is the whole identifier at the start of `text`, not a prefix
+/// of a longer one — so a binding for `buf` is not matched by `buffer`.
+fn starts_with_ident(text: &str, ident: &str) -> bool {
+    text.strip_prefix(ident)
+        .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+}
+
+/// Whether a decode call's argument is account bytes rather than instruction
+/// data.
+///
+/// `T::try_from_slice(..)` is Borsh's entry point for BOTH, and on native Solana
+/// the commonest use by far is decoding INSTRUCTION data —
+/// `let args = InitArgs::try_from_slice(instruction_data)?;`. Accepting that as
+/// proof that `InitArgs` lives in an account made every instruction-argument
+/// struct a type-cosplay candidate: the largest false-positive class on native
+/// targets, and the one the rule's own finding text asserts as fact
+/// ("Struct 'X' is deserialized from account data") rather than hedging. An
+/// assertion at 0.72 confidence and non-speculative is exactly the shape
+/// REMEMBER persists into durable memory, so the gate has to earn the sentence.
+fn decode_reads_account_bytes(content: &str, arg: &str) -> bool {
+    if ACCOUNT_BYTE_SOURCES.iter().any(|m| arg.contains(m)) {
+        return true;
+    }
+
+    // `let buf = acc.data.borrow(); T::try_from_slice(&buf)?` — the bytes reach
+    // the decode through a local. Resolve exactly one hop, via the binding line.
+    // Deeper chains are given up on rather than guessed at: a missed type costs
+    // recall, an invented one costs a false statement of fact.
+    let ident: String = arg
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches("mut ")
+        .trim()
+        .trim_start_matches('&')
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if ident.is_empty() {
+        return false;
+    }
+
+    content.lines().any(|line| {
+        let trimmed = line.trim_start();
+        let Some(after_let) = trimmed.strip_prefix("let ") else {
+            return false;
+        };
+        let bound = after_let.strip_prefix("mut ").unwrap_or(after_let);
+        starts_with_ident(bound, &ident) && ACCOUNT_BYTE_SOURCES.iter().any(|m| line.contains(m))
+    })
+}
+
+/// The text of the first argument of the call whose `(` follows `from`.
+fn call_argument(content: &str, from: usize) -> &str {
+    let Some(open_rel) = content[from..].find('(') else {
+        return "";
+    };
+    let open = from + open_rel;
+    let mut depth = 0i32;
+    for (i, ch) in content[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &content[open + 1..open + i];
+                }
+            }
+            _ => {}
+        }
+    }
+    ""
+}
+
+fn collect_account_data_types(content: &str, out: &mut BTreeSet<String>) {
+    // `Vault::try_from_slice(..)`, `state::Vault::unpack(..)` — the manual
+    // decode of raw account bytes into a type. `::unpack` covers
+    // `unpack_unchecked` / `unpack_from_slice` as a prefix.
+    //
+    // Gated on the ARGUMENT, not just the call: see `decode_reads_account_bytes`.
+    // `::from_account_info` is exempt because its name already states the source.
+    for call in [
+        "::try_from_slice",
+        "::try_deserialize",
+        "::deserialize",
+        "::unpack",
+        "::from_account_info",
+    ] {
+        for (at, _) in content.match_indices(call) {
+            if let Some(name) = ident_ending_at(content, at) {
+                if call == "::from_account_info"
+                    || decode_reads_account_bytes(content, call_argument(content, at + call.len()))
+                {
+                    out.insert(name);
+                }
+            }
+        }
+    }
+
+    // `Account<'info, Vault>` / `AccountLoader<'info, Pool>` — Anchor's typed
+    // wrappers, where the type parameter *is* the account's data. Both spellings
+    // are needed: `Account<` does not occur inside `AccountLoader<`. The
+    // comma requirement is what excludes `UncheckedAccount<'info>`, which names
+    // no type at all, and no wrapper spells `Context<T>` — a context is the
+    // parameter list, not the bytes.
+    for wrapper in ["Account<", "AccountLoader<"] {
+        for (at, _) in content.match_indices(wrapper) {
+            let after = &content[at + wrapper.len()..];
+            let Some(generics) = after.split('>').next() else {
+                continue;
+            };
+            if !generics.contains(',') {
+                continue;
+            }
+            let last = generics.rsplit(',').next().unwrap_or("");
+            let name: String = last
+                .trim()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                out.insert(name);
+            }
+        }
     }
 }
 
@@ -309,6 +507,11 @@ impl MapperAgent {
             // across the whole eval corpus.
             collect_data_structs(&content, path, &mut graph.data_structs);
 
+            // …and which of those names are ever *used* as an account's bytes.
+            // Collected over every file, since a struct and its decode site
+            // routinely live apart (`state.rs` / `processor.rs`).
+            collect_account_data_types(&content, &mut graph.account_data_types);
+
             // Detect instructions (functions in #[program] modules)
             for (line_no, line) in content.lines().enumerate() {
                 let line_num = (line_no + 1) as u32;
@@ -332,12 +535,59 @@ impl MapperAgent {
                     // body. It decides whether an absent signer idiom means
                     // anything: Anchor puts the constraint in the accounts struct,
                     // so an Anchor body with no idiom is the normal, correct shape.
-                    let sig_line = line.trim();
-                    let is_native_entry_point = sig_line.contains("&[AccountInfo")
-                        || sig_line.contains("& [AccountInfo")
-                        || sig_line.contains("accounts: &[");
+                    //
+                    // The WHOLE signature, not the `pub fn` line. The canonical
+                    // native handler — `pub fn process_instruction(program_id:
+                    // &Pubkey, accounts: &[AccountInfo], instruction_data:
+                    // &[u8]) -> ProgramResult` — is 117 columns, so rustfmt
+                    // always splits it. Reading one line made the effective gate
+                    // "the signature happened to fit on one line": the identical
+                    // program, formatted the way it ships, reported
+                    // `is_native_entry_point = false` and a genuinely
+                    // unauthenticated handler produced no hypothesis at all.
+                    //
+                    // See `extract_signature` for why the bound is depth-aware
+                    // and comment-stripped, and `parameter_list` for why these
+                    // predicates read the parameters rather than the whole
+                    // declaration.
+                    let signature = extract_signature(rest);
+                    let params = parameter_list(&signature);
+                    let is_native_entry_point = params.contains("&[AccountInfo")
+                        || params.contains("& [AccountInfo")
+                        || params.contains("accounts: &[");
                     let is_anchor_handler =
-                        sig_line.contains("Context<") || sig_line.contains("Context <");
+                        params.contains("Context<") || params.contains("Context <");
+                    // Anchor's typed wrappers name an account as much as a raw
+                    // `AccountInfo` does. Without them the gate rejected
+                    // `get_config_line(a: &Account<'info, CandyMachine>, ..)`,
+                    // which plainly does take an account.
+                    //
+                    // Measured cost, stated because it is a cost: on the 170-row
+                    // corpus this re-admits exactly one row and that row is a
+                    // FALSE positive (overall F1 0.5481 -> 0.5461). Kept anyway.
+                    // The gate's job is "does this function receive an account",
+                    // and for `&Account<'info, T>` the answer is yes; the wrong
+                    // label on that row comes from the owner rule's own
+                    // heuristic, not from this test. Excluding a whole Anchor
+                    // calling convention to buy 0.002 F1 would be fitting the
+                    // gate to the corpus rather than to Solana.
+                    //
+                    // It still rejects `fn lamports(&self)` and
+                    // `fn try_borrow_data(&self)` — `AccountInfo`'s own methods
+                    // rather than handlers, and the class this gate exists for.
+                    let takes_account_params = is_native_entry_point
+                        || is_anchor_handler
+                        || params.contains("AccountInfo")
+                        || [
+                            "Account<",
+                            "AccountLoader<",
+                            "InterfaceAccount<",
+                            "SystemAccount<",
+                            "UncheckedAccount<",
+                            "Signer<",
+                        ]
+                        .iter()
+                        .any(|w| params.contains(w));
 
                     // The concrete forms a program uses to reach an account's
                     // bytes. `.try_borrow` is a prefix on purpose: `try_borrow_data`,
@@ -429,6 +679,7 @@ impl MapperAgent {
                         has_signer_check: has_signer,
                         is_native_entry_point,
                         is_anchor_handler,
+                        takes_account_params,
                         touches_raw_account_data,
                         has_owner_check: has_owner,
                         has_cpi_program_id_check: has_cpi_check,
@@ -633,6 +884,75 @@ impl MapperAgent {
 
         Ok(graph)
     }
+}
+
+/// The declaration text of the `pub fn` at the start of `text`, up to but not
+/// including the body.
+///
+/// Bounded by the body's `{`, or by the `;` of a bodyless `extern` declaration —
+/// otherwise one function's calling convention would be read off the next
+/// function's parameters. Both bounds are honoured only at bracket depth 0, and
+/// `//` comments are dropped first, because an earlier version scanned for the
+/// first `{` or `;` anywhere and claimed in its own comment that "a Rust
+/// signature contains neither character". It does:
+///
+///   - `[u8; 32]` — PDA seeds, discriminators, ed25519 signatures — is an
+///     everyday Solana parameter type, and its `;` truncated the signature
+///     before the account parameter, blinding every gate below. That was a
+///     regression against even the old single-line reader.
+///   - `eval/fixtures/rs/incident-repros/cashio-2022.rs` carries prose comments
+///     inside its parameter list, and one `;` in such a comment did the same.
+fn extract_signature(text: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0i32;
+
+    for line in text.lines() {
+        // Not a Rust lexer: a `//` inside a string literal would cut early. No
+        // signature in the corpus has one, and erring toward a shorter
+        // signature only costs recall, never a false positive.
+        let code = line.split("//").next().unwrap_or(line);
+        for ch in code.chars() {
+            match ch {
+                '(' | '[' => depth += 1,
+                ')' | ']' => depth -= 1,
+                '{' | ';' if depth <= 0 => return out,
+                _ => {}
+            }
+            out.push(ch);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// The parameter list of a signature — the first balanced `(...)`, without the
+/// enclosing parentheses.
+///
+/// Predicates about what a function RECEIVES have to read this and not the whole
+/// signature, or the return type answers for them:
+/// `pub fn describe(id: u64) -> Vec<AccountInfo>` takes no accounts at all but
+/// contains "AccountInfo".
+fn parameter_list(signature: &str) -> &str {
+    let Some(open) = signature.find('(') else {
+        return "";
+    };
+    let mut depth = 0i32;
+    for (i, ch) in signature[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &signature[open + 1..open + i];
+                }
+            }
+            _ => {}
+        }
+    }
+    // Unbalanced — a truncated or malformed declaration. Returning the tail
+    // rather than "" keeps a split signature readable; the caller only runs
+    // `contains` over it.
+    &signature[open + 1..]
 }
 
 /// Extract function body from text starting at function declaration.
@@ -1192,6 +1512,23 @@ mod data_struct_tests {
         let s = structs_in("pub struct Ctx<'info> {\n    pub a: u64,\n}\n");
         assert_eq!(s[0].name, "Ctx");
     }
+
+    /// An `#[event]` payload is emitted into the transaction log; it never
+    /// occupies an account, so it cannot be type-cosplayed. It matters because
+    /// client-side code in the same crate deserializes events with
+    /// `try_from_slice` — the same idiom that marks a type as account data.
+    #[test]
+    fn an_event_struct_is_flagged_as_an_event() {
+        let s = structs_in("#[event]\npub struct DepositEvent {\n    pub amount: u64,\n}\n");
+        assert!(s[0].is_anchor_event);
+        assert!(!s[0].has_anchor_account_attr);
+    }
+
+    #[test]
+    fn a_plain_struct_is_not_an_event() {
+        let s = structs_in("pub struct Vault {\n    pub total: u64,\n}\n");
+        assert!(!s[0].is_anchor_event);
+    }
 }
 
 #[cfg(test)]
@@ -1281,5 +1618,443 @@ mod tightening_tests {
         )
         .await;
         assert!(!g.instructions[0].touches_raw_account_data);
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    //! The calling convention decides whether a body-read signal means
+    //! anything, and it was read from the `pub fn` line alone. The canonical
+    //! native handler signature is 117 columns, so rustfmt always splits it —
+    //! which made the effective gate "the signature happened to fit on one
+    //! line". The same program, formatted the way it ships, reported
+    //! `is_native_entry_point = false` and every rule gated on it went silent.
+    use super::*;
+    use std::fs;
+
+    async fn graph_for(src: &str, name: &str) -> ProgramGraph {
+        let root = std::env::temp_dir().join(format!("ares-sig-{}-{name}", std::process::id()));
+        let s = root.join("src");
+        fs::create_dir_all(&s).unwrap();
+        fs::write(s.join("lib.rs"), src).unwrap();
+        let g = MapperAgent::new(&root).analyze().await.unwrap();
+        fs::remove_dir_all(&root).ok();
+        g
+    }
+
+    /// The signature bound used to be `rest.find(['{', ';'])`, whose comment
+    /// claimed "a Rust signature contains neither character". `[u8; 32]` — PDA
+    /// seeds, discriminators, ed25519 signatures — contains one, and truncating
+    /// there cut the signature off before the account parameter. That was a
+    /// regression against even the single-line reader it replaced.
+    #[tokio::test]
+    async fn an_array_parameter_does_not_truncate_the_signature() {
+        let g = graph_for(
+            "pub fn process(seed: [u8; 32], accounts: &[AccountInfo]) -> ProgramResult {\n\
+             \x20   Ok(())\n\
+             }\n",
+            "array-param-oneline",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            i.is_native_entry_point,
+            "`[u8; 32]` before the accounts parameter must not end the signature"
+        );
+        assert!(i.takes_account_params);
+    }
+
+    /// Both defects at once — the shape B2 exists to rescue, carrying the array
+    /// parameter that defeated the fix's own bound.
+    #[tokio::test]
+    async fn a_rustfmt_split_signature_with_an_array_parameter_is_still_an_entry_point() {
+        let g = graph_for(
+            "pub fn process(\n\
+             \x20   seed: [u8; 32],\n\
+             \x20   accounts: &[AccountInfo],\n\
+             ) -> ProgramResult {\n\
+             \x20   Ok(())\n\
+             }\n",
+            "array-param-split",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(i.is_native_entry_point);
+        assert!(i.takes_account_params);
+    }
+
+    /// `cashio-2022.rs` carries prose inside its parameter list, and a single
+    /// `;` in such a comment truncated the signature exactly as an array type
+    /// did.
+    #[tokio::test]
+    async fn a_semicolon_inside_a_comment_does_not_truncate_the_signature() {
+        let g = graph_for(
+            "pub fn process(\n\
+             \x20   // the caller supplies the bank; we never validate it\n\
+             \x20   bank: &AccountInfo,\n\
+             ) -> ProgramResult {\n\
+             \x20   Ok(())\n\
+             }\n",
+            "comment-semicolon",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            i.takes_account_params,
+            "a `;` inside a comment must not end the signature"
+        );
+    }
+
+    /// A predicate about what a function RECEIVES must not be answered by its
+    /// return type.
+    #[tokio::test]
+    async fn account_info_in_the_return_type_is_not_an_account_parameter() {
+        let g = graph_for(
+            "pub fn describe(id: u64) -> Vec<AccountInfo> {\n\
+             \x20   Vec::new()\n\
+             }\n",
+            "return-type-only",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            !i.takes_account_params,
+            "this function takes a u64; AccountInfo appears only in its return type"
+        );
+        assert!(!i.is_native_entry_point);
+    }
+
+    /// The `;` bound still has to work for what it was for: a bodyless
+    /// declaration must not read the next function's parameters.
+    #[tokio::test]
+    async fn a_bodyless_declaration_does_not_borrow_the_next_signature() {
+        let g = graph_for(
+            "pub fn ping(id: u64) -> ProgramResult;\n\
+             pub fn handle(accounts: &[AccountInfo]) -> ProgramResult {\n\
+             \x20   Ok(())\n\
+             }\n",
+            "bodyless",
+        )
+        .await;
+        let ping = g
+            .instructions
+            .iter()
+            .find(|i| i.name == "ping")
+            .expect("ping");
+        assert!(
+            !ping.takes_account_params,
+            "ping takes a u64; the accounts belong to handle"
+        );
+    }
+
+    /// Byte-for-byte what `cargo fmt` produces for the canonical native entry
+    /// point. If this shape is not recognised, no real native program is.
+    #[tokio::test]
+    async fn a_rustfmt_split_native_signature_is_still_an_entry_point() {
+        let g = graph_for(
+            "pub fn process_instruction(\n\
+             \x20   program_id: &Pubkey,\n\
+             \x20   accounts: &[AccountInfo],\n\
+             \x20   instruction_data: &[u8],\n\
+             ) -> ProgramResult {\n\
+             \x20   Ok(())\n\
+             }\n",
+            "native-split",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            i.is_native_entry_point,
+            "the signature rustfmt actually emits must read as a native entry point"
+        );
+        assert!(i.takes_account_params);
+    }
+
+    /// The same defect on the Anchor side: a split `Context<T>` parameter made
+    /// the handler look like neither convention, so the signer rule's
+    /// `!is_anchor_handler` guard stopped protecting it.
+    #[tokio::test]
+    async fn a_rustfmt_split_anchor_signature_is_still_an_anchor_handler() {
+        let g = graph_for(
+            "pub fn withdraw(\n\
+             \x20   ctx: Context<Withdraw>,\n\
+             \x20   amount: u64,\n\
+             ) -> Result<()> {\n\
+             \x20   Ok(())\n\
+             }\n",
+            "anchor-split",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(i.is_anchor_handler);
+        assert!(!i.is_native_entry_point);
+        assert!(i.takes_account_params);
+    }
+
+    /// The bound that keeps signature accumulation honest. `extern` blocks
+    /// declare `pub fn`s with no body, so scanning forward to the next `{`
+    /// would read the *following* function's parameters as this one's — and
+    /// report an entry point where there is only a syscall declaration.
+    #[tokio::test]
+    async fn a_bodyless_declaration_does_not_absorb_the_next_signature() {
+        let g = graph_for(
+            "extern \"C\" {\n\
+             \x20   pub fn sol_log_(message: *const u8, len: u64);\n\
+             }\n\
+             \n\
+             pub fn process(accounts: &[AccountInfo]) -> ProgramResult {\n\
+             \x20   Ok(())\n\
+             }\n",
+            "extern-decl",
+        )
+        .await;
+        let decl = g
+            .instructions
+            .iter()
+            .find(|i| i.name == "sol_log_")
+            .expect("the declaration is still recorded");
+        assert!(
+            !decl.is_native_entry_point,
+            "a bodyless declaration must stop at its own `;`, not run on into \
+             the next function's parameters"
+        );
+        assert!(!decl.takes_account_params);
+    }
+
+    /// A pure byte-decoding helper takes no account at all. This is the signal
+    /// the ownership rule needs: `unpack_amount` cannot be handed a substituted
+    /// account because it is never handed an account.
+    #[tokio::test]
+    async fn a_helper_that_takes_no_account_does_not_take_account_params() {
+        let g = graph_for(
+            "pub fn unpack_amount(input: &[u8]) -> Result<u64, ProgramError> {\n\
+             \x20   Ok(u64::try_from_slice(input)?)\n\
+             }\n",
+            "decode-helper",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(!i.takes_account_params);
+        assert!(!i.is_native_entry_point);
+        assert!(!i.is_anchor_handler);
+    }
+
+    /// A helper handed individual accounts *is* exposed — this is the shape of
+    /// the Cashio incident reproduction (`eval/fixtures/rs/incident-repros`),
+    /// and of most function-level corpus snippets. It is not an entry point and
+    /// not Anchor, so a gate written as `is_native_entry_point ||
+    /// is_anchor_handler` would drop exactly the cases the corpus is made of.
+    #[tokio::test]
+    async fn a_helper_handed_individual_accounts_takes_account_params() {
+        let g = graph_for(
+            "pub fn mint_ecash(\n\
+             \x20   bank: &AccountInfo,\n\
+             \x20   amount: u64,\n\
+             ) -> ProgramResult {\n\
+             \x20   let b = Bank::try_from_slice(&bank.data.borrow())?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "account-helper",
+        )
+        .await;
+        let i = g.instructions.first().expect("one instruction");
+        assert!(
+            i.takes_account_params,
+            "`bank: &AccountInfo` is an account the caller chooses"
+        );
+        assert!(
+            !i.is_native_entry_point,
+            "it is not the program entry point"
+        );
+    }
+}
+
+#[cfg(test)]
+mod account_data_type_tests {
+    //! Which structs actually hold account bytes. Type cosplay is a property of
+    //! *stored* data; a struct's declaration cannot say whether it is stored,
+    //! so the use site has to.
+    use super::*;
+    use std::fs;
+
+    async fn graph_for(src: &str, name: &str) -> ProgramGraph {
+        let root = std::env::temp_dir().join(format!("ares-adt-{}-{name}", std::process::id()));
+        let s = root.join("src");
+        fs::create_dir_all(&s).unwrap();
+        fs::write(s.join("lib.rs"), src).unwrap();
+        let g = MapperAgent::new(&root).analyze().await.unwrap();
+        fs::remove_dir_all(&root).ok();
+        g
+    }
+
+    /// The largest false-positive class on native targets. Borsh's
+    /// `try_from_slice` is the entry point for instruction data AND account
+    /// data, and on native Solana the commonest call by far is
+    /// `InitArgs::try_from_slice(instruction_data)`. Accepting the call alone as
+    /// proof of storage made every instruction-argument struct a type-cosplay
+    /// candidate — and the rule states its finding as fact ("Struct 'X' is
+    /// deserialized from account data"), non-speculative at 0.72 confidence,
+    /// which is the shape REMEMBER writes into durable memory.
+    #[tokio::test]
+    async fn instruction_data_decoded_with_borsh_is_not_account_data() {
+        let g = graph_for(
+            "pub fn process(accounts: &[AccountInfo], instruction_data: &[u8]) -> ProgramResult {\n\
+             \x20   let args = InitArgs::try_from_slice(instruction_data)?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "ix-data-decode",
+        )
+        .await;
+        assert!(
+            !g.account_data_types.contains("InitArgs"),
+            "instruction arguments are not stored account data: {:?}",
+            g.account_data_types
+        );
+    }
+
+    /// The same struct in the same program IS account data once something
+    /// actually reads it out of an account — so the gate is about the argument,
+    /// not about the name.
+    #[tokio::test]
+    async fn the_same_type_counts_once_it_is_read_from_an_account() {
+        let g = graph_for(
+            "pub fn process(user: &AccountInfo, instruction_data: &[u8]) -> ProgramResult {\n\
+             \x20   let args = Config::try_from_slice(instruction_data)?;\n\
+             \x20   let cur = Config::try_from_slice(&user.data.borrow())?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "both-uses",
+        )
+        .await;
+        assert!(
+            g.account_data_types.contains("Config"),
+            "one account-bytes decode is enough: {:?}",
+            g.account_data_types
+        );
+    }
+
+    /// `let buf = acc.data.borrow(); T::try_from_slice(&buf)` — the bytes reach
+    /// the decode through a local. One hop is resolved; dropping it would cost
+    /// real recall on native programs.
+    #[tokio::test]
+    async fn account_bytes_reaching_the_decode_through_a_local_still_count() {
+        let g = graph_for(
+            "pub fn f(vault: &AccountInfo) -> ProgramResult {\n\
+             \x20   let buf = vault.try_borrow_data()?;\n\
+             \x20   let v = Vault::try_from_slice(&buf)?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "indirect-decode",
+        )
+        .await;
+        assert!(
+            g.account_data_types.contains("Vault"),
+            "{:?}",
+            g.account_data_types
+        );
+    }
+
+    /// The one-hop resolution must key on the whole identifier: a binding for
+    /// `buffer` must not satisfy a decode of `buf`.
+    #[tokio::test]
+    async fn a_similarly_named_binding_does_not_satisfy_the_decode() {
+        let g = graph_for(
+            "pub fn f(vault: &AccountInfo, instruction_data: &[u8]) -> ProgramResult {\n\
+             \x20   let buffer = vault.try_borrow_data()?;\n\
+             \x20   let buf = instruction_data;\n\
+             \x20   let a = Args::try_from_slice(buf)?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "ident-boundary",
+        )
+        .await;
+        assert!(
+            !g.account_data_types.contains("Args"),
+            "`buffer` is not `buf`: {:?}",
+            g.account_data_types
+        );
+    }
+
+    #[tokio::test]
+    async fn a_manual_decode_marks_the_type_as_account_data() {
+        let g = graph_for(
+            "pub fn f(user: &AccountInfo) -> ProgramResult {\n\
+             \x20   let u = User::try_from_slice(&user.data.borrow())?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "manual-decode",
+        )
+        .await;
+        assert!(
+            g.account_data_types.contains("User"),
+            "{:?}",
+            g.account_data_types
+        );
+    }
+
+    /// A module-qualified path must yield the type, not the module.
+    #[tokio::test]
+    async fn a_qualified_path_yields_the_type_not_the_module() {
+        let g = graph_for(
+            "pub fn f(a: &AccountInfo) -> ProgramResult {\n\
+             \x20   let v = state::Vault::unpack(&a.data.borrow())?;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "qualified",
+        )
+        .await;
+        assert!(
+            g.account_data_types.contains("Vault"),
+            "{:?}",
+            g.account_data_types
+        );
+        assert!(!g.account_data_types.contains("state"));
+    }
+
+    #[tokio::test]
+    async fn an_anchor_typed_wrapper_marks_its_inner_type_as_account_data() {
+        let g = graph_for(
+            "#[derive(Accounts)]\n\
+             pub struct Withdraw<'info> {\n\
+             \x20   pub vault: Account<'info, Vault>,\n\
+             \x20   pub pool: AccountLoader<'info, Pool>,\n\
+             }\n",
+            "typed-wrapper",
+        )
+        .await;
+        assert!(
+            g.account_data_types.contains("Vault"),
+            "{:?}",
+            g.account_data_types
+        );
+        assert!(
+            g.account_data_types.contains("Pool"),
+            "{:?}",
+            g.account_data_types
+        );
+    }
+
+    /// The context struct itself is a parameter list, never account bytes.
+    /// `Context<Withdraw>` and `UncheckedAccount<'info>` must not enrol a type.
+    #[tokio::test]
+    async fn a_context_or_unchecked_wrapper_enrols_nothing() {
+        let g = graph_for(
+            "pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> {\n\
+             \x20   let a: UncheckedAccount<'info> = ctx.accounts.a;\n\
+             \x20   Ok(())\n\
+             }\n",
+            "context-only",
+        )
+        .await;
+        assert!(
+            !g.account_data_types.contains("Withdraw"),
+            "{:?}",
+            g.account_data_types
+        );
+        assert!(
+            g.account_data_types.is_empty(),
+            "{:?}",
+            g.account_data_types
+        );
     }
 }
