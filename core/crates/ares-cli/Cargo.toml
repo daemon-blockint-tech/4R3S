@@ -40,6 +40,14 @@ config = { workspace = true }
 chrono = "0.4"
 which = { workspace = true }
 walkdir = { workspace = true }
+# 0.12.5, matching the `Op`-based API `commands/pdf.rs` is written against —
+# CORE-1 did the port, so the "track it separately before unpinning" note this
+# comment used to carry is discharged. Do NOT pin back to 0.7: pdf.rs no longer
+# compiles against it, and 0.7 pulls lopdf 0.31, which reintroduces
+# RUSTSEC-2026-0187 — an advisory core-ci.yml no longer ignores, so the pin
+# fails `cargo audit` as well as the build. dependabot.yml still withholds
+# minor and major bumps here, because a minor bump on a 0.x crate is a breaking
+# change and needs a deliberate port; that guard stays.
 printpdf = "0.12.5"
 
 reqwest = { workspace = true }

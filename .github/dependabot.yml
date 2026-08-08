@@ -54,6 +54,16 @@ updates:
       core-cargo:
         patterns:
           - "*"
+    ignore:
+      # Cargo treats a 0.x *minor* bump as breaking, but dependabot labels it
+      # "version-update:semver-minor" and the group rolls it up with unrelated
+      # patches. That is exactly how printpdf went 0.7.0 -> 0.12.5 inside a PR
+      # titled "2 updates" and took Core CI red: the 0.12 API dropped
+      # PdfLayerReference, IndirectFontRef and use_text, which pdf.rs is built
+      # on. Patches still flow; a minor bump on a 0.x crate now has to be a
+      # deliberate port, which is what it always was.
+      - dependency-name: "printpdf"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: pip
     directory: "/eval"
@@ -67,16 +77,18 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     ignore:
-      # arq 0.28.0 — the latest release — requires `redis[hiredis]>=4.2.0,<6`.
-      # #120 bumped redis to 8.1.0, which pip cannot resolve against that at all
-      # (`ResolutionImpossible`), and the auditor-api job went red on main. No
-      # newer arq lifts the cap, so any major or minor redis bump is guaranteed
-      # to fail until arq moves. Patch updates stay allowed. Same shape as the
-      # typescript ignore above: pin the thing whose upstream cannot accept it.
+      # redis's upper bound here belongs to arq (`redis[hiredis]>=4.2.0,<6`),
+      # but requirements.txt states it as a bare pin, so #120 bumped it to 8.1.0
+      # and made the file unsatisfiable — pip could not resolve it at all
+      # (`ResolutionImpossible`) and the auditor-api job went red on main.
+      #
+      # MAJOR only. An earlier revision of this entry also withheld minor bumps,
+      # on the reasoning that "any major or minor bump is guaranteed to fail".
+      # That is wrong: arq's ceiling is the 6.0 boundary, so 5.3 -> 5.4 satisfies
+      # it fine. Withholding minor updates inside 5.x would have blocked
+      # legitimate upgrades, including security ones, for no reason.
       - dependency-name: "redis"
-        update-types:
-          - "version-update:semver-major"
-          - "version-update:semver-minor"
+        update-types: ["version-update:semver-major"]
 
   # Keep the GitHub Actions used in .github/workflows pinned to current versions.
   - package-ecosystem: github-actions

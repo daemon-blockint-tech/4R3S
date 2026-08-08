@@ -21,6 +21,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -746,19 +747,58 @@ class TestCveScanEmptyPackageArrayIsDegraded:
         assert body["outcome"] == "degraded"
 
 
+# RustSec advisories against core/Cargo.lock that are informational only —
+# `informational: unmaintained`, no CVSS, no patched version to move to. They are
+# NOT in core-ci.yml's `--ignore` list and must not be added to it: plain
+# `cargo audit` fails on vulnerabilities and leaves informational advisories as
+# warnings, which is the gate that workflow deliberately chose. An `--ignore`
+# entry for one would suppress a warning that should stay visible.
+#
+# Both arrive transitively through crates ares-cli depends on and cannot be
+# resolved here:
+#   yaml-rust 0.4.5 <- syntect
+#   bincode   1.3.3 <- syntect, and printpdf -> azul-layout -> hyphenation
+#
+# They are long-standing, not new: byte-identical in core/Cargo.lock before and
+# after the Dependabot cargo bump (#129). They went unnoticed because the
+# assertion below used to test membership only, so any extra match passed
+# silently — and because the auditor-api job was failing at install, so this
+# never ran in CI.
+KNOWN_INFORMATIONAL_ADVISORIES = frozenset(
+    {
+        "RUSTSEC-2024-0320",  # yaml-rust is unmaintained
+        "RUSTSEC-2025-0141",  # bincode 1.x is unmaintained
+    }
+)
+
+
 class TestCveScanAgainstTheRealCommittedLockfile:
-    """Ground truth: scan the repo's own core/Cargo.lock through the real
-    HTTP surface, rather than only unit-testing match.py in isolation. This
-    reproduces the RustSec advisories core-ci.yml's `cargo audit --ignore ...`
-    step lists as accepted risk, confirming this service finds them
-    independently rather than by construction.
+    """Ground truth: scan the repo's own core/Cargo.lock through the real HTTP
+    surface, rather than only unit-testing match.py in isolation, and hold three
+    things in agreement — the lockfile, core-ci.yml's `cargo audit --ignore`
+    list, and this file.
 
-    The list started at four. RUSTSEC-2026-0187 (lopdf stack overflow, patched
-    in >=0.42) left it when the printpdf 0.7 -> 0.12.5 bump pulled lopdf 0.44.0
-    — so this test is also the check that the ignore list and the lockfile have
-    not drifted apart, in both directions."""
+    The expected vulnerability set is PARSED OUT OF THE WORKFLOW rather than
+    duplicated here. Duplicating it is what let the three drift: the previous
+    version hard-coded four ids and asserted each was present, so it kept
+    passing after RUSTSEC-2026-0187 was fixed by a lockfile bump (a stale
+    `--ignore` entry silently pre-approving the vulnerability's return) and
+    while two advisories it had never heard of were being reported.
 
-    def test_scanning_core_cargo_lock_finds_the_known_accepted_advisories(self):
+    Membership is therefore not enough. The assertions below partition the
+    matches exhaustively, so drift fails the build in either direction: a new
+    vulnerability with no `--ignore` entry, or an `--ignore` entry for something
+    the lockfile no longer pulls in."""
+
+    @staticmethod
+    def _accepted_vulnerabilities_from_workflow() -> set[str]:
+        """The advisory ids core-ci.yml's audit step accepts as known risk."""
+        workflow = (REPO_ROOT / ".github" / "workflows" / "core-ci.yml").read_text(encoding="utf-8")
+        ids = set(re.findall(r"--ignore\s+(RUSTSEC-\d{4}-\d{4})", workflow))
+        assert ids, "no --ignore ids found in core-ci.yml — did the audit step move?"
+        return ids
+
+    def _scan_committed_lockfile(self) -> dict:
         lockfile_path = REPO_ROOT / "core" / "Cargo.lock"
         if not lockfile_path.exists():
             pytest.skip("core/Cargo.lock not present in this checkout")
@@ -766,18 +806,61 @@ class TestCveScanAgainstTheRealCommittedLockfile:
         resp = client.post("/cve/scan", json={"lockfile": lockfile_path.read_text(encoding="utf-8")})
         body = resp.json()
         assert body["outcome"] == "ok"
-        found_ids = {m["advisory_id"] for m in body["matches"]}
-        for accepted in (
-            "RUSTSEC-2026-0194",
-            "RUSTSEC-2026-0195",
-            "RUSTSEC-2026-0204",
-        ):
-            assert accepted in found_ids
-        # Asserting the absence is the half that catches a regression: if a
-        # future dependency drags a pre-0.42 lopdf back in, the advisory
-        # reappears here while `cargo audit` stays green only if someone
-        # re-adds the ignore.
-        assert "RUSTSEC-2026-0187" not in found_ids
+        return body
+
+    def test_reported_vulnerabilities_match_the_cargo_audit_ignore_list_exactly(self):
+        matches = self._scan_committed_lockfile()["matches"]
+        reported = {m["advisory_id"] for m in matches if not m["informational"]}
+        accepted = self._accepted_vulnerabilities_from_workflow()
+        # Equality, not containment. `>` catches a vulnerability that entered the
+        # lockfile with nobody accepting it; `<` catches an ignore entry kept
+        # after its advisory stopped applying — `cargo audit --ignore` accepts an
+        # id matching nothing without complaint, so a stale entry pre-approves
+        # that vulnerability's return. RUSTSEC-2026-0187 was exactly that.
+        assert reported == accepted, (
+            f"lockfile and core-ci.yml disagree.\n"
+            f"  reported but not accepted: {sorted(reported - accepted)}\n"
+            f"  accepted but not reported: {sorted(accepted - reported)}"
+        )
+
+    def test_informational_advisories_are_exactly_the_known_unmaintained_set(self):
+        matches = self._scan_committed_lockfile()["matches"]
+        informational = {m["advisory_id"] for m in matches if m["informational"]}
+        assert informational == KNOWN_INFORMATIONAL_ADVISORIES, (
+            f"informational advisory set changed.\n"
+            f"  new: {sorted(informational - KNOWN_INFORMATIONAL_ADVISORIES)}\n"
+            f"  gone: {sorted(KNOWN_INFORMATIONAL_ADVISORIES - informational)}\n"
+            "A new one is a judgement call, not a test edit: decide whether the "
+            "crate can be replaced before adding it to the known set."
+        )
+
+    def test_no_known_informational_advisory_has_silently_become_a_vulnerability(self):
+        """The tripwire on the exemption above.
+
+        These two are tolerated *because* they carry no CVSS and no fix — they
+        are 'this crate is unmaintained', not 'this crate is exploitable'. If
+        RustSec ever scores one, that reasoning expires: `cargo audit` starts
+        failing and the crate needs replacing or accepting on new grounds. Fail
+        here rather than let the exemption outlive its justification.
+        """
+        matches = self._scan_committed_lockfile()["matches"]
+        for m in matches:
+            if m["advisory_id"] in KNOWN_INFORMATIONAL_ADVISORIES:
+                assert m["informational"], f"{m['advisory_id']} is no longer informational"
+                assert m["severity"] is None, (
+                    f"{m['advisory_id']} ({m['crate']} {m['version']}) now scores "
+                    f"{m['severity']} — it is a vulnerability, not an unmaintained notice."
+                )
+
+    def test_a_fixed_advisory_does_not_linger_in_the_ignore_list(self):
+        """RUSTSEC-2026-0187 (lopdf stack overflow, patched >=0.42) stopped
+        applying when the printpdf 0.7 -> 0.12.5 bump pulled lopdf 0.44.0. It is
+        named explicitly because it is the concrete case the equality assertion
+        above was written for, and a named regression is easier to act on than a
+        set-difference diff."""
+        found = {m["advisory_id"] for m in self._scan_committed_lockfile()["matches"]}
+        assert "RUSTSEC-2026-0187" not in found
+        assert "RUSTSEC-2026-0187" not in self._accepted_vulnerabilities_from_workflow()
 
     def test_workspace_local_crates_are_excluded_from_the_scanned_count(self):
         lockfile_path = REPO_ROOT / "core" / "Cargo.lock"
