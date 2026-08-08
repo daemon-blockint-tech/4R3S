@@ -52,3 +52,6 @@ llm-judge = []
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
+# Used only to prove the PoC harnesses poc.rs emits are valid Rust; the real
+# compile would need the whole solana-program-test runtime.
+syn = { workspace = true }
