@@ -101,7 +101,17 @@ impl PocGenerator {
         "use solana_program_test::*;\nuse solana_sdk::{\n    account::Account,\n    instruction::{AccountMeta, Instruction},\n    pubkey::Pubkey,\n    signature::{Keypair, Signer},\n    system_program,\n    transaction::Transaction,\n};\n"
     }
 
-    fn test_boilerplate(test_name: &str, body: &str) -> String {
+    /// `pre_start` carries any extra `program_test.add_account(...)` setup the
+    /// category needs, spliced in BEFORE `program_test.start()`.
+    ///
+    /// The split is not stylistic. `ProgramTest::start` takes `self` **by
+    /// value**, so an `add_account` call emitted after it is a use-after-move
+    /// (E0382) and the harness cannot compile. Because `confirm.rs` stages the
+    /// harness into the audited repo's own `tests/` directory, one such template
+    /// stopped `cargo test` from building that repo at all — no `test result:`
+    /// line, so `run_poc` returned Inconclusive for this finding and every
+    /// subsequent one in the same repo.
+    fn test_boilerplate(test_name: &str, pre_start: &str, body: &str) -> String {
         format!(
             r#"#[tokio::test]
 async fn {}() {{
@@ -130,7 +140,7 @@ async fn {}() {{
             ..Account::default()
         }},
     );
-
+{}
     let (mut banks_client, payer, recent_blockhash) = program_test.start().await;
 
     {}
@@ -138,6 +148,7 @@ async fn {}() {{
 "#,
             test_name,
             program_name_placeholder(),
+            pre_start,
             body
         )
     }
@@ -191,6 +202,7 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_missing_signer", sanitize_id(id)),
+            "",
             &format!(
                 "{}{}",
                 r#"// Attack: omit the required signer signature in AccountMeta
@@ -221,7 +233,8 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_wrong_owner", sanitize_id(id)),
-            &format!("{}{}", r#"// Attack: provide an account owned by system_program instead of the target program
+            r#"
+    // Attack: provide an account owned by system_program instead of the target program
     let fake_account = Keypair::new();
     program_test.add_account(
         fake_account.pubkey(),
@@ -231,8 +244,10 @@ async fn {}() {{
             ..Account::default()
         },
     );
-
-    let accounts = vec![
+"#,
+            &format!(
+                "{}{}",
+                r#"let accounts = vec![
         AccountMeta::new(fake_account.pubkey(), false),
         AccountMeta::new_readonly(attacker.pubkey(), true),
     ];
@@ -247,7 +262,8 @@ async fn {}() {{
     );
 
     "#,
-            Self::verdict_match("transaction", "the account ownership check")),
+                Self::verdict_match("transaction", "the account ownership check")
+            ),
         ));
         s
     }
@@ -257,9 +273,8 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_arbitrary_cpi", sanitize_id(id)),
-            &format!(
-                "{}{}",
-                r#"// Attack: create a fake program account to impersonate a trusted CPI target
+            r#"
+    // Attack: create a fake program account to impersonate a trusted CPI target
     let fake_program = Keypair::new();
     program_test.add_account(
         fake_program.pubkey(),
@@ -269,8 +284,10 @@ async fn {}() {{
             ..Account::default()
         },
     );
-
-    let accounts = vec![
+"#,
+            &format!(
+                "{}{}",
+                r#"let accounts = vec![
         AccountMeta::new(victim.pubkey(), false),
         AccountMeta::new_readonly(fake_program.pubkey(), false),
         AccountMeta::new_readonly(attacker.pubkey(), true),
@@ -301,6 +318,7 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_double_init", sanitize_id(id)),
+            "",
             &format!(
                 "{}{}",
                 r#"// Attack: call the initialize instruction twice without checks
@@ -340,6 +358,7 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_revival", sanitize_id(id)),
+            "",
             &format!(
                 "{}{}",
                 r#"// Attack: close an account then re-initialize it
@@ -420,6 +439,7 @@ async fn {}() {{
         );
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_invariant", sanitize_id(id)),
+            "",
             &body,
         ));
         s
@@ -430,6 +450,7 @@ async fn {}() {{
         s.push_str(Self::imports());
         s.push_str(&Self::test_boilerplate(
             &format!("test_{}_generic", sanitize_id(id)),
+            "",
             &format!(
                 "{}{}",
                 r#"// Generic PoC harness — implement attack sequence based on finding details.
@@ -648,6 +669,72 @@ mod tests {
                 "{category:?} does not mark the reproduced arm"
             );
         }
+    }
+
+    #[test]
+    fn every_harness_adds_its_accounts_before_program_test_start() {
+        // `ProgramTest::start` takes `self` BY VALUE. An `add_account` call
+        // emitted after it is a use-after-move (E0382), so the harness never
+        // compiles — and `confirm.rs` stages it into the AUDITED repository's
+        // own `tests/` directory, which stops `cargo test` from building that
+        // package at all. No `test result:` line is then printed, so `run_poc`
+        // returns Inconclusive for this finding AND every later one in the same
+        // repo: one bad template zeroes out the whole confirmation pass.
+        for category in all_categories() {
+            let code = harness_for(category.clone());
+            let starts: Vec<usize> = code
+                .match_indices("program_test.start()")
+                .map(|(i, _)| i)
+                .collect();
+            assert_eq!(
+                starts.len(),
+                1,
+                "{category:?} harness calls program_test.start() {} times; \
+                 `self` can only be consumed once",
+                starts.len()
+            );
+            for (idx, _) in code.match_indices("program_test.add_account(") {
+                assert!(
+                    idx < starts[0],
+                    "{category:?} harness calls program_test.add_account after \
+                     program_test.start() consumed `program_test` — E0382, the \
+                     harness cannot compile"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_harness_parses_as_rust() {
+        // We cannot `cargo check` the real thing here — that would drag the whole
+        // `solana-program-test` runtime into this workspace — so this pins the
+        // strongest compile property that is cheap: the emitted file is valid
+        // Rust syntax. It generalises `imports_use_single_braces`, which caught
+        // one instance of `format!` brace escaping leaking into generated code.
+        for category in all_categories() {
+            // Parsed whole, `// ARES-WIRING:` marker included — it is a comment,
+            // so syn sees exactly what rustc would.
+            let code = harness_for(category.clone());
+            syn::parse_file(&code).unwrap_or_else(|e| {
+                panic!("{category:?} harness is not valid Rust: {e}\n---\n{code}\n---")
+            });
+        }
+    }
+
+    #[test]
+    fn ownership_and_cpi_harnesses_still_set_up_their_attack_accounts() {
+        // Moving the setup before `start()` must not silently drop it: without
+        // the fake account the ownership/CPI attack is not being attempted at
+        // all, and a harness that attempts nothing would report `refuted`.
+        let owner = harness_for(VulnerabilityCategory::OwnershipCheck);
+        assert!(owner.contains("let fake_account = Keypair::new();"));
+        assert!(owner.contains("owner: system_program::id(),"));
+        assert!(owner.contains("AccountMeta::new(fake_account.pubkey(), false),"));
+
+        let cpi = harness_for(VulnerabilityCategory::ArbitraryCpi);
+        assert!(cpi.contains("let fake_program = Keypair::new();"));
+        assert!(cpi.contains("owner: solana_sdk::bpf_loader_upgradeable::id(),"));
+        assert!(cpi.contains("AccountMeta::new_readonly(fake_program.pubkey(), false),"));
     }
 
     #[test]

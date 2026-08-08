@@ -590,7 +590,20 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
         // Same inversion as the signer check above.
         // Conjoined with an actual raw-data read: a missing owner check is only
         // exploitable where the handler decodes an account's bytes.
-        if instruction.has_owner_check == Some(false) && instruction.touches_raw_account_data {
+        // And with the function having been handed an account at all. Every
+        // `pub fn` in the crate lands in `graph.instructions` — there is no
+        // entry-point filter — so this fired on plain byte-decoding helpers:
+        // `pub fn unpack_amount(input: &[u8])` matches
+        // `touches_raw_account_data` via `try_from_slice` and has no reason to
+        // contain the substring `owner`, and was reported as High at 0.72.
+        // The gate is "was handed an account", NOT "is an entry point": a
+        // helper taking `bank: &AccountInfo` is neither native entry point nor
+        // Anchor handler, yet that is precisely the Cashio root cause and the
+        // shape of most function-level corpus rows.
+        if instruction.has_owner_check == Some(false)
+            && instruction.touches_raw_account_data
+            && instruction.takes_account_params
+        {
             hypotheses.push(Hypothesis {
                 category: VulnerabilityCategory::OwnershipCheck,
                 subject: instruction.name.clone(),
@@ -665,6 +678,17 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
     // structs, and those are NOT account data) is not represented. The honest
     // statement is that the false-positive rate on whole programs is unmeasured,
     // not that it is zero.
+    //
+    // What that unmeasured rate turned out to be: `collect_data_structs`
+    // collects EVERY struct, and an Anchor accounts context carries
+    // `#[derive(Accounts)]` — not `#[account]` — with its per-field
+    // `#[account(..)]` attributes BELOW the declaration, where the backward
+    // attribute walk never reaches. So a clean three-instruction vault emitted
+    // one hypothesis per context struct plus one per event, none of which
+    // anything downstream removes — `SemanticValidator::check` has no
+    // TypeCosplay arm. The gates below are what the description's own "If it is
+    // used as account data" hedge was standing in for: the rule never checked
+    // its own premise.
     for ds in &program_graph.data_structs {
         if ds.has_anchor_account_attr || ds.has_discriminator_field {
             continue;
@@ -673,23 +697,66 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
         if ds.field_count == 0 {
             continue;
         }
+        // An Anchor accounts context is a parameter list, not stored bytes, so
+        // it can never be type cosplay. Skipped by name — with the decode-site
+        // set as the escape hatch, which is what makes the name skip safe:
+        // names are unique per module, not per crate, so `contexts::Config` and
+        // `state::Config` collide, and a bare name skip would suppress the real
+        // account struct along with the context. Requiring that nothing decodes
+        // the name from account bytes resolves exactly that case.
+        //
+        // Measured on the 170-row corpus: this takes type-cosplay from
+        // 29 TP / 12 FP (P 0.7073) to 29 TP / 3 FP (P 0.9062) — every false
+        // positive it removes is a context struct, and no true positive moves.
+        if program_graph.accounts.iter().any(|a| a.name == ds.name)
+            && !program_graph.account_data_types.contains(&ds.name)
+        {
+            continue;
+        }
+        // An `#[event]` payload goes to the transaction log, never to an
+        // account, so it can never be substituted for one. Its own gate because
+        // client code in the same crate decodes events with `try_from_slice` —
+        // so the decode-site signal below would vouch for it.
+        if ds.is_anchor_event {
+            continue;
+        }
+
+        // Whether anything in the program actually decodes these bytes out of
+        // an account. NOT a gate: the eval corpus is function- and struct-level
+        // snippets, and a struct-only snippet has no use site anywhere, so
+        // requiring one removed 27 of 29 true positives and took overall F1 from
+        // 0.5673 to 0.3868. It decides the WORDING instead, which is the part
+        // that has to be earned: REMEMBER persists a non-speculative finding as
+        // prior fact for later audits, so the difference between "is stored in
+        // an account" and "if it is stored in an account" is the difference
+        // between a fact and a fabrication.
+        let decoded_from_account = program_graph.account_data_types.contains(&ds.name);
+        let premise = if decoded_from_account {
+            format!("Struct '{}' is deserialized from account data", ds.name)
+        } else {
+            format!("If struct '{}' is used as account data", ds.name)
+        };
+
         hypotheses.push(Hypothesis {
             category: VulnerabilityCategory::TypeCosplay,
             subject: ds.name.clone(),
             title: format!("`{}` carries no type discriminator", ds.name),
             description: format!(
-                "Struct '{}' has neither Anchor's `#[account]` attribute nor a leading \
+                "{}, it has neither Anchor's `#[account]` attribute nor a leading \
                  discriminator field, so nothing distinguishes its bytes from any other \
-                 account of the same size. If it is used as account data, an attacker can \
-                 substitute a different account and have it deserialize cleanly.",
-                ds.name
+                 account of the same size. An attacker can substitute a different account \
+                 and have it deserialize cleanly.",
+                premise
             ),
             recommendation: "Mark the struct `#[account]` so Anchor writes and checks an \
                              8-byte discriminator, or add a leading type field (`key: Key`) \
                              and assert it before trusting the rest."
                 .to_string(),
-            // Single structural signal, and the analyzer cannot tell an account
-            // struct from an instruction-argument struct without a use site.
+            // 0.72 for both wordings. A decode site is real corroboration and
+            // argues for the 0.78 the CPI rule carries, but splitting the
+            // confidence would move findings across the triager's 0.70 cut-off
+            // on reasoning rather than on measurement — tuning the gate instead
+            // of describing the evidence (GOLDEN RULE 3).
             confidence: 0.72,
         });
     }
@@ -733,3 +800,243 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
 }
 
 // PoC generation delegated to crate::poc::PocGenerator (Phase 2)
+
+#[cfg(test)]
+mod hypothesis_tests {
+    //! Real source through the real mapper. Each fixture is written to a temp
+    //! directory shaped the way `MapperAgent::analyze` expects (`<root>/src/`),
+    //! which is also how `eval/stage_ares_core_targets.py` stages a corpus
+    //! target — so what fires here is what the scored run produces.
+    use super::*;
+
+    async fn hypotheses_for(src: &str) -> Vec<Hypothesis> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("lib.rs"), src).unwrap();
+        let graph = MapperAgent::new(dir.path())
+            .analyze()
+            .await
+            .expect("mapper analysis");
+        generate_initial_hypotheses(&graph)
+    }
+
+    fn of(hypotheses: &[Hypothesis], want: VulnerabilityCategory) -> Vec<&str> {
+        hypotheses
+            .iter()
+            .filter(|h| std::mem::discriminant(&h.category) == std::mem::discriminant(&want))
+            .map(|h| h.subject.as_str())
+            .collect()
+    }
+
+    /// A three-instruction Anchor vault with nothing wrong with it. Every
+    /// `#[derive(Accounts)]` context and the `#[event]` payload used to yield a
+    /// type-cosplay hypothesis apiece, because `collect_data_structs` collects
+    /// every struct and a context carries `#[derive(Accounts)]` rather than
+    /// `#[account]`. Nothing downstream removed them: `SemanticValidator::check`
+    /// has no TypeCosplay arm.
+    const CLEAN_ANCHOR_VAULT: &str = r#"
+use anchor_lang::prelude::*;
+
+#[program]
+pub mod vault {
+    use super::*;
+
+    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+        ctx.accounts.vault.authority = ctx.accounts.authority.key();
+        Ok(())
+    }
+
+    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        let vault = &mut ctx.accounts.vault;
+        vault.total = vault.total.checked_add(amount).unwrap();
+        emit!(DepositEvent { amount });
+        Ok(())
+    }
+
+    pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
+        let vault = &mut ctx.accounts.vault;
+        vault.total = vault.total.checked_sub(amount).unwrap();
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    #[account(init, payer = authority, space = 8 + 40)]
+    pub vault: Account<'info, Vault>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    #[account(mut, has_one = authority)]
+    pub vault: Account<'info, Vault>,
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    #[account(mut, has_one = authority)]
+    pub vault: Account<'info, Vault>,
+    pub authority: Signer<'info>,
+}
+
+#[account]
+pub struct Vault {
+    pub authority: Pubkey,
+    pub total: u64,
+}
+
+#[event]
+pub struct DepositEvent {
+    pub amount: u64,
+}
+"#;
+
+    #[tokio::test]
+    async fn a_clean_anchor_vault_yields_no_type_cosplay() {
+        let h = hypotheses_for(CLEAN_ANCHOR_VAULT).await;
+        assert_eq!(
+            of(&h, VulnerabilityCategory::TypeCosplay),
+            Vec::<&str>::new(),
+            "an accounts context is a parameter list and an event goes to the \
+             log; neither is stored account data"
+        );
+    }
+
+    /// An `#[event]` payload lives in the transaction log, never in an account,
+    /// so it has no account to be substituted for. It needs its own gate rather
+    /// than relying on the use-site test: reading an event back out of the log
+    /// is done with `try_from_slice`, the very idiom that marks a type as
+    /// account data.
+    #[tokio::test]
+    async fn an_event_decoded_from_the_log_is_not_type_cosplay() {
+        let h = hypotheses_for(
+            "use anchor_lang::prelude::*;\n\
+             \n\
+             #[event]\n\
+             pub struct DepositEvent {\n\
+             \x20   pub amount: u64,\n\
+             }\n\
+             \n\
+             pub fn decode_logged_event(log: &[u8]) -> Result<DepositEvent> {\n\
+             \x20   Ok(DepositEvent::try_from_slice(&log[8..])?)\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(
+            of(&h, VulnerabilityCategory::TypeCosplay),
+            Vec::<&str>::new(),
+            "decoding an event from the log is not evidence that its bytes \
+             live in an account"
+        );
+    }
+
+    /// The other direction. A struct with no discriminator that IS decoded from
+    /// an account's bytes is the real thing, and the gates above must not cost
+    /// it — this is the canonical sealevel-attacks type-cosplay shape.
+    #[tokio::test]
+    async fn an_undiscriminated_type_decoded_from_account_bytes_still_fires() {
+        let h = hypotheses_for(
+            r#"
+use anchor_lang::prelude::*;
+
+#[program]
+pub mod type_cosplay {
+    use super::*;
+
+    pub fn update_user(ctx: Context<UpdateUser>) -> Result<()> {
+        let user = User::try_from_slice(&ctx.accounts.user.data.borrow()).unwrap();
+        msg!("GM {}", user.authority);
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct UpdateUser<'info> {
+    user: AccountInfo<'info>,
+    authority: Signer<'info>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct User {
+    authority: Pubkey,
+}
+"#,
+        )
+        .await;
+        assert_eq!(
+            of(&h, VulnerabilityCategory::TypeCosplay),
+            vec!["User"],
+            "`User` is decoded straight out of an AccountInfo with no \
+             discriminator — the context struct beside it is not"
+        );
+    }
+
+    /// `graph.instructions` holds every `pub fn` in the crate, entry point or
+    /// not. A byte-decoding helper matches `touches_raw_account_data` through
+    /// `try_from_slice` and has no reason to contain the substring `owner`, so
+    /// the ownership rule reported it as High at 0.72 confidence.
+    #[tokio::test]
+    async fn a_byte_decoding_helper_is_not_missing_an_ownership_check() {
+        let h = hypotheses_for(
+            "pub fn unpack_amount(input: &[u8]) -> Result<u64, ProgramError> {\n\
+             \x20   let amount = u64::try_from_slice(input)?;\n\
+             \x20   Ok(amount)\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(
+            of(&h, VulnerabilityCategory::OwnershipCheck),
+            Vec::<&str>::new(),
+            "a function handed no account cannot be handed a substituted one"
+        );
+    }
+
+    /// The native entry point in the shape rustfmt actually emits: 117 columns,
+    /// always split. Reading the convention off the `pub fn` line alone made
+    /// this program report nothing at all.
+    #[tokio::test]
+    async fn a_rustfmt_split_native_handler_still_reports_a_missing_owner_check() {
+        let h = hypotheses_for(
+            "pub fn process_instruction(\n\
+             \x20   program_id: &Pubkey,\n\
+             \x20   accounts: &[AccountInfo],\n\
+             \x20   instruction_data: &[u8],\n\
+             ) -> ProgramResult {\n\
+             \x20   let state = State::try_from_slice(&accounts[0].data.borrow())?;\n\
+             \x20   Ok(())\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(
+            of(&h, VulnerabilityCategory::OwnershipCheck),
+            vec!["process_instruction"]
+        );
+    }
+
+    /// The Cashio incident shape (`eval/fixtures/rs/incident-repros`): a helper
+    /// handed individual accounts. Neither a native entry point nor an Anchor
+    /// handler, but the caller still chooses the account, so gating this rule on
+    /// entry-point-ness would drop the corpus's most common vulnerable shape.
+    #[tokio::test]
+    async fn a_helper_handed_an_account_info_still_reports_a_missing_owner_check() {
+        let h = hypotheses_for(
+            "pub fn mint_ecash(\n\
+             \x20   bank: &AccountInfo,\n\
+             \x20   amount: u64,\n\
+             ) -> ProgramResult {\n\
+             \x20   let bank_data = Bank::try_from_slice(&bank.data.borrow())?;\n\
+             \x20   Ok(())\n\
+             }\n",
+        )
+        .await;
+        assert_eq!(
+            of(&h, VulnerabilityCategory::OwnershipCheck),
+            vec!["mint_ecash"]
+        );
+    }
+}

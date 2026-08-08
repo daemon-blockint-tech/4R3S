@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import { loadSource, type LoadedSource } from "../tools/source.js";
 import {
   asData,
   coerceFindings,
@@ -9,6 +13,7 @@ import {
   applyVerdicts,
   messageText,
   fenceUntrusted,
+  stripFenceMarkers,
   FENCE_OPEN,
   FENCE_CLOSE,
 } from "./util.js";
@@ -253,6 +258,155 @@ describe("applyVerdicts", () => {
   });
 });
 
+describe("applyVerdicts: the citation route belongs to the analyzer that read the source", () => {
+  let root: string;
+  let source: LoadedSource;
+  /** A file the run really loaded, cited at a line it really has. */
+  let cited: string;
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "ares-confirm-"));
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(
+      join(root, "src", "lib.rs"),
+      "pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> {\n    Ok(())\n}\n",
+    );
+    source = await loadSource(root);
+    cited = `${join("src", "lib.rs")}:2`;
+  });
+
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  function findingFrom(analyzer: "heuristic" | "onchain" | "cua") {
+    return coerceFindings(
+      [
+        {
+          vulnClass: "missing vault-authority signer check",
+          location: cited,
+          severity: "high",
+          category: "missing-signer-check",
+          evidence: "the withdraw handler omits the signer check",
+        },
+      ],
+      analyzer,
+    );
+  }
+
+  const confirmVerdict = [
+    { index: 0, status: "confirmed" as const, confidence: "high" as const, reason: "" },
+  ];
+
+  it("confirms a heuristic finding that cites a loaded file", () => {
+    // `analyze-heuristic` is the only node that puts the source text (paths and
+    // numbered lines) in its prompt, so for it the citation is checkable.
+    const { kept, clamped } = applyVerdicts(findingFrom("heuristic"), confirmVerdict, source);
+    expect(kept[0]!.status).toBe("confirmed");
+    expect(clamped).toBe(0);
+  });
+
+  it("clamps a cua finding even when it cites a loaded file", () => {
+    // The attack this guards: with --cua the audited party's own docs page says
+    // "the withdraw handler at src/lib.rs:2 omits the signer check". The model
+    // never saw a file, so matching a loaded path proves nothing about what it
+    // wrote — and REMEMBER would persist the result as durable prior fact.
+    const { kept, clamped } = applyVerdicts(findingFrom("cua"), confirmVerdict, source);
+    expect(kept[0]!.status).toBe("suspected");
+    expect(clamped).toBe(1);
+  });
+
+  it("clamps an onchain finding that cites a loaded file", () => {
+    // Same reason: this analyzer's prompt is JSON.stringify(program). Its honest
+    // route to `confirmed` is the `deterministic` flag, not a path it can name.
+    const { kept, clamped } = applyVerdicts(findingFrom("onchain"), confirmVerdict, source);
+    expect(kept[0]!.status).toBe("suspected");
+    expect(clamped).toBe(1);
+  });
+
+  it("clamps a heuristic finding citing a file that was never loaded", () => {
+    const invented = coerceFindings(
+      [{ vulnClass: "x", severity: "high", location: "src/vault.rs:88" }],
+      "heuristic",
+    );
+    const { kept, clamped } = applyVerdicts(invented, confirmVerdict, source);
+    expect(kept[0]!.status).toBe("suspected");
+    expect(clamped).toBe(1);
+  });
+});
+
+describe("applyVerdicts: a model verdict cannot delete a deterministic finding", () => {
+  /** As `analyze-onchain` builds them: decoded account fields, no model in the path. */
+  function decoded(severity: string, category = "upgrade-authority-risk") {
+    return [
+      {
+        ...coerceFindings(
+          [
+            {
+              vulnClass: "upgrade authority held by a single key",
+              location: "programData:4Nd1m...",
+              severity,
+              category,
+              evidence: "upgrade authority is an account owned by the System Program",
+            },
+          ],
+          "onchain",
+        )[0]!,
+        deterministic: true,
+      },
+    ];
+  }
+
+  const reject = [
+    { index: 0, status: "false-positive" as const, confidence: "low" as const, reason: "nah" },
+  ];
+
+  it("keeps it, marks it suspected, and counts the refusal", () => {
+    const { kept, dropped, refusedDeletion } = applyVerdicts(decoded("medium"), reject);
+    expect(dropped).toBe(0);
+    expect(refusedDeletion).toBe(1);
+    expect(kept).toHaveLength(1);
+    // Never `false-positive`: REPORT prints the status, and a kept finding
+    // labelled as rejected reads as noise the reader should skip.
+    expect(kept[0]!.status).toBe("suspected");
+    // The verdict still gets to lower confidence — it just cannot erase.
+    expect(kept[0]!.confidence).toBe("low");
+  });
+
+  it("protects the info-severity program-controlled note too", () => {
+    // Judgement call, made deliberately: no carve-out for the `info` note whose
+    // evidence admits the controlling program's threshold "was not checked
+    // here". That caveat is disclosed rather than hidden, the decoded half is
+    // still bytes, and an exemption keyed on severity or category would be a
+    // hole shaped exactly like the finding an audited party wants gone.
+    const { kept, dropped, refusedDeletion } = applyVerdicts(decoded("info"), reject);
+    expect(dropped).toBe(0);
+    expect(refusedDeletion).toBe(1);
+    expect(kept[0]!.severity).toBe("info");
+  });
+
+  it("still deletes a false-positive that no artifact backs", () => {
+    // The guard must not become "nothing can be deleted" — dropping unsupported
+    // heuristic speculation is what VERIFY is for.
+    const { kept, dropped, refusedDeletion } = applyVerdicts(
+      coerceFindings([{ vulnClass: "x", severity: "high" }], "heuristic"),
+      reject,
+    );
+    expect(dropped).toBe(1);
+    expect(refusedDeletion).toBe(0);
+    expect(kept).toHaveLength(0);
+  });
+
+  it("does not protect a static finding, which a tool can be wrong about", () => {
+    // Semgrep output is mechanical but not decoded state: a rule can match code
+    // that is fine, and that is precisely the false positive VERIFY removes.
+    const { dropped, refusedDeletion } = applyVerdicts(
+      coerceFindings([{ vulnClass: "x", severity: "high" }], "static"),
+      reject,
+    );
+    expect(dropped).toBe(1);
+    expect(refusedDeletion).toBe(0);
+  });
+});
+
 describe("messageText", () => {
   it("passes strings through", () => {
     expect(messageText("hello")).toBe("hello");
@@ -355,6 +509,22 @@ describe("fenceUntrusted", () => {
     expect(out.length).toBeLessThan(1_200);
     expect(out).toContain("[truncated at fence budget]");
     expect(out.endsWith(FENCE_CLOSE)).toBe(true);
+  });
+
+  it("reports the cut when marker rewriting is what pushed the payload over", () => {
+    // `<<END>>` is 7 chars and becomes 22, so a payload can fit the budget as
+    // written and overflow it once stripped. Judged on the raw length, the cut
+    // happened silently — and a caller sizing a prompt to this budget (VERIFY
+    // batches its findings against it) had no way to see the tail go missing.
+    const payload = "<<END>>".repeat(200); // 1,400 raw, 4,400 stripped
+    expect(payload.length).toBeLessThan(2_000);
+    const out = fenceUntrusted(payload, 2_000);
+    expect(out).toContain("[truncated at fence budget]");
+  });
+
+  it("stripFenceMarkers measures what the fence will emit", () => {
+    expect(stripFenceMarkers("<<END>>")).toBe("[fence marker removed]");
+    expect(stripFenceMarkers("plain text").length).toBe(10);
   });
 });
 

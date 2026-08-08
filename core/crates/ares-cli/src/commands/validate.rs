@@ -151,33 +151,36 @@ pub async fn run_poc(
                         );
                     }
                     // A verdict may only be read off the exit code once we know a
-                    // test actually executed. libtest prints a `test result:`
-                    // summary iff it ran; a compile error never reaches it.
+                    // test actually executed.
                     let combined = format!("{stdout}{stderr}");
-                    let tests_ran = combined.contains("test result:");
-                    let matched_none = combined.contains("running 0 tests");
-
-                    if !tests_ran {
-                        warn!(
-                            "PoC INCONCLUSIVE — the harness never ran (build or link failure). \
-                             Not treating this as a refutation."
-                        );
-                        Ok(PocVerdict::Inconclusive)
-                    } else if matched_none {
-                        // `cargo test <filter>` exits 0 when the filter matches
-                        // nothing, so this would otherwise read as a confirmed
-                        // exploit produced by running no code at all.
-                        warn!(
-                            "PoC INCONCLUSIVE — filter {test_filter:?} matched no test. \
-                             Not treating an empty run as a confirmation."
-                        );
-                        Ok(PocVerdict::Inconclusive)
-                    } else if o.status.success() {
-                        info!("PoC validation PASSED — the attack transaction was accepted.");
-                        Ok(PocVerdict::Passed)
-                    } else {
-                        info!("PoC validation FAILED — the program rejected the attack.");
-                        Ok(PocVerdict::Failed)
+                    match tests_executed(&combined) {
+                        None => {
+                            // libtest prints a `test result:` summary iff a test
+                            // binary ran; a compile error never reaches it.
+                            warn!(
+                                "PoC INCONCLUSIVE — the harness never ran (build or link failure). \
+                                 Not treating this as a refutation."
+                            );
+                            Ok(PocVerdict::Inconclusive)
+                        }
+                        Some(0) => {
+                            // `cargo test <filter>` exits 0 when the filter matches
+                            // nothing, so this would otherwise read as a confirmed
+                            // exploit produced by running no code at all.
+                            warn!(
+                                "PoC INCONCLUSIVE — filter {test_filter:?} matched no test. \
+                                 Not treating an empty run as a confirmation."
+                            );
+                            Ok(PocVerdict::Inconclusive)
+                        }
+                        Some(_) if o.status.success() => {
+                            info!("PoC validation PASSED — the attack transaction was accepted.");
+                            Ok(PocVerdict::Passed)
+                        }
+                        Some(_) => {
+                            info!("PoC validation FAILED — the program rejected the attack.");
+                            Ok(PocVerdict::Failed)
+                        }
                     }
                 }
                 Err(e) => Err(ares_core::AresError::Execution(format!(
@@ -253,6 +256,37 @@ pub async fn run_poc(
             ))
         }
     }
+}
+
+/// How many tests actually executed, summed over every libtest summary line in
+/// a `cargo test` run. `None` means no summary was printed at all, i.e. nothing
+/// was run — a build or link failure.
+///
+/// The count has to be summed across binaries rather than sniffed as a
+/// substring. `cargo test <filter>` compiles and runs EVERY test target in the
+/// package and hands the filter to each one, so any crate with a lib or bin
+/// target — which is every Solana program crate — emits a unittest binary that
+/// matches nothing and prints `running 0 tests`. That phrase therefore appears
+/// precisely WHEN the PoC's own integration binary did run, and treating it as
+/// "the filter matched nothing" discarded every PoC that actually executed as
+/// Inconclusive. `passed + failed > 0` over all summaries answers the real
+/// question: did any test run? (`ignored` deliberately does not count — an
+/// `#[ignore]`d harness proves nothing either way.)
+fn tests_executed(output: &str) -> Option<usize> {
+    let mut total: Option<usize> = None;
+    for line in output.lines() {
+        let Some((_, summary)) = line.split_once("test result:") else {
+            continue;
+        };
+        let words: Vec<&str> = summary.split_whitespace().collect();
+        let ran: usize = words
+            .windows(2)
+            .filter(|w| matches!(w[1].trim_end_matches(';'), "passed" | "failed"))
+            .filter_map(|w| w[0].parse::<usize>().ok())
+            .sum();
+        total = Some(total.unwrap_or(0) + ran);
+    }
+    total
 }
 
 /// Derive the `cargo test` filter substring for a generated PoC file.
@@ -349,6 +383,119 @@ mod tests {
 
         let verdict_missing = run_poc(&script, dir.path(), None).await.unwrap();
         assert_eq!(verdict_missing, PocVerdict::Failed);
+    }
+
+    /// Build a real, dependency-free cargo package shaped like every Solana
+    /// program crate: a lib target (no unit tests of its own) plus an
+    /// integration test under `tests/`. Running `cargo test <filter>` against it
+    /// produces exactly the two-binary output that broke the verdict.
+    fn multi_target_project(test_body: &str) -> TempDir {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            // `[workspace]` keeps cargo from adopting any ancestor workspace.
+            "[workspace]\n[package]\nname = \"victim\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/lib.rs"), "pub fn f() -> u8 { 1 }\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+        std::fs::write(
+            dir.path().join("tests/ares_cross_1_test.rs"),
+            format!("#[test]\nfn test_ares_cross_1_missing_signer() {{\n    {test_body}\n}}\n"),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn run_poc_rs_confirms_when_the_harness_actually_ran() {
+        // The lib target contributes `running 0 tests` to the combined output
+        // *because* the filter matched only the PoC's own binary — i.e. exactly
+        // when the PoC did run. Reading that substring as "matched nothing"
+        // threw away every PoC that ran, so no finding could ever be confirmed.
+        let dir = multi_target_project("assert!(true);");
+        let poc = dir.path().join("tests/ares_cross_1_test.rs");
+        let verdict = run_poc(&poc, dir.path(), None).await.unwrap();
+        assert_eq!(verdict, PocVerdict::Passed);
+    }
+
+    #[tokio::test]
+    async fn run_poc_rs_refutes_when_the_harness_ran_and_failed() {
+        // The other direction: a harness whose panic carries the refutation must
+        // still reach `Failed`, not be laundered into Inconclusive.
+        let dir = multi_target_project("panic!(\"ARES-POC: NOT REPRODUCED\");");
+        let poc = dir.path().join("tests/ares_cross_1_test.rs");
+        let verdict = run_poc(&poc, dir.path(), None).await.unwrap();
+        assert_eq!(verdict, PocVerdict::Failed);
+    }
+
+    #[tokio::test]
+    async fn run_poc_rs_inconclusive_when_the_filter_matches_no_test() {
+        // The guard that must survive: `cargo test <filter>` exits 0 when the
+        // filter matches nothing, which would otherwise read as a confirmed
+        // exploit produced by running no code at all.
+        let dir = multi_target_project("assert!(true);");
+        let poc = dir.path().join("tests/nothing_matches_this_test.rs");
+        std::fs::write(&poc, "#[test]\nfn unrelated_name() {}\n").unwrap();
+        let verdict = run_poc(&poc, dir.path(), None).await.unwrap();
+        assert_eq!(verdict, PocVerdict::Inconclusive);
+    }
+
+    #[tokio::test]
+    async fn run_poc_rs_inconclusive_when_the_harness_does_not_compile() {
+        // A build failure exits non-zero exactly like a failing assertion. It is
+        // absence of evidence, never a refutation.
+        let dir = multi_target_project("this is not rust");
+        let poc = dir.path().join("tests/ares_cross_1_test.rs");
+        let verdict = run_poc(&poc, dir.path(), None).await.unwrap();
+        assert_eq!(verdict, PocVerdict::Inconclusive);
+    }
+
+    #[test]
+    fn tests_executed_sums_across_test_binaries() {
+        // Verbatim shape of a real two-binary run: the lib unittest binary
+        // matched nothing, the PoC binary ran one test.
+        let output = "\
+     Running unittests src/lib.rs (target/debug/deps/victim-762)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/ares_cross_1_test.rs (target/debug/deps/ares_cross_1_test-374)
+
+running 1 test
+test test_ares_cross_1_missing_signer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+";
+        assert_eq!(tests_executed(output), Some(1));
+    }
+
+    #[test]
+    fn tests_executed_distinguishes_no_run_from_empty_run() {
+        // No summary at all: nothing was built, so no verdict may be read.
+        assert_eq!(tests_executed("error[E0382]: borrow of moved value"), None);
+        assert_eq!(tests_executed(""), None);
+
+        // A summary that ran nothing: the filter matched no test.
+        assert_eq!(
+            tests_executed("test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured;"),
+            Some(0)
+        );
+
+        // Ignored tests did not execute, so they must not count as a run.
+        assert_eq!(
+            tests_executed("test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured;"),
+            Some(0)
+        );
+
+        // A failing run still counts as executed — that is a refutation.
+        assert_eq!(
+            tests_executed("test result: FAILED. 0 passed; 1 failed; 0 ignored;"),
+            Some(1)
+        );
     }
 
     #[test]

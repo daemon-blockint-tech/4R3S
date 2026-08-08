@@ -149,7 +149,7 @@ async fn confirm_finding(finding: &mut Finding, project_root: &Path, local_rpc: 
     // be recorded as fork-Confirmed, with confidence forced to 0.95 and its
     // severity upgraded, on the strength of a transaction sent to a random pubkey.
     // The marker was written for exactly this decision and never read.
-    let wiring = tokio::fs::read_to_string(&staged)
+    let wiring = tokio::fs::read_to_string(&staged.path)
         .await
         .ok()
         .and_then(|src| {
@@ -170,7 +170,7 @@ async fn confirm_finding(finding: &mut Finding, project_root: &Path, local_rpc: 
         return;
     }
 
-    match run_poc(&staged, project_root, local_rpc).await {
+    match run_poc(&staged.path, project_root, local_rpc).await {
         Ok(PocVerdict::Passed) => {
             info!(
                 "Finding {} CONFIRMED (PoC transaction succeeded)",
@@ -202,6 +202,38 @@ async fn confirm_finding(finding: &mut Finding, project_root: &Path, local_rpc: 
     }
 }
 
+/// A PoC harness made visible to `cargo test`, cleaned up when it goes out of
+/// scope.
+///
+/// The copy has to sit inside the audited crate — cargo only builds integration
+/// tests it finds under `tests/` — but it must not survive the run. ARES audits
+/// somebody else's repository: a harness left in `tests/` references program
+/// symbols that repo does not export, so every later `cargo test` there fails to
+/// build. That also poisons the rest of our own pass, since a package that does
+/// not build emits no `test result:` line and `run_poc` returns `Inconclusive`
+/// for every remaining finding. Cleaning up in `Drop` covers the early returns
+/// and the panic path, not just the happy one.
+struct StagedPoc {
+    path: PathBuf,
+    /// False for PoCs run from their original location — deleting the user's
+    /// own `.ts`/`.sh` file would be destroying input, not cleaning up.
+    is_copy: bool,
+}
+
+impl Drop for StagedPoc {
+    fn drop(&mut self) {
+        if self.is_copy {
+            if let Err(e) = std::fs::remove_file(&self.path) {
+                warn!(
+                    "Could not remove staged PoC {:?}: {}. The audited repository \
+                     may not build until it is deleted by hand.",
+                    self.path, e
+                );
+            }
+        }
+    }
+}
+
 /// Copy a generated `.rs` PoC harness into the target project's `tests/`
 /// directory so `cargo test` compiles and runs it as an integration test.
 ///
@@ -209,9 +241,12 @@ async fn confirm_finding(finding: &mut Finding, project_root: &Path, local_rpc: 
 /// reporting purposes; that folder is outside the target's own Cargo crate,
 /// so `cargo test` never sees files sitting there. Non-`.rs` PoCs (`.ts`,
 /// `.sh`) are run directly from their original location and returned as-is.
-async fn stage_poc_for_cargo_test(poc_path: &Path, project_root: &Path) -> AresResult<PathBuf> {
+async fn stage_poc_for_cargo_test(poc_path: &Path, project_root: &Path) -> AresResult<StagedPoc> {
     if poc_path.extension().and_then(|e| e.to_str()) != Some("rs") {
-        return Ok(poc_path.to_path_buf());
+        return Ok(StagedPoc {
+            path: poc_path.to_path_buf(),
+            is_copy: false,
+        });
     }
 
     let tests_dir = project_root.join("tests");
@@ -222,7 +257,10 @@ async fn stage_poc_for_cargo_test(poc_path: &Path, project_root: &Path) -> AresR
     })?;
     let staged_path = tests_dir.join(file_name);
     tokio::fs::copy(poc_path, &staged_path).await?;
-    Ok(staged_path)
+    Ok(StagedPoc {
+        path: staged_path,
+        is_copy: true,
+    })
 }
 
 /// Confirmed: the exploit is proven, so confidence gets a high floor and
@@ -506,9 +544,58 @@ mod tests {
         let staged = stage_poc_for_cargo_test(&poc_path, dir.path())
             .await
             .unwrap();
-        assert_eq!(staged, dir.path().join("tests/f1_test.rs"));
-        assert!(staged.exists());
-        assert_eq!(std::fs::read_to_string(&staged).unwrap(), "// poc content");
+        assert_eq!(staged.path, dir.path().join("tests/f1_test.rs"));
+        assert!(staged.path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&staged.path).unwrap(),
+            "// poc content"
+        );
+    }
+
+    #[tokio::test]
+    async fn staged_poc_is_removed_from_the_audited_repo_when_dropped() {
+        // ARES audits somebody else's checkout. A harness left behind in their
+        // `tests/` directory references symbols their crate does not export, so
+        // `cargo test` there stops building — we would break a customer's build
+        // and walk away. It also poisons our own pass: a package that will not
+        // build prints no `test result:`, so every later finding in the same
+        // repo degrades to Inconclusive.
+        let dir = tempfile::TempDir::new().unwrap();
+        let poc_dir = dir.path().join("output/poc");
+        std::fs::create_dir_all(&poc_dir).unwrap();
+        let poc_path = poc_dir.join("f1_test.rs");
+        std::fs::write(&poc_path, "// poc content").unwrap();
+
+        let staged_path = {
+            let staged = stage_poc_for_cargo_test(&poc_path, dir.path())
+                .await
+                .unwrap();
+            assert!(staged.path.exists());
+            staged.path.clone()
+        };
+
+        assert!(
+            !staged_path.exists(),
+            "staged PoC survived the run and will break the audited repo's build"
+        );
+        // The generator's own copy is input, not our artifact.
+        assert!(poc_path.exists());
+    }
+
+    #[tokio::test]
+    async fn dropping_a_non_copied_poc_does_not_delete_the_users_file() {
+        // `.ts`/`.sh` PoCs run from where they already live. Deleting one on
+        // drop would destroy input rather than clean up after ourselves.
+        let dir = tempfile::TempDir::new().unwrap();
+        let poc_path = dir.path().join("exploit.sh");
+        std::fs::write(&poc_path, "#!/bin/sh\nexit 0\n").unwrap();
+
+        drop(
+            stage_poc_for_cargo_test(&poc_path, dir.path())
+                .await
+                .unwrap(),
+        );
+        assert!(poc_path.exists());
     }
 
     #[tokio::test]
@@ -520,7 +607,7 @@ mod tests {
         let staged = stage_poc_for_cargo_test(&poc_path, dir.path())
             .await
             .unwrap();
-        assert_eq!(staged, poc_path);
+        assert_eq!(staged.path, poc_path);
     }
 
     #[tokio::test]
