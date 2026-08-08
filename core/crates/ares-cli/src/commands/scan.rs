@@ -568,9 +568,17 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
         // ground-truth rows: every one a false positive, and the largest single
         // drag on measured precision. The detector is kept rather than deleted
         // because it is correct for native programs; this corpus contains none.
+        //
+        // Also requires the body to actually reach into an account. A dispatcher
+        // that matches a discriminant and delegates — the canonical native
+        // `process_instruction` — never touches one, so reading ITS body for a
+        // signer idiom proves nothing; the check belongs in the callee. Once the
+        // rustfmt signature fix made these handlers visible, dispatchers were the
+        // bulk of this rule's false positives.
         if instruction.has_signer_check == Some(false)
             && instruction.is_native_entry_point
             && !instruction.is_anchor_handler
+            && instruction.touches_account_fields
         {
             hypotheses.push(Hypothesis {
                 category: VulnerabilityCategory::SignerAuthorization,
@@ -600,9 +608,15 @@ fn generate_initial_hypotheses(program_graph: &ares_mapper::ProgramGraph) -> Vec
         // helper taking `bank: &AccountInfo` is neither native entry point nor
         // Anchor handler, yet that is precisely the Cashio root cause and the
         // shape of most function-level corpus rows.
+        // An Anchor typed wrapper IS the owner check: `Account<'info, T>`
+        // verifies `owner == declared program` on deserialization, so a body
+        // with no explicit assertion is the correct shape, not a missing one.
+        // Measured: this is the whole of the one false positive that recognising
+        // those wrappers as account parameters re-admitted.
         if instruction.has_owner_check == Some(false)
             && instruction.touches_raw_account_data
             && instruction.takes_account_params
+            && !instruction.uses_owner_checked_wrapper
         {
             hypotheses.push(Hypothesis {
                 category: VulnerabilityCategory::OwnershipCheck,
