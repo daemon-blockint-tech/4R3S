@@ -448,6 +448,17 @@ export function citesLoadedFile(location: string, source: LoadedSource): boolean
  * it — one definition, so the boundary cannot regress in only one of them.
  */
 export function pathsMatch(a: string, b: string): boolean {
-  return a === b || a.endsWith(`${sep}${b}`) || b.endsWith(`${sep}${a}`);
+  // Both sides can arrive with either separator convention: `relative()`
+  // above returns OS-native paths (backslashes on Windows), and semgrep's
+  // own JSON `scanned` list is a separate, external source not under this
+  // codebase's control. Comparing with the OS-native `sep` only works when
+  // both sides happen to agree — on Windows, a `/`-separated scanned path
+  // against a loaded path built from `relative()` silently never matches,
+  // reporting a genuinely-scanned file as unscanned. Normalize both to `/`
+  // first, so the match is correct regardless of which convention either
+  // side's input actually used.
+  const toSlash = (s: string) => s.split(sep).join("/").replaceAll("\\", "/");
+  const [na, nb] = [toSlash(a), toSlash(b)];
+  return na === nb || na.endsWith(`/${nb}`) || nb.endsWith(`/${na}`);
 }
 

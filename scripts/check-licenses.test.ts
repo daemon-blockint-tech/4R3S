@@ -137,13 +137,22 @@ describe("check-licenses", () => {
     // judgement call for a human plus a clarifications file, not for a gate
     // whose failure mode is shipping copyleft silently. Unchanged behaviour.
     "MIT OR GPL-2.0",
-  ])("blocks strong copyleft spelled %j", (license) => {
-    const { root, names } = licenseFixture([license]);
-    const { status, stdout, out } = runGate(root);
-    expect(status).toBe(1);
-    expect(out).toContain(`${names[0]}@1.0.0  ${license}`);
-    expect(stdout).not.toContain("license check passed");
-  });
+  ])(
+    "blocks strong copyleft spelled %j",
+    (license) => {
+      const { root, names } = licenseFixture([license]);
+      const { status, stdout, out } = runGate(root);
+      expect(status).toBe(1);
+      expect(out).toContain(`${names[0]}@1.0.0  ${license}`);
+      expect(stdout).not.toContain("license check passed");
+    },
+    // The gate shells out to `npx license-checker-rseidelsohn`; the very
+    // first invocation across this whole suite pays a real, one-time
+    // resolution cost the default 5s doesn't budget for (every later case
+    // here resolves in ~1s once that's warm). Windows' slower per-process
+    // spawn overhead makes this worse, not better.
+    20_000,
+  );
 
   // The carve-out the rule requires: LGPL and permissive are fine, and "LGPL"
   // contains "GPL", which is the trap any broadened matcher has to survive.
