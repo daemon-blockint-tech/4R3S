@@ -81,13 +81,24 @@ describe("coverage gaps are disclosed, not swallowed", () => {
   // absent from both sides of the `files.length of discovered.length` ratio the
   // report prints, so a swallowed failure reads as complete coverage of a tree
   // whose real size was never learned.
-  it("counts a symlink it refused to follow", async () => {
+  it("counts a symlink it refused to follow", async (ctx) => {
     const dir = mkdtempSync(join(tmpdir(), "ares-links-"));
     mkdirSync(join(dir, "src"), { recursive: true });
     writeFileSync(join(dir, "src", "real.rs"), "pub fn a() {}");
     // Not chmod 0o000: this repo ships a Docker image, and root reads anything,
     // so a permission-based test would pass vacuously in CI.
-    symlinkSync(join(dir, "src", "real.rs"), join(dir, "src", "linked.rs"));
+    try {
+      symlinkSync(join(dir, "src", "real.rs"), join(dir, "src", "linked.rs"));
+    } catch (err) {
+      // Windows requires Administrator rights or Developer Mode to create a
+      // symlink at all — EPERM here is an OS capability gap, not a failure
+      // of the code this test actually exercises. Skip rather than fail;
+      // this still runs for real everywhere the OS allows it (Linux, Mac,
+      // Windows with Developer Mode, CI).
+      rmSync(dir, { recursive: true, force: true });
+      ctx.skip();
+      return;
+    }
 
     const res = await loadSource(dir);
     expect(res.skippedLinks).toBe(1);
