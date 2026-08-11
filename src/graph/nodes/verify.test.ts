@@ -182,6 +182,23 @@ describe("verify: the critic is never asked about a finding it was not shown", (
     }
   });
 
+  it("keeps the blank lines that separate the instruction, the data, and the range", async () => {
+    // `.filter(Boolean)` dropped both `""` entries from the prompt array,
+    // because an empty string is falsy — the three sections ran together as one
+    // block of lines. The fence markers still delimited the untrusted data, so
+    // nothing was mis-parsed and no verdict landed on the wrong finding; the
+    // separators were simply written deliberately and silently absent.
+    const { chat, prompts } = capturingCritic();
+
+    await makeVerifyNode(deps(chat))(stateWith(overflowingFindings(2, 20)));
+
+    expect(prompts).toHaveLength(1);
+    const prompt = prompts[0]!;
+    // A blank line before the fence and after it, not merely somewhere.
+    expect(prompt).toMatch(/\n\nDraft findings to review/);
+    expect(prompt).toMatch(/END UNTRUSTED DATA>>>\n\nReturn one verdict/);
+  });
+
   it("makes no call and returns nothing for an empty finding list", async () => {
     const { chat, prompts } = capturingCritic();
 
