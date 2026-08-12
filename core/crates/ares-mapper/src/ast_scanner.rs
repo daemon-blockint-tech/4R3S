@@ -2052,3 +2052,39 @@ mod eng4_core_category_translation {
         );
     }
 }
+
+#[cfg(test)]
+mod eng4_smoke_test_realistic_fixture {
+    //! ENG-4: Checkpoints 1-4 tested only hand-crafted, minimal snippets —
+    //! a real gap against the original task's own explicit to-do ("test
+    //! against real Anchor programs with known issues"). No existing fixture
+    //! in this repo uses Anchor's #[derive(Accounts)] style at all, and a
+    //! missing has_one check isn't usually tied to one specific, named,
+    //! dollar-amount incident the way Cashio/Wormhole/Mango are — it's a
+    //! common vulnerability class. Rather than fabricate a fake incident
+    //! attribution, this runs against a realistic, complete Anchor program
+    //! (eval/fixtures/rs/pattern-examples/), not a 2-line synthetic snippet.
+    use super::*;
+
+    const VAULT_WITHDRAW_FIXTURE: &str = include_str!(
+        "../../../../eval/fixtures/rs/pattern-examples/missing-has-one-vault-withdraw.rs"
+    );
+
+    #[test]
+    fn detects_the_missing_has_one_in_a_realistic_complete_anchor_program() {
+        let scanner = analyze_file(
+            std::path::Path::new("missing-has-one-vault-withdraw.rs"),
+            VAULT_WITHDRAW_FIXTURE,
+        );
+        let unreferenced_authority_finding = scanner.findings.iter().any(|f| {
+            f.category == "anchor-constraint-gap" && f.description.contains("no field's `has_one`")
+        });
+        assert!(
+            unreferenced_authority_finding,
+            "expected the has_one gap check to fire on a realistic, complete \
+            program, not just the minimal synthetic snippets in \
+            eng4_anchor_has_one_gap — got: {:?}",
+            scanner.findings
+        );
+    }
+}
