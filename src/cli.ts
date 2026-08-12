@@ -224,7 +224,16 @@ async function main(): Promise<void> {
 
 // Only run when this is the actual entry point — not when a test file
 // imports validateAnchorPath/ares_binary/COMMANDS for testing.
-if (import.meta.url === `file://${process.argv[1]}`) {
+//
+// Comparing via a raw `file://${process.argv[1]}` string breaks on Windows:
+// process.argv[1] there is a native path with backslashes and no leading
+// slash (C:\Users\...\cli.ts), so the concatenation produces
+// file://C:\Users\...\cli.ts — never equal to the real import.meta.url
+// (file:///C:/Users/.../cli.ts). main() would silently never run when the
+// CLI is invoked directly on Windows: no error, no output, just a no-op
+// exit. Comparing through fileURLToPath instead means both sides are in
+// the same, real, native path format before the comparison happens.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main().catch((err) => {
     console.error(err);
     process.exitCode = 1;
