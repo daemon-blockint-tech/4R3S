@@ -286,10 +286,13 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                     is_unchecked_account: is_unchecked,
                 });
 
-                // Finding: UncheckedAccount without signer/owner/constraints → type-cosplay / ownership-check risk
+                // Finding: UncheckedAccount without signer/owner/constraints — this is
+                // precisely what anchor-constraint-gap's own catalog description names
+                // ("using UncheckedAccount without #[account(address = ...)]"), not a
+                // generic ownership-check catch-all.
                 if is_unchecked && !is_signer && !has_owner && !has_constraint {
                     self.scanner.findings.push(AstFinding {
-                        category: "ownership-check".to_string(),
+                        category: "anchor-constraint-gap".to_string(),
                         severity: "High".to_string(),
                         file: self.path.clone(),
                         line: 0,
@@ -385,7 +388,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                         });
                     } else {
                         self.scanner.findings.push(AstFinding {
-                            category: "ownership-check".to_string(),
+                            category: "missing-owner-check".to_string(),
                             severity: "High".to_string(),
                             file: self.path.clone(),
                             line: 0,
@@ -572,7 +575,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                 }
                 if is_oracle {
                     self.scanner.findings.push(AstFinding {
-                        category: "ownership-check".to_string(),
+                        category: "missing-owner-check".to_string(),
                         severity: "High".to_string(),
                         file: self.path.clone(),
                         line: node.span().start().line,
@@ -583,7 +586,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                         confidence: 0.85,
                     });
                     self.scanner.findings.push(AstFinding {
-                        category: "unchecked-cast".to_string(),
+                        category: "unsafe-type-cast".to_string(),
                         severity: "Medium".to_string(),
                         file: self.path.clone(),
                         line: node.span().start().line,
@@ -595,7 +598,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                 }
                 if !is_unpack && !is_oracle && expr_compact.contains("_unchecked(") {
                     self.scanner.findings.push(AstFinding {
-                        category: "ownership-check".to_string(),
+                        category: "missing-owner-check".to_string(),
                         severity: "Medium".to_string(),
                         file: self.path.clone(),
                         line: node.span().start().line,
@@ -618,7 +621,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
             || expr_str.contains("bytemuck::cast_slice");
         if is_bytemuck_unsafe {
             self.scanner.findings.push(AstFinding {
-                category: "unchecked-cast".to_string(),
+                category: "unsafe-type-cast".to_string(),
                 severity: "Medium".to_string(),
                 file: self.path.clone(),
                 line: node.span().start().line,
@@ -668,7 +671,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
 
             if !is_safe && !is_safe_source && has_financial_context {
                 self.scanner.findings.push(AstFinding {
-                    category: "unchecked-cast".to_string(),
+                    category: "unsafe-type-cast".to_string(),
                     severity: "High".to_string(),
                     file: self.path.clone(),
                     line: node.span().start().line,
@@ -711,7 +714,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
         // Detect manual lamport drain (revival-attack / account-closure)
         if expr_str.contains("lamports.borrow_mut()") && expr_str.contains("= 0") {
             self.scanner.findings.push(AstFinding {
-                category: "revival-attack".to_string(),
+                category: "account-close-revival".to_string(),
                 severity: "Critical".to_string(),
                 file: self.path.clone(),
                 line: node.span().start().line,
@@ -725,7 +728,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
             let has_is_initialized = expr_str.contains("is_initialized");
             if !has_is_initialized {
                 self.scanner.findings.push(AstFinding {
-                    category: "re-initialization".to_string(),
+                    category: "account-reinitialization".to_string(),
                     severity: "Critical".to_string(),
                     file: self.path.clone(),
                     line: node.span().start().line,
@@ -1508,5 +1511,124 @@ mod eng3_smoke_test_real_fixture {
             "expected type-cosplay on the real Cashio fixture, got categories: {:?}",
             categories
         );
+    }
+}
+
+#[cfg(test)]
+mod eng4_catalog_category_fixes {
+    //! ENG-4: found by literally doing the task's own to-do — cross-referencing
+    //! every detection's category string against the real canonical catalog
+    //! (src/knowledge/solana-vulns.ts). 8 findings used category strings that
+    //! don't exist in the catalog at all, breaking the link back to it.
+    use super::*;
+
+    fn findings_for(src: &str) -> Vec<AstFinding> {
+        analyze_file(std::path::Path::new("test.rs"), src).findings
+    }
+
+    fn has_category(findings: &[AstFinding], category: &str) -> bool {
+        findings.iter().any(|f| f.category == category)
+    }
+
+    #[test]
+    fn unchecked_account_with_no_validation_is_anchor_constraint_gap_not_generic_ownership_check() {
+        // This is precisely what anchor-constraint-gap's own catalog description
+        // names — "UncheckedAccount without #[account(address = ...)]" — not a
+        // generic ownership-check catch-all that doesn't exist in the catalog.
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Withdraw<'info> {
+                pub target: UncheckedAccount<'info>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "anchor-constraint-gap"),
+            "expected anchor-constraint-gap, got: {:?}",
+            findings
+        );
+        assert!(
+            !has_category(&findings, "ownership-check"),
+            "the old, non-existent category string should never appear again, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn no_finding_anywhere_still_uses_a_category_string_absent_from_the_real_catalog() {
+        // The real, authoritative list from src/knowledge/solana-vulns.ts, kept
+        // in sync manually — if this test starts failing because a new,
+        // legitimate category was added to the scanner, add it here too rather
+        // than assume the mismatch is fine.
+        const REAL_CATALOG_IDS: &[&str] = &[
+            "missing-signer-check",
+            "missing-owner-check",
+            "account-data-matching",
+            "arbitrary-cpi",
+            "non-canonical-bump",
+            "pda-seed-collision",
+            "account-reinitialization",
+            "missing-reload-after-cpi",
+            "integer-overflow-underflow",
+            "precision-loss",
+            "account-close-revival",
+            "duplicate-mutable-account",
+            "missing-rent-exemption",
+            "sysvar-spoofing",
+            "anchor-constraint-gap",
+            "unchecked-cpi-return",
+            "authority-mismanagement",
+            "oracle-price-manipulation",
+            "insecure-init-order",
+            "spl-authority-check",
+            "type-cosplay",
+            "unsafe-type-cast",
+            "missing-slippage-protection",
+            "denial-of-service",
+            "business-logic-error",
+            "upgrade-authority-risk",
+            "token-2022-extension-risk",
+            "remaining-accounts-validation",
+            "instruction-introspection",
+            "pda-privileges",
+            "reentrancy-risk",
+            "missing-revalidation",
+            "state-transition-gap",
+            "fuzzing-crash",
+        ];
+
+        // A broad sweep across every detection path this file has, so a single
+        // input exercising many different checks at once catches any category
+        // string this test doesn't otherwise touch.
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Ctx<'info> {
+                pub raw: UncheckedAccount<'info>,
+            }
+
+            fn process_withdraw(admin: AccountInfo, data: &[u8]) {
+                invoke(admin, data);
+                let bank_data = Bank::try_from_slice(&data)?;
+                let amount = data.len() as u64;
+                unpack_unchecked(data);
+            }
+
+            fn close_account(account: AccountInfo) {
+                **account.lamports.borrow_mut() = 0;
+            }
+
+            fn initialize_vault(vault: AccountInfo) {
+                let _ = vault;
+            }
+        "#;
+        let findings = findings_for(src);
+        for f in &findings {
+            assert!(
+                REAL_CATALOG_IDS.contains(&f.category.as_str()),
+                "category \"{}\" does not exist in the real catalog — found in: {:?}",
+                f.category,
+                f
+            );
+        }
     }
 }
