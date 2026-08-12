@@ -19,6 +19,7 @@ pub async fn execute(
     full_pipeline: bool,
     fuzz: bool,
     poc: bool,
+    ast_scan: bool,
     max_duration: u64,
     output: &Path,
 ) -> AresResult<()> {
@@ -27,8 +28,8 @@ pub async fn execute(
     info!("ARES V3 Security Scan");
     info!("Target: {:?}", program_path);
     info!(
-        "Full Pipeline: {} | Fuzz: {} | PoC: {}",
-        full_pipeline, fuzz, poc
+        "Full Pipeline: {} | Fuzz: {} | PoC: {} | AST Scan: {}",
+        full_pipeline, fuzz, poc, ast_scan
     );
     info!("Max Duration: {}s", max_duration);
     info!("=========================================");
@@ -200,6 +201,60 @@ pub async fn execute(
             validation: None,
         });
     }
+
+    // ENG-4: ares-mapper's AST scanner (Anchor/Solitaire constraint checks,
+    // taint-tracked sinks) — opt-in via --ast-scan, default false. Unlike the
+    // hypothesis pipeline (EVAL-3 measured F1 0.3007), this detection path has
+    // never been measured against a real corpus at scale. Wired in fully
+    // rather than kept as a separate tool, per direction to integrate it
+    // "all in one" with the rest of the pipeline — but starting opt-in until
+    // there's real precision/recall evidence to justify flipping the default,
+    // the same rollout discipline every other detector here already followed.
+    if ast_scan {
+        info!("[2c/5] AST Scanner: Anchor/Solitaire constraint checks, taint-tracked sinks...");
+        let ast_scanner_result = ares_mapper::ast_scanner::scan_directory_ast(program_path);
+        info!(
+            "AST scanner: {} findings",
+            ast_scanner_result.findings.len()
+        );
+        for af in ast_scanner_result.findings {
+            let core_category_str = ares_mapper::ast_scanner::ast_category_to_core_category_str(&af.category);
+            let category = VulnerabilityCategory::from_str_checked(core_category_str)
+                .unwrap_or(VulnerabilityCategory::InvariantViolation);
+            // Only three severities exist in ares-mapper's own output today
+            // (checked directly against every literal in ast_scanner.rs and
+            // taint_engine.rs) — anything else falls through to Medium rather
+            // than panicking on a string this function doesn't recognize.
+            let severity = match af.severity.as_str() {
+                "Critical" => ares_core::Severity::Critical,
+                "High" => ares_core::Severity::High,
+                _ => ares_core::Severity::Medium,
+            };
+            findings.push(ares_core::Finding {
+                id: format!("ARES-AST-{}", findings.len() + 1),
+                title: format!("{}: {}", af.category, af.file.display()),
+                description: af.description,
+                severity,
+                category,
+                location: ares_core::CodeLocation {
+                    file: af.file,
+                    // 0 is ast_scanner's own "no specific line tracked"
+                    // sentinel (used throughout its struct-level findings,
+                    // which describe a whole Accounts struct, not one
+                    // expression) — reporting it literally would read as a
+                    // real, if odd, line number rather than "unknown".
+                    line_start: if af.line == 0 { None } else { Some(af.line as u32) },
+                    ..Default::default()
+                },
+                proof_of_concept: None,
+                recommendation: "Review the flagged Anchor/Solitaire account constraint or taint-tracked sink.".to_string(),
+                references: vec![],
+                confidence: af.confidence,
+                validation: None,
+            });
+        }
+    }
+
 
     if fuzz {
         info!("[3/5] Fuzzer Orchestrator: Running Trident fuzz campaign...");
