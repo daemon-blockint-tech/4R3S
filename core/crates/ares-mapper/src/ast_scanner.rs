@@ -63,6 +63,7 @@ pub struct AnchorAccountField {
     pub is_mut: bool,
     pub has_owner_check: bool,
     pub has_constraint: bool,
+    pub has_one: bool,
     pub is_unchecked_account: bool,
 }
 
@@ -241,6 +242,9 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                 ..Default::default()
             };
 
+            let mut all_attrs_text = String::new();
+            let mut authority_like_fields: Vec<String> = Vec::new();
+
             for field in &node.fields {
                 let field_name = field
                     .ident
@@ -271,10 +275,32 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                     s.contains("has_one") || s.contains("constraint") || s.contains("owner")
                 });
 
+                let has_one = field.attrs.iter().any(|a| attr_to_string(a).contains("has_one"));
+
                 let has_owner = field.attrs.iter().any(|a| {
                     let s = attr_to_string(a);
                     s.contains("owner =") || s.contains("owner:")
                 });
+
+                // has_one = authority lives on the account being validated (e.g.
+                // the vault field), not on the authority field itself — Anchor
+                // checks `vault.authority == authority.key()`. So whether *this*
+                // field is properly guarded is a whole-struct question: does any
+                // field's attribute text reference it by name via has_one? Collect
+                // the raw text and the authority-like names now; check after the
+                // loop once every field has been seen.
+                for attr in &field.attrs {
+                    all_attrs_text.push_str(&attr_to_string(attr));
+                    all_attrs_text.push(' ');
+                }
+                if !field_name.is_empty()
+                    && (field_name == "authority"
+                        || field_name == "admin"
+                        || field_name.ends_with("_authority")
+                        || field_name.ends_with("_admin"))
+                {
+                    authority_like_fields.push(field_name.clone());
+                }
 
                 account_struct.fields.push(AnchorAccountField {
                     name: field_name.clone(),
@@ -283,6 +309,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                     is_mut,
                     has_owner_check: has_owner,
                     has_constraint,
+                    has_one,
                     is_unchecked_account: is_unchecked,
                 });
 
@@ -301,6 +328,32 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                             field_name, node.ident
                         ),
                         confidence: 0.80,
+                    });
+                }
+            }
+
+            // Struct-level: an authority-like field (by Anchor's own conventional
+            // naming — the catalog's detection hint names exactly this pattern:
+            // "Check for missing has_one on authority fields") that no field's
+            // has_one constraint ever references by name. A mutable account can
+            // then be acted on without Anchor ever confirming it actually belongs
+            // to this particular authority.
+            for authority_field in &authority_like_fields {
+                let referenced = all_attrs_text.contains("has_one")
+                    && all_attrs_text.contains(authority_field.as_str());
+                if !referenced {
+                    self.scanner.findings.push(AstFinding {
+                        category: "anchor-constraint-gap".to_string(),
+                        severity: "Medium".to_string(),
+                        file: self.path.clone(),
+                        line: 0,
+                        description: format!(
+                            "`{}` has an authority-like field `{}`, but no field's `has_one` constraint \
+                            references it. Without `has_one = {}` on the account it authorizes, Anchor \
+                            never confirms this signer actually owns/matches the account being acted on.",
+                            node.ident, authority_field, authority_field
+                        ),
+                        confidence: 0.55,
                     });
                 }
             }
@@ -1630,5 +1683,102 @@ mod eng4_catalog_category_fixes {
                 f
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod eng4_anchor_has_one_gap {
+    //! ENG-4: the catalog's own anchor-constraint-gap detection hint says
+    //! plainly — "Check for missing has_one on authority fields." This is a
+    //! genuine gap: has_one lived only as part of a generic has_constraint
+    //! catch-all, indistinguishable from an unrelated constraint attribute.
+    use super::*;
+
+    fn findings_for(src: &str) -> Vec<AstFinding> {
+        analyze_file(std::path::Path::new("test.rs"), src).findings
+    }
+
+    fn has_category(findings: &[AstFinding], category: &str) -> bool {
+        findings.iter().any(|f| f.category == category)
+    }
+
+    #[test]
+    fn authority_field_with_no_has_one_anywhere_in_the_struct_is_flagged() {
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Withdraw<'info> {
+                pub authority: Signer<'info>,
+                #[account(mut)]
+                pub vault: Account<'info, Vault>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "anchor-constraint-gap"),
+            "expected anchor-constraint-gap for an unreferenced authority field, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn authority_field_referenced_by_a_real_has_one_is_not_flagged_for_this() {
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Withdraw<'info> {
+                pub authority: Signer<'info>,
+                #[account(mut, has_one = authority)]
+                pub vault: Account<'info, Vault>,
+            }
+        "#;
+        let findings = findings_for(src);
+        // Not a blanket "no anchor-constraint-gap at all" assertion — this
+        // struct could still trip other, unrelated checks. Specifically: no
+        // finding whose description names this authority field as unreferenced.
+        let unreferenced_authority_finding = findings.iter().any(|f| {
+            f.category == "anchor-constraint-gap" && f.description.contains("no field's `has_one`")
+        });
+        assert!(
+            !unreferenced_authority_finding,
+            "did not expect an unreferenced-authority finding once has_one references it, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn a_struct_with_no_authority_like_field_at_all_is_not_flagged_for_this() {
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Ping<'info> {
+                #[account(mut)]
+                pub counter: Account<'info, Counter>,
+            }
+        "#;
+        let findings = findings_for(src);
+        let unreferenced_authority_finding = findings.iter().any(|f| {
+            f.category == "anchor-constraint-gap" && f.description.contains("no field's `has_one`")
+        });
+        assert!(
+            !unreferenced_authority_finding,
+            "no authority-like field exists here, so this specific check should not fire, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn a_named_variant_admin_authority_is_also_recognised() {
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct UpdateConfig<'info> {
+                pub pool_authority: Signer<'info>,
+                #[account(mut)]
+                pub config: Account<'info, Config>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "anchor-constraint-gap"),
+            "expected the *_authority naming convention to also be recognised, got: {:?}",
+            findings
+        );
     }
 }
