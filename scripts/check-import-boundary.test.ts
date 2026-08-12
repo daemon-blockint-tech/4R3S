@@ -10,6 +10,15 @@ const GATE = path.join(REPO_ROOT, "scripts", "check-import-boundary.mjs");
 
 const created: string[] = [];
 
+/** The gate reports paths via path.relative(), which correctly uses the
+ * OS-native separator (backslashes on Windows) — that's right for a real
+ * filesystem path. Assertions here compare against POSIX-style literals
+ * for readability, so normalize the gate's actual output before comparing,
+ * rather than hardcoding two separator conventions everywhere. */
+function toPosix(s: string): string {
+  return s.split(path.sep).join("/");
+}
+
 afterEach(() => {
   for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -56,7 +65,7 @@ describe("check-import-boundary", () => {
     });
     const { status, out } = runGate(root);
     expect(status).toBe(1);
-    expect(out).toContain("apps/auditor-web/lib/actions/scan.ts");
+    expect(toPosix(out)).toContain("apps/auditor-web/lib/actions/scan.ts");
     expect(out).toContain('imports the offensive package "ares"');
   });
 
@@ -130,8 +139,16 @@ describe("check-import-boundary", () => {
 
   // Real input, not a fixture: the gate has to be green on the tree it guards,
   // or the first PR to hit a false positive is the one that turns it off.
-  it("passes on this repository", () => {
-    const { status, out } = runGate(REPO_ROOT);
-    expect(status, out).toBe(0);
-  });
+  it(
+    "passes on this repository",
+    () => {
+      const { status, out } = runGate(REPO_ROOT);
+      expect(status, out).toBe(0);
+    },
+    // Real input, not a fixture — scans several hundred real files (497 at
+    // last count, and the repo keeps growing). 1.6s measured on Linux;
+    // Windows' per-file I/O overhead for a recursive walk like this is
+    // measurably slower, and the default 5s doesn't leave enough margin.
+    20_000,
+  );
 });

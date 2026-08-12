@@ -1,33 +1,94 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
+
+/**
+ * The previous version of this file faked `semgrep` as a real, spawnable
+ * file on PATH — a POSIX shell script, chmod +x'd. That can never work on
+ * Windows: there's no shebang support, and creating a genuinely
+ * OS-launchable stand-in without shell:true turns out to be a real,
+ * inherent limitation there (a .cmd/.bat file needs cmd.exe as an
+ * interpreter, which spawn() without shell:true cannot invoke — confirmed
+ * directly, the same finding as BIZ-1's npm.cmd issue).
+ *
+ * Mocking `spawn` itself at the module level sidesteps the OS entirely —
+ * `runSemgrep` never actually launches a real process in these tests, on
+ * any platform, so there's no OS-level executable-format question to
+ * solve at all. `mockSpawnBehavior` is configured per test via
+ * `vi.hoisted()`, which is vitest's supported way to share mutable state
+ * with a hoisted `vi.mock()` factory.
+ */
+const { mockSpawnBehavior, setMockSpawnBehavior } = vi.hoisted(() => {
+  let behavior: {
+    stdout?: string;
+    stderr?: string;
+    exitCode: number | null;
+    spawnError?: NodeJS.ErrnoException;
+  } | null = null;
+  return {
+    mockSpawnBehavior: () => behavior,
+    setMockSpawnBehavior: (b: typeof behavior) => {
+      behavior = b;
+    },
+  };
+});
+
+vi.mock("node:child_process", () => ({
+  spawn: () => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      kill: (signal?: string) => void;
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+
+    const behavior = mockSpawnBehavior();
+    // Defer to a later tick — production code attaches its .on() listeners
+    // immediately after calling spawn(); emitting synchronously here would
+    // fire before those listeners exist and be silently missed, same as a
+    // real child process never emits synchronously either.
+    queueMicrotask(() => {
+      if (!behavior) {
+        // Default: simulate semgrep genuinely not being on PATH, the same
+        // ENOENT-shaped error a real missing binary produces.
+        const err = new Error("spawn semgrep ENOENT") as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        child.emit("error", err);
+        return;
+      }
+      if (behavior.spawnError) {
+        child.emit("error", behavior.spawnError);
+        return;
+      }
+      if (behavior.stdout) child.stdout.emit("data", Buffer.from(behavior.stdout));
+      if (behavior.stderr) child.stderr.emit("data", Buffer.from(behavior.stderr));
+      child.emit("close", behavior.exitCode);
+    });
+
+    return child;
+  },
+}));
 
 import { runSemgrep } from "./semgrep.js";
 import { makeAnalyzeStaticNode } from "../graph/nodes/analyze-static.js";
 import type { AresState } from "../graph/state.js";
 
-/**
- * Build a throwaway `semgrep` on PATH that behaves however the test needs, plus
- * a source dir to point the scan at. Hermetic — no real semgrep required.
- */
-function shimSemgrep(script: string): { src: string; cleanup: () => void } {
+/** A real directory to point the scan at — runSemgrep's own access() check
+ * still needs a genuinely existing path before it ever reaches spawn(). */
+function realSourceDir(): { src: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "ares-semgrep-shim-"));
-  const bin = join(dir, "bin");
-  const src = join(dir, "src");
-  mkdirSync(bin, { recursive: true });
-  mkdirSync(src, { recursive: true });
-  writeFileSync(join(src, "a.rs"), "fn main(){}\n");
-  writeFileSync(join(bin, "semgrep"), script);
-  chmodSync(join(bin, "semgrep"), 0o755);
-  process.env.PATH = bin;
-  // vitest.config.ts points SEMGREP_BIN at a name that does not exist so the
-  // rest of the suite never spawns a real scanner; these tests want theirs.
-  process.env.SEMGREP_BIN = "semgrep";
-  return { src, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(join(dir, "src", "a.rs"), "fn main(){}\n");
+  return { src: dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 describe("runSemgrep", () => {
+  afterEach(() => setMockSpawnBehavior(null));
+
   it("reports unavailable when no source path is given", async () => {
     const res = await runSemgrep(undefined);
     expect(res.available).toBe(false);
@@ -42,22 +103,17 @@ describe("runSemgrep", () => {
   });
 
   it("degrades gracefully when semgrep is not installed on a real path", async () => {
-    // The path exists, so it gets past the access() check and tries to spawn
-    // the scanner. SEMGREP_BIN is set to a name that does not exist (see
-    // vitest.config.ts), so this deterministically exercises the not-installed
-    // path instead of depending on the host having semgrep.
-    const dir = mkdtempSync(join(tmpdir(), "ares-semgrep-"));
+    // No behavior configured — the mock's default simulates ENOENT, the
+    // same as a real host without semgrep installed.
+    const { src, cleanup } = realSourceDir();
     try {
-      const res = await runSemgrep(dir);
+      const res = await runSemgrep(src);
       expect(res).toHaveProperty("available");
       expect(Array.isArray(res.findings)).toBe(true);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      cleanup();
     }
-    // Generous deadline on purpose: where semgrep IS installed this spawns it for
-    // real, and a cold start with rule parsing runs to several seconds. The 5s
-    // default made this red on developer machines and green in hermetic CI.
-  }, 20_000);
+  });
 });
 
 /**
@@ -67,20 +123,13 @@ describe("runSemgrep", () => {
  * must turn that into a `failed` outcome so the report's assurance banner fires.
  */
 describe("a scan that did not complete is not a clean result", () => {
-  const realPath = process.env.PATH;
-  const realBin = process.env.SEMGREP_BIN;
-  afterEach(() => {
-    process.env.PATH = realPath;
-    if (realBin === undefined) delete process.env.SEMGREP_BIN;
-    else process.env.SEMGREP_BIN = realBin;
-  });
+  afterEach(() => setMockSpawnBehavior(null));
 
   it("reports scan-error when semgrep exits non-zero", async () => {
     // Exactly what a registry fetch with no egress looks like: noise on stderr,
     // nothing on stdout, non-zero exit.
-    const { src, cleanup } = shimSemgrep(
-      '#!/bin/sh\necho "[ERROR] failed to download config" >&2\nexit 2\n',
-    );
+    setMockSpawnBehavior({ stderr: "[ERROR] failed to download config\n", exitCode: 2 });
+    const { src, cleanup } = realSourceDir();
     try {
       const res = await runSemgrep(src);
       expect(res.available).toBe(false);
@@ -89,14 +138,16 @@ describe("a scan that did not complete is not a clean result", () => {
     } finally {
       cleanup();
     }
-  }, 20_000);
+  });
 
   it("reports scan-error when semgrep exits 0 but reports rule errors", async () => {
     // A rule that fails to parse yields results:[] alongside errors:[...] on a
     // successful exit — the shape that silently read as "scanned, found nothing".
-    const { src, cleanup } = shimSemgrep(
-      '#!/bin/sh\necho \'{"results":[],"errors":[{"message":"Rule parse error in rule x"}]}\'\nexit 0\n',
-    );
+    setMockSpawnBehavior({
+      stdout: '{"results":[],"errors":[{"message":"Rule parse error in rule x"}]}\n',
+      exitCode: 0,
+    });
+    const { src, cleanup } = realSourceDir();
     try {
       const res = await runSemgrep(src);
       expect(res.available).toBe(false);
@@ -105,10 +156,11 @@ describe("a scan that did not complete is not a clean result", () => {
     } finally {
       cleanup();
     }
-  }, 20_000);
+  });
 
   it("surfaces a failed scan as a failed analyzer, not 'ok'", async () => {
-    const { src, cleanup } = shimSemgrep('#!/bin/sh\necho "boom" >&2\nexit 2\n');
+    setMockSpawnBehavior({ stderr: "boom\n", exitCode: 2 });
+    const { src, cleanup } = realSourceDir();
     try {
       const update = await makeAnalyzeStaticNode()({ sourcePath: src } as AresState);
       expect(update.analyzers?.[0]?.outcome).toBe("failed");
@@ -116,37 +168,33 @@ describe("a scan that did not complete is not a clean result", () => {
     } finally {
       cleanup();
     }
-  }, 20_000);
+  });
 
   it("still reports success when semgrep genuinely finds nothing", async () => {
-    const { src, cleanup } = shimSemgrep('#!/bin/sh\necho \'{"results":[],"errors":[]}\'\nexit 0\n');
+    setMockSpawnBehavior({ stdout: '{"results":[],"errors":[]}\n', exitCode: 0 });
+    const { src, cleanup } = realSourceDir();
     try {
       const update = await makeAnalyzeStaticNode()({ sourcePath: src } as AresState);
       expect(update.analyzers?.[0]?.outcome).toBe("ok");
     } finally {
       cleanup();
     }
-  }, 20_000);
+  });
 });
 
 describe("scan-coverage regressions", () => {
-  const realPath = process.env.PATH;
-
-  afterEach(() => {
-    process.env.PATH = realPath;
-    // Restore the absent-binary default from vitest.config.ts so the rest of
-    // the suite stays hermetic on hosts that do have semgrep.
-    process.env.SEMGREP_BIN = "ares-semgrep-absent-in-tests";
-  });
+  afterEach(() => setMockSpawnBehavior(null));
 
   it("treats a scan that opened no files as failed, never ok", async () => {
     // Semgrep applies .gitignore by default, so an audited repo that ignores its
     // own source path yielded scanned:0 with no error — which rendered as `ok`,
     // and `ok` means "silence here is evidence". That published a clean audit of
     // a program nobody scanned, and the audited party controls .gitignore.
-    const { src, cleanup } = shimSemgrep(
-      `#!/bin/sh\necho '{"results":[],"errors":[],"paths":{"scanned":[]}}'\n`,
-    );
+    setMockSpawnBehavior({
+      stdout: '{"results":[],"errors":[],"paths":{"scanned":[]}}\n',
+      exitCode: 0,
+    });
+    const { src, cleanup } = realSourceDir();
     try {
       const res = await runSemgrep(src);
       expect(res.available).toBe(false);
@@ -176,10 +224,8 @@ describe("scan-coverage regressions", () => {
       errors: [{ level: "warn", type: "PartialParsing", message: "could not parse b.rs" }],
       paths: { scanned: ["a.rs", "b.rs"] },
     });
-    // `echo` is a shell builtin; the shim puts only its own dir on PATH, so an
-    // external binary like `cat` would not resolve and the scan would look
-    // empty for the wrong reason.
-    const { src, cleanup } = shimSemgrep(`#!/bin/sh\necho '${json}'\n`);
+    setMockSpawnBehavior({ stdout: `${json}\n`, exitCode: 0 });
+    const { src, cleanup } = realSourceDir();
     try {
       const res = await runSemgrep(src);
       expect(res.available).toBe(true);
@@ -201,7 +247,8 @@ describe("scan-coverage regressions", () => {
       errors: [{ level: "error", type: "RuleParseError", message: "bad rule" }],
       paths: { scanned: ["a.rs"] },
     });
-    const { src, cleanup } = shimSemgrep(`#!/bin/sh\necho '${json}'\n`);
+    setMockSpawnBehavior({ stdout: `${json}\n`, exitCode: 0 });
+    const { src, cleanup } = realSourceDir();
     try {
       const res = await runSemgrep(src);
       expect(res.available).toBe(false);
