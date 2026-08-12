@@ -896,9 +896,19 @@ fn is_raw_solitaire_info(ty_str: &str) -> bool {
     if trimmed.contains("Signer<") || trimmed.contains("Sysvar<") || trimmed.contains("Derive<") {
         return false;
     }
+    // Mut<...> only marks writability — it is not a validation wrapper the way
+    // Signer<>/Sysvar<> are, so `Mut<Info<'b>>` is still exactly as unvalidated
+    // as bare `Info<'b>`, and arguably worse: a mutable, unvalidated account can
+    // be written to, not just read. Strip one leading Mut<...> layer before the
+    // prefix check, or `starts_with("Info<")` never matches it at all — this
+    // account type was completely invisible to this check.
+    let inner = trimmed
+        .strip_prefix("Mut<")
+        .and_then(|s| s.strip_suffix(">"))
+        .unwrap_or(trimmed.as_str());
     // Check for bare Info<'b> or Info<...> that is not inside another generic
     // Use regex-like heuristic: starts with Info< and doesn't contain nested generics
-    trimmed.starts_with("Info<") || trimmed.starts_with("Info<'")
+    inner.starts_with("Info<") || inner.starts_with("Info<'")
 }
 
 fn attr_to_string(attr: &Attribute) -> String {
@@ -1778,6 +1788,93 @@ mod eng4_anchor_has_one_gap {
         assert!(
             has_category(&findings, "anchor-constraint-gap"),
             "expected the *_authority naming convention to also be recognised, got: {:?}",
+            findings
+        );
+    }
+}
+
+#[cfg(test)]
+mod eng4_solitaire_mut_info_gap {
+    //! ENG-4: `is_raw_solitaire_info` only matched a type string that started
+    //! with "Info<" directly — `Mut<Info<'b>>` starts with "Mut<" instead, so a
+    //! mutable, completely unvalidated Solitaire account was invisible to this
+    //! check entirely. Mut<> only marks writability, not validation, so this is
+    //! at least as dangerous as the already-detected immutable case — arguably
+    //! more so, since it can be written to, not just read.
+    use super::*;
+
+    fn findings_for(src: &str) -> Vec<AstFinding> {
+        analyze_file(std::path::Path::new("test.rs"), src).findings
+    }
+
+    fn has_category(findings: &[AstFinding], category: &str) -> bool {
+        findings.iter().any(|f| f.category == category)
+    }
+
+    #[test]
+    fn mut_wrapped_raw_info_is_now_detected() {
+        let src = r#"
+            #[derive(FromAccounts)]
+            pub struct VerifySignatures<'b> {
+                pub instruction_acc: Mut<Info<'b>>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "missing-signer-check"),
+            "expected Mut<Info<'b>> to be detected same as bare Info<'b>, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn bare_raw_info_still_fires_unaffected_by_the_mut_fix() {
+        // Regression check: the already-working, unwrapped case must still work.
+        let src = r#"
+            #[derive(FromAccounts)]
+            pub struct VerifySignatures<'b> {
+                pub instruction_acc: Info<'b>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "missing-signer-check"),
+            "expected bare Info<'b> to still fire, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn mut_wrapped_data_account_is_not_misidentified_as_raw_info() {
+        // Data<> is Solitaire's typed, owner-checked wrapper (via Seeded) — a
+        // real validation wrapper, unlike Mut<> which only marks writability.
+        // Mut<Data<...>> must stay correctly excluded, not swept up by the fix.
+        let src = r#"
+            #[derive(FromAccounts)]
+            pub struct UpdateConfig<'b> {
+                pub config: Mut<Data<'b, ConfigAccount, { AccountType::Config }>>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            !has_category(&findings, "missing-signer-check") && !has_category(&findings, "missing-owner-check"),
+            "Mut<Data<...>> is a validated account and must not be flagged as raw info, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn mut_wrapped_signer_is_not_misidentified_as_raw_info() {
+        let src = r#"
+            #[derive(FromAccounts)]
+            pub struct Withdraw<'b> {
+                pub authority: Mut<Signer<Info<'b>>>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            !has_category(&findings, "missing-signer-check") && !has_category(&findings, "missing-owner-check"),
+            "Mut<Signer<...>> is already signer-validated and must not be flagged, got: {:?}",
             findings
         );
     }
