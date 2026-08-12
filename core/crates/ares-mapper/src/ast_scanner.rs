@@ -986,6 +986,79 @@ pub fn ast_categories_to_benchmark(findings: &[AstFinding]) -> Vec<String> {
     cats.into_iter().collect()
 }
 
+/// Translate an `AstFinding`/`TaintFinding` category (aligned to
+/// `src/knowledge/solana-vulns.ts`'s catalog IDs, per `ENG-3`/`ENG-4`) into
+/// the string `ares_core::VulnerabilityCategory::from_str_checked` already
+/// recognizes — so a caller wiring this crate's findings into a real scan
+/// (`ares-cli`'s `scan.rs`) gets the correct, specific category, not a
+/// silent collapse into `InvariantViolation`.
+///
+/// Deliberately *not* a new `ares-core` enum variant or a change to
+/// `from_str_checked` itself, and deliberately not a dependency on
+/// `ares_core` from this crate at all — matching the existing vocabulary
+/// rather than extending it.
+///
+/// **Sourcing, disclosed precisely rather than left to look uniform:**
+/// most pairings below are taken directly from
+/// `eval/mappings/ares-core-categories.json`, which already documents
+/// this exact two-vocabulary split with its own confidence rating per
+/// pair. `anchor-constraint-gap` and `non-canonical-bump` have **no
+/// entry there at all** — both are categories this crate added after
+/// that file was last written, so both are my own coarse-stretch
+/// judgment calls, not sourced from anything authoritative. Keep this in
+/// sync with that file if either side's vocabulary changes.
+///
+/// **A real, known limitation worth stating plainly, not leaving
+/// implicit:** `from_str_checked` maps `"re-initialization"` and
+/// `"revival-attack"` to the *same* `AccountReloading` variant. This
+/// crate's `ENG-3` work deliberately keeps `account-reinitialization` and
+/// `account-close-revival` as two distinct detection classes — different
+/// exploits, different remediation — and that distinction is preserved
+/// all the way through this function. It is lost one step later, in
+/// `ares-core`'s own enum, which is coarser here than the catalog. Not
+/// something this function can fix without either a new `ares-core`
+/// variant or a change to `from_str_checked` — both deliberately avoided
+/// here in favor of matching what already exists.
+pub fn ast_category_to_core_category_str(catalog_category: &str) -> &str {
+    match catalog_category {
+        // Exact matches, from the mapping file's own table.
+        "type-cosplay" => "type-cosplay",
+        "arbitrary-cpi" => "arbitrary-cpi",
+        "account-data-matching" => "account-data-matching",
+        "pda-privileges" => "pda-privileges",
+        "reentrancy-risk" => "reentrancy-risk",
+        "missing-revalidation" => "missing-revalidation",
+        "state-transition-gap" => "state-transition-gap",
+        "fuzzing-crash" => "fuzzing-crash",
+        // Semantic pairings, also from the mapping file's own table.
+        "missing-owner-check" => "ownership-check",
+        "missing-signer-check" => "signer-authorization",
+        "unsafe-type-cast" => "unchecked-cast",
+        "integer-overflow-underflow" => "arithmetic-overflow",
+        "account-reinitialization" => "re-initialization",
+        "account-close-revival" => "revival-attack",
+        // Not in the mapping file at all — my own coarse-stretch, not
+        // sourced. anchor-constraint-gap: every finding using it is an
+        // account whose relationship/validation was never checked at all
+        // (an UncheckedAccount with no signer/owner/constraint, or an
+        // authority field no has_one ever references) — the same shape
+        // ownership-check already exists to describe.
+        "anchor-constraint-gap" => "ownership-check",
+        // Not in the mapping file either. non-canonical-bump is
+        // create_program_address called with a tainted bump instead of
+        // find_program_address's own canonical result — a weak/predictable
+        // PDA derivation, the same failure mode pda-privileges' own
+        // detection hints describe ("seeds don't include an
+        // attacker-unpredictable value").
+        "non-canonical-bump" => "pda-privileges",
+        // Anything else this crate doesn't currently produce falls
+        // through to ares_core's own fallback in from_str_checked.
+        other => other,
+    }
+}
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1876,6 +1949,106 @@ mod eng4_solitaire_mut_info_gap {
             !has_category(&findings, "missing-signer-check") && !has_category(&findings, "missing-owner-check"),
             "Mut<Signer<...>> is already signer-validated and must not be flagged, got: {:?}",
             findings
+        );
+    }
+}
+
+#[cfg(test)]
+mod eng4_core_category_translation {
+    //! ENG-4: bridges this crate's catalog-aligned category strings to the
+    //! separate, older Rust-side vocabulary `ares_core::VulnerabilityCategory`
+    //! already recognizes — found while investigating wiring this crate into
+    //! the real scan pipeline. Without this, every one of ENG-3/ENG-4's
+    //! carefully-fixed categories would silently collapse into
+    //! InvariantViolation the moment they reached a real report.
+    use super::*;
+
+    /// The real, authoritative set lives in
+    /// `core/crates/ares-core/src/lib.rs`'s `from_str_checked` — this crate
+    /// doesn't depend on ares-core, so this is a hand-copied mirror of every
+    /// string that function recognizes, checked directly against that file
+    /// when this test was written. If ares-core's own recognized set changes,
+    /// this needs updating too — that's the point of asserting against a
+    /// concrete, explicit list rather than nothing at all.
+    const CORE_RECOGNIZED_STRINGS: &[&str] = &[
+        "type-cosplay",
+        "ownership-check",
+        "signer-authorization",
+        "missing-signer",
+        "arbitrary-cpi",
+        "initialization-frontrunning",
+        "reentrancy-risk",
+        "reentrancy",
+        "duplicate-mutable-accounts",
+        "arithmetic-overflow",
+        "close-account",
+        "account-reloading",
+        "revival-attack",
+        "re-initialization",
+        "account-data-matching",
+        "pda-privileges",
+        "fuzzing-crash",
+        "fuzzing",
+        "invariant-violation",
+        "invariant",
+        "missing-revalidation",
+        "unchecked-cast",
+        "state-transition-gap",
+        "generic",
+    ];
+
+    #[test]
+    fn every_catalog_category_this_crate_produces_translates_to_a_string_core_recognizes() {
+        // The real, complete set this crate can actually emit — every
+        // category string used anywhere in ast_scanner.rs or
+        // taint_engine.rs, kept in sync by hand since both files are
+        // string-literal-based, not a shared enum.
+        let catalog_categories = [
+            "arbitrary-cpi",
+            "missing-signer-check",
+            "anchor-constraint-gap",
+            "missing-owner-check",
+            "account-data-matching",
+            "unsafe-type-cast",
+            "type-cosplay",
+            "account-close-revival",
+            "account-reinitialization",
+            "non-canonical-bump",
+            "integer-overflow-underflow",
+        ];
+        for cat in catalog_categories {
+            let translated = ast_category_to_core_category_str(cat);
+            assert!(
+                CORE_RECOGNIZED_STRINGS.contains(&translated),
+                "category \"{}\" translated to \"{}\", which ares_core's \
+                from_str_checked does not recognize — it would silently \
+                collapse to InvariantViolation",
+                cat,
+                translated
+            );
+        }
+    }
+
+    #[test]
+    fn integer_overflow_underflow_maps_to_its_own_distinct_string_not_unchecked_cast() {
+        // Real bug caught while writing this: arithmetic and casting are
+        // different concepts, and core has a separate, correctly-recognized
+        // string for arithmetic specifically — collapsing this into
+        // unchecked-cast would have been wrong, not just imprecise.
+        assert_eq!(
+            ast_category_to_core_category_str("integer-overflow-underflow"),
+            "arithmetic-overflow"
+        );
+    }
+
+    #[test]
+    fn an_unknown_category_passes_through_unchanged_rather_than_panicking() {
+        // Falls through to core's own from_str_checked fallback
+        // (unwrap_or(InvariantViolation)) rather than this function
+        // guessing at something it has no mapping for.
+        assert_eq!(
+            ast_category_to_core_category_str("some-future-category-this-fn-does-not-know-yet"),
+            "some-future-category-this-fn-does-not-know-yet"
         );
     }
 }
