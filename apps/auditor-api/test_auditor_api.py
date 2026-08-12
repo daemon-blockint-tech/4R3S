@@ -870,3 +870,133 @@ class TestCveScanAgainstTheRealCommittedLockfile:
         resp = client.post("/cve/scan", json={"lockfile": lockfile_path.read_text(encoding="utf-8")})
         body = resp.json()
         assert body["dependencies_skipped_local"] >= 7  # ares-core, ares-mapper, etc.
+
+
+# --- /risk/score and /risk/calibration --------------------------------------
+
+_HIGH_LIKELIHOOD = {
+    "skill_level": 9, "motive": 9, "opportunity": 9, "size": 9,
+    "ease_of_discovery": 9, "ease_of_exploit": 9, "awareness": 9,
+    "intrusion_detection": 9,
+}
+_HIGH_TECHNICAL_IMPACT = {
+    "loss_of_confidentiality": 9, "loss_of_integrity": 9,
+    "loss_of_availability": 9, "loss_of_accountability": 9,
+}
+
+
+class TestRiskScoreEndpoint:
+    def test_high_likelihood_and_impact_scores_critical(self):
+        client = TestClient(main.app)
+        resp = client.post(
+            "/risk/score",
+            json={"likelihood": _HIGH_LIKELIHOOD, "technical_impact": _HIGH_TECHNICAL_IMPACT},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["severity"] == "critical"
+        assert body["impact_basis"] == "technical"
+        assert body["business_impact_score"] is None
+
+    def test_business_impact_is_used_over_technical_impact_when_supplied(self):
+        client = TestClient(main.app)
+        low_business_impact = {
+            "financial_damage": 1, "reputation_damage": 1,
+            "non_compliance": 2, "privacy_violation": 3,
+        }
+        resp = client.post(
+            "/risk/score",
+            json={
+                "likelihood": _HIGH_LIKELIHOOD,
+                "technical_impact": _HIGH_TECHNICAL_IMPACT,
+                "business_impact": low_business_impact,
+            },
+        )
+        body = resp.json()
+        assert body["impact_basis"] == "business"
+        assert body["impact_level"] == "low"
+
+    def test_unknown_factor_name_is_a_400_not_a_500(self):
+        client = TestClient(main.app)
+        bad_likelihood = dict(_HIGH_LIKELIHOOD, not_a_real_factor=5)
+        resp = client.post(
+            "/risk/score",
+            json={"likelihood": bad_likelihood, "technical_impact": _HIGH_TECHNICAL_IMPACT},
+        )
+        assert resp.status_code == 400
+        assert "not_a_real_factor" in resp.json()["detail"]
+
+    def test_off_table_score_is_a_400_not_a_500(self):
+        # Motive only defines {1, 4, 9} per the OWASP table -- 5 is not one
+        # of the enumerated options.
+        client = TestClient(main.app)
+        bad_likelihood = dict(_HIGH_LIKELIHOOD, motive=5)
+        resp = client.post(
+            "/risk/score",
+            json={"likelihood": bad_likelihood, "technical_impact": _HIGH_TECHNICAL_IMPACT},
+        )
+        assert resp.status_code == 400
+
+    def test_missing_required_field_is_422(self):
+        client = TestClient(main.app)
+        resp = client.post("/risk/score", json={"likelihood": _HIGH_LIKELIHOOD})
+        assert resp.status_code == 422
+
+
+class TestRiskCalibrationEndpoint:
+    """GET /risk/calibration diffs the real committed vuln-catalog.generated.json
+    against services/risk/catalog_calibration.py's OWASP-methodology
+    templates. See services/risk/README.md's "Today's real divergence"."""
+
+    def test_returns_the_real_catalogs_current_divergence(self):
+        client = TestClient(main.app)
+        resp = client.get("/risk/calibration")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 34
+        assert body["match_count"] == 18
+        assert body["mismatch_count"] == 16
+        assert len(body["mismatches"]) == 16
+
+    def test_a_known_mismatch_is_present_with_both_severities(self):
+        client = TestClient(main.app)
+        resp = client.get("/risk/calibration")
+        by_id = {m["id"]: m for m in resp.json()["mismatches"]}
+        assert by_id["account-close-revival"]["catalog_default_severity"] == "critical"
+        assert by_id["account-close-revival"]["computed_severity"] == "medium"
+
+    def test_uncovered_category_is_503_not_a_crash(self, monkeypatch, tmp_path):
+        # Mirrors TestCveSnapshotInfo's "a data-load failure degrades this
+        # endpoint, never the unrelated /audits endpoints" posture.
+        fixture = tmp_path / "catalog.json"
+        fixture.write_text(
+            json.dumps([{"id": "x", "category": "not-a-real-category", "defaultSeverity": "low"}]),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(main, "CATALOG_PATH", fixture)
+        client = TestClient(main.app)
+        resp = client.get("/risk/calibration")
+        assert resp.status_code == 503
+
+    @pytest.mark.parametrize(
+        "catalog",
+        [
+            [{"id": "x", "category": "cpi"}],          # no defaultSeverity
+            [{"id": "x", "defaultSeverity": "low"}],   # no category
+            ["not an object"],                          # wrong entry type
+            [],                                          # empty catalog
+        ],
+    )
+    def test_malformed_catalog_is_503_not_an_unhandled_500(
+        self, monkeypatch, tmp_path, catalog
+    ):
+        # Each of these reached this endpoint as an unhandled 500 (bare
+        # KeyError / TypeError) before catalog_calibration.py validated entry
+        # shape up front; the empty case returned a vacuous 200 reporting
+        # zero mismatches, which looked identical to a clean catalog.
+        fixture = tmp_path / "catalog.json"
+        fixture.write_text(json.dumps(catalog), encoding="utf-8")
+        monkeypatch.setattr(main, "CATALOG_PATH", fixture)
+        client = TestClient(main.app)
+        resp = client.get("/risk/calibration")
+        assert resp.status_code == 503
