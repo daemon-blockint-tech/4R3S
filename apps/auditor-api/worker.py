@@ -9,32 +9,43 @@ auditing anything itself.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
+import logging
 import os
 import shutil
 import signal
 from pathlib import Path
 
+import httpx2 as httpx
 from arq.connections import RedisSettings
+
+from ssrf_guard import validate_webhook_url_async
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # apps/auditor-api/worker.py -> 4R3S/
 AUDIT_TIMEOUT_SECS = 600  # observed ~123s/target with source injection; generous margin
 MAX_CONCURRENT_AUDITS = 2  # daily LLM quota is the real constraint, not CPU
+WEBHOOK_DELIVERY_TIMEOUT_SECS = 5  # a slow/unreachable callback must not hold a worker slot
 
 NPM_BIN = shutil.which("npm") or "npm"
 
+_log = logging.getLogger(__name__)
 
-async def run_audit(ctx, job_id: str, source: str) -> None:
+
+async def run_audit(ctx, job_id: str, source: str, callback_url: str | None = None) -> None:
     """Run one audit as a subprocess of the existing, production TS CLI.
 
     Records status under `audit-result:{job_id}` so the API can poll it,
     matching the CLI's own contract: exit code + stdout report text, not a
-    structured JSON file (there isn't one — see src/index.ts).
+    structured JSON file (there isn't one — see src/index.ts). If
+    `callback_url` is set, also best-effort POSTs the final status there —
+    see `_set_status_and_notify`.
     """
     redis = ctx["redis"]
     await _set_status(redis, job_id, status="running")
     try:
-        await _audit_and_record(redis, job_id, source)
+        await _audit_and_record(redis, job_id, source, callback_url)
     except asyncio.CancelledError:
         # CancelledError is a BaseException in 3.8+, so the "last resort"
         # handler below never sees it. arq cancels the job task on worker
@@ -45,6 +56,14 @@ async def run_audit(ctx, job_id: str, source: str) -> None:
         # the one exception class it cannot catch. Record a terminal status,
         # then re-raise so arq's retry policy still applies; a retry
         # overwrites this with "running" again on its next attempt.
+        #
+        # `_set_status`, NOT `_set_status_and_notify`: the `raise` below is
+        # exactly what makes this status non-final. arq retries the job, the
+        # retry overwrites this with "running", and it may well end in
+        # "done" — so firing a "failed" callback here would tell the caller
+        # an audit had failed minutes before it succeeded, and would do it
+        # once per attempt. Polling still shows this interim state; the
+        # webhook contract is terminal-only. See _set_status_and_notify.
         await _set_status(
             redis, job_id, status="failed",
             error="audit was cancelled before it finished",
@@ -57,6 +76,9 @@ async def run_audit(ctx, job_id: str, source: str) -> None:
         # job reading "running" until its TTL expired, with no failure visible
         # to whoever is polling. Record it, then re-raise so the exception
         # still reaches arq's logs and retry policy instead of being swallowed.
+        #
+        # No webhook here either, and for the same reason as the handler
+        # above: this path re-raises, so arq will retry.
         await _set_status(
             redis, job_id, status="failed",
             error=f"worker failed unexpectedly: {type(err).__name__}: {err}",
@@ -64,7 +86,9 @@ async def run_audit(ctx, job_id: str, source: str) -> None:
         raise
 
 
-async def _audit_and_record(redis, job_id: str, source: str) -> None:
+async def _audit_and_record(
+    redis, job_id: str, source: str, callback_url: str | None
+) -> None:
     """Invoke the CLI and record the outcome. Split from run_audit so the
     caller can wrap every failure path in one place."""
     try:
@@ -100,8 +124,8 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
         except asyncio.TimeoutError:
             _kill_audit_tree(proc)
             await proc.wait()
-            await _set_status(
-                redis, job_id, status="failed",
+            await _set_status_and_notify(
+                redis, job_id, callback_url, status="failed",
                 error=f"audit exceeded {AUDIT_TIMEOUT_SECS}s and was killed",
             )
             return
@@ -119,8 +143,8 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
         # npm/node missing from the worker's PATH — an environment defect,
         # not an audit failure. Distinguish it so it isn't logged as "the
         # target failed" when actually the worker itself is misconfigured.
-        await _set_status(
-            redis, job_id, status="failed",
+        await _set_status_and_notify(
+            redis, job_id, callback_url, status="failed",
             error=f"could not invoke npm — worker environment issue: {err}",
         )
         return
@@ -129,7 +153,9 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
     stderr_text = stderr.decode("utf-8", errors="replace")
 
     if proc.returncode == 0:
-        await _set_status(redis, job_id, status="done", report=report)
+        await _set_status_and_notify(
+            redis, job_id, callback_url, status="done", report=report
+        )
         return
 
     if proc.returncode == 2:
@@ -138,16 +164,16 @@ async def _audit_and_record(redis, job_id: str, source: str) -> None:
         # "Insufficient credits: need X, have Y..." — already reaches stderr
         # via logger.error there, so _last_error_line finds it unchanged;
         # this branch only needs to pick the right *status* label for it.
-        await _set_status(
-            redis, job_id, status="payment_required",
+        await _set_status_and_notify(
+            redis, job_id, callback_url, status="payment_required",
             error=_last_error_line(stderr_text),
         )
         return
 
     # NOTE: this used to be the only path for any nonzero exit, before
     # src/index.ts distinguished billing failures with exit code 2 above.
-    await _set_status(
-        redis, job_id, status="failed", error=_last_error_line(stderr_text)
+    await _set_status_and_notify(
+        redis, job_id, callback_url, status="failed", error=_last_error_line(stderr_text)
     )
 
 
@@ -209,6 +235,102 @@ async def _set_status(
         "job_id": job_id, "status": status, "report": report, "error": error,
     })
     await redis.set(f"audit-result:{job_id}", payload, ex=86400)  # 24h TTL
+
+
+async def _set_status_and_notify(
+    redis,
+    job_id: str,
+    callback_url: str | None,
+    *,
+    status: str,
+    report: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Record the terminal status exactly as `_set_status` always has, then
+    best-effort notify `callback_url` if the caller supplied one.
+
+    "Terminal" here means the job is *done being tried*, which is narrower
+    than "a status was written". Only the paths in `_audit_and_record` that
+    return normally qualify: they leave arq with a completed job. The two
+    handlers in `run_audit` write a status and then re-raise, which is what
+    asks arq for a retry, so they use plain `_set_status` — a webhook there
+    would report a failure the very next attempt may contradict.
+
+    Known gap, accepted deliberately: a job that fails every attempt exits
+    through one of those re-raising handlers, so it never fires a webhook at
+    all. The caller falls back to polling GET /audits/{job_id}, which this
+    module already documents as the source of truth. A false "failed" is
+    worse than a missing notification — the first makes a caller act on a
+    wrong outcome, the second leaves them where they'd be with no webhook
+    configured.
+    """
+    await _set_status(redis, job_id, status=status, report=report, error=error)
+    if callback_url is not None:
+        await _deliver_webhook(
+            callback_url,
+            {"job_id": job_id, "status": status, "report": report, "error": error},
+        )
+
+
+async def _deliver_webhook(callback_url: str, payload: dict) -> None:
+    """One best-effort delivery attempt. A webhook is a convenience on top of
+    polling, not the source of truth (Redis is) — so a delivery failure here
+    must never propagate and fail the audit job itself, and there is no
+    retry: the caller already has GET /audits/{job_id} as a fallback.
+
+    Re-validates with ssrf_guard immediately before connecting, in addition
+    to the check main.py already did at submission time, since DNS for the
+    target host can change in the time between job submission and job
+    completion (an audit can run for minutes — see AUDIT_TIMEOUT_SECS). The
+    async form keeps that lookup off this worker's event loop, which is also
+    running up to MAX_CONCURRENT_AUDITS other jobs.
+    """
+    try:
+        await validate_webhook_url_async(callback_url)
+    except ValueError as err:
+        _log.warning("webhook delivery skipped for %s: %s", callback_url, err)
+        return
+
+    body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    secret = os.environ.get("ARES_WEBHOOK_SIGNING_SECRET")
+    if secret:
+        # Lets a receiver verify this callback actually came from this
+        # deployment and wasn't forged by a third party that guessed or
+        # observed the callback_url. Best-effort like the rest of delivery:
+        # an unset secret just means no signature, not a failure.
+        signature = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        headers["X-ARES-Signature"] = f"sha256={signature}"
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=WEBHOOK_DELIVERY_TIMEOUT_SECS,
+            # Blindly following a redirect would re-send to a host that was
+            # never validated — the standard SSRF bypass this guard exists
+            # to close. Treat any redirect response as a failed delivery
+            # instead of chasing it.
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(callback_url, content=body, headers=headers)
+        if response.status_code >= 300:
+            _log.warning(
+                "webhook delivery to %s returned %s", callback_url, response.status_code
+            )
+    except Exception as err:
+        # Deliberately broad, and load-bearing. `except httpx.HTTPError` was
+        # not enough: httpx2's InvalidURL, CookieConflict and StreamError all
+        # derive from Exception rather than HTTPError (checked against the
+        # pinned httpx2 2.9.1), and this URL is caller-controlled, so
+        # InvalidURL in particular is reachable — Pydantic's HttpUrl and
+        # httpx's URL parser do not accept exactly the same set of strings.
+        #
+        # Anything escaping this function propagates through
+        # _set_status_and_notify into run_audit's catch-all, which records
+        # "failed" and RE-RAISES — so arq would retry the whole audit and
+        # re-spend the LLM budget because a *notification* failed. That is
+        # the opposite of best-effort. CancelledError is a BaseException and
+        # is intentionally not caught here: cancellation must keep unwinding.
+        _log.warning("webhook delivery to %s failed: %s", callback_url, err)
 
 
 class WorkerSettings:

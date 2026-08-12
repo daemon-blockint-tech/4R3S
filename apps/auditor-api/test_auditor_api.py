@@ -18,23 +18,46 @@ not because they looked risky in review:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import inspect
 import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+# Set before importing main/worker: require_api_key reads ARES_API_KEYS fresh
+# on every call (see main.py), not at import time, but every test in this
+# file assumes a stable, known key is configured -- CI or a developer's shell
+# must not be able to change what "authenticated" means for this suite.
+os.environ["ARES_API_KEYS"] = "test-key"
+
 import main
+import ssrf_guard
 import worker
 from main import REPO_ROOT, AuditRequest
 from worker import _last_error_line
+
+AUTH_HEADERS = {"Authorization": "Bearer test-key"}
+
+
+def _authed_client() -> TestClient:
+    """Every route now requires auth (see main.require_api_key); tests that
+    exercise route behaviour rather than auth itself use this instead of
+    `TestClient(main.app)` directly, so they keep testing what they were
+    written to test instead of failing on a 403 from the dependency."""
+    client = TestClient(app=main.app)
+    client.headers.update(AUTH_HEADERS)
+    return client
 
 
 class TestSourcePathResolution:
@@ -147,7 +170,7 @@ class TestCorruptStoredStatus:
             return self._FakeRedis(stored)
 
         monkeypatch.setattr(main, "create_pool", fake_create_pool)
-        return TestClient(main.app)
+        return _authed_client()
 
     def test_well_formed_status_still_returns_normally(self, monkeypatch):
         stored = json.dumps({"job_id": "abc", "status": "done", "report": "ok", "error": None})
@@ -190,7 +213,7 @@ class TestDroppedEnqueue:
             return _RefusingRedis()
 
         monkeypatch.setattr(main, "create_pool", fake_create_pool)
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/audits", json={"source": "target.rs"})
         assert resp.status_code == 503
         assert "already exists" in resp.json()["detail"]
@@ -215,7 +238,7 @@ class TestDroppedEnqueue:
             return _AcceptingRedis()
 
         monkeypatch.setattr(main, "create_pool", fake_create_pool)
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/audits", json={"source": "target.rs"})
         assert resp.status_code == 202
         assert resp.json()["status"] == "queued"
@@ -271,7 +294,7 @@ class TestQueuedJobIsVisibleBeforeTheWorkerStarts:
             return redis
 
         monkeypatch.setattr(main, "create_pool", fake_create_pool)
-        return TestClient(main.app), redis
+        return _authed_client(), redis
 
     def _submit(self, client) -> str:
         resp = client.post("/audits", json={"source": "target.rs"})
@@ -654,6 +677,552 @@ class TestBillingExitCodeDistinction:
         statuses = [w["status"] for w in redis.writes]
         assert statuses == ["running", "failed"]
         assert "unrelated analyzer crash" in redis.writes[-1]["error"]
+
+
+# --- auth --------------------------------------------------------------------
+# main.py wires require_api_key in front of every route via
+# FastAPI(dependencies=[Depends(require_api_key)]) -- replacing the
+# NOTE-flagged "this route is still UNAUTHENTICATED" gap. These tests use a
+# bare TestClient rather than _authed_client() since they exercise auth
+# itself, not the routes behind it.
+
+
+class _NoOpRedis:
+    """Stands in for arq's redis pool on routes this test class doesn't care
+    about the storage behaviour of -- only whether auth let the request
+    through to reach it at all."""
+
+    async def get(self, key):
+        return None
+
+    async def close(self):
+        pass
+
+
+class TestAuthentication:
+    def test_missing_auth_header_is_rejected(self):
+        client = TestClient(app=main.app)
+        resp = client.get("/audits/00000000-0000-4000-8000-000000000000")
+        assert resp.status_code == 401  # HTTPBearer's own "not authenticated"
+
+    def test_wrong_api_key_is_rejected(self):
+        client = TestClient(app=main.app)
+        resp = client.get(
+            "/audits/00000000-0000-4000-8000-000000000000",
+            headers={"Authorization": "Bearer not-the-real-key"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "invalid API key"
+
+    def test_correct_api_key_is_accepted(self, monkeypatch):
+        # No live Redis in this suite (see this file's header) -- patch the
+        # pool so the assertion is about auth, not about a real connection.
+        async def fake_create_pool(_settings):
+            return _NoOpRedis()
+
+        monkeypatch.setattr(main, "create_pool", fake_create_pool)
+        # 404, not 401, proves auth passed and the route's own logic ran.
+        resp = _authed_client().get("/audits/00000000-0000-4000-8000-000000000000")
+        assert resp.status_code == 404
+
+    def test_no_api_keys_configured_fails_closed(self, monkeypatch):
+        # An operator who forgets to set ARES_API_KEYS gets a locked-down API,
+        # not a silently-open one -- see require_api_key's docstring.
+        monkeypatch.delenv("ARES_API_KEYS", raising=False)
+        client = TestClient(app=main.app)
+        resp = client.get(
+            "/audits/00000000-0000-4000-8000-000000000000",
+            headers={"Authorization": "Bearer anything"},
+        )
+        assert resp.status_code == 500
+        assert "no API keys configured" in resp.json()["detail"]
+
+    def test_comma_separated_keys_all_work(self, monkeypatch):
+        async def fake_create_pool(_settings):
+            return _NoOpRedis()
+
+        monkeypatch.setattr(main, "create_pool", fake_create_pool)
+        monkeypatch.setenv("ARES_API_KEYS", "test-key,second-key")
+        client = TestClient(app=main.app)
+        resp = client.get(
+            "/audits/00000000-0000-4000-8000-000000000000",
+            headers={"Authorization": "Bearer second-key"},
+        )
+        assert resp.status_code == 404  # authenticated; 404 is the route's own answer
+
+
+# --- SSRF guard ----------------------------------------------------------------
+# ssrf_guard.validate_webhook_url gates AuditRequest.callback_url (main.py, at
+# submission time) and webhook delivery (worker.py, immediately before
+# connecting). Tested standalone here since it has no dependency on either.
+
+
+class TestSSRFGuard:
+    @staticmethod
+    def _resolves_to(addr: str):
+        def fake_getaddrinfo(hostname, port):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, 0))]
+        return fake_getaddrinfo
+
+    def test_non_https_scheme_is_rejected(self):
+        with pytest.raises(ValueError, match="https"):
+            ssrf_guard.validate_webhook_url("http://example.com/hook")
+
+    def test_hostname_resolution_failure_is_rejected(self, monkeypatch):
+        def fake_getaddrinfo(hostname, port):
+            raise socket.gaierror("name or service not known")
+
+        monkeypatch.setattr(ssrf_guard.socket, "getaddrinfo", fake_getaddrinfo)
+        with pytest.raises(ValueError, match="could not be resolved"):
+            ssrf_guard.validate_webhook_url("https://no-such-host.invalid/hook")
+
+    @pytest.mark.parametrize(
+        "addr",
+        [
+            "127.0.0.1",  # loopback
+            "10.1.2.3",  # RFC1918 private
+            "192.168.1.1",  # RFC1918 private
+            "169.254.169.254",  # cloud metadata (link-local)
+            "::1",  # IPv6 loopback
+            "0.0.0.0",  # unspecified
+            "224.0.0.1",  # multicast -- is_global is False, but check it anyway
+            "fe80::1",  # IPv6 link-local
+            "fc00::1",  # IPv6 unique-local
+            # RFC 6598 carrier-grade NAT. Regression test for a real bypass:
+            # the first version of this guard keyed off `is_private`, which
+            # CPython documents as deliberately False for 100.64.0.0/10, so
+            # this entire /10 -- real internal space in cloud and ISP
+            # networks -- was accepted. Confirmed reachable on 3.12.5 and
+            # 3.14.6 before the switch to `not is_global`.
+            "100.64.0.1",
+            # IPv4-mapped IPv6. CPython only began judging these by the
+            # embedded IPv4 address in 3.13 (backported to later 3.12
+            # patches); ssrf_guard unwraps ipv4_mapped itself so this holds
+            # regardless of interpreter patch level.
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+            "::ffff:10.0.0.1",
+            "64:ff9b::7f00:1",  # NAT64 prefix -- is_global is True, caught by is_reserved
+        ],
+    )
+    def test_disallowed_addresses_are_rejected(self, monkeypatch, addr):
+        monkeypatch.setattr(ssrf_guard.socket, "getaddrinfo", self._resolves_to(addr))
+        with pytest.raises(ValueError, match="disallowed address"):
+            ssrf_guard.validate_webhook_url("https://internal.example/hook")
+
+    @pytest.mark.parametrize(
+        "addr",
+        [
+            "93.184.216.34",  # public IPv4
+            "8.8.8.8",  # public IPv4
+            "2606:4700:4700::1111",  # public IPv6 -- the over-blocking tripwire
+        ],
+    )
+    def test_public_addresses_are_accepted(self, monkeypatch, addr):
+        # The other half of the guard: a check that blocks everything is not
+        # a working guard. `not is_global` is strict, so pin real routable
+        # addresses -- including IPv6 -- as still deliverable.
+        monkeypatch.setattr(ssrf_guard.socket, "getaddrinfo", self._resolves_to(addr))
+        ssrf_guard.validate_webhook_url("https://example.com/hook")  # no exception
+
+    def test_a_host_resolving_to_both_public_and_private_is_rejected(self, monkeypatch):
+        # DNS can hand back several addresses; accepting the host because one
+        # of them looked fine would let connect() pick the other one.
+        def multi(hostname, port):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0)),
+            ]
+
+        monkeypatch.setattr(ssrf_guard.socket, "getaddrinfo", multi)
+        with pytest.raises(ValueError, match="disallowed address"):
+            ssrf_guard.validate_webhook_url("https://split-horizon.example/hook")
+
+    def test_link_local_ipv6_with_a_zone_id_is_rejected_not_crashed(self, monkeypatch):
+        # getaddrinfo can return "fe80::1%eth0"; ipaddress rejects the zone
+        # suffix, and letting that raise would surface as the wrong error.
+        def zoned(hostname, port):
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fe80::1%eth0", 0, 0, 2))]
+
+        monkeypatch.setattr(ssrf_guard.socket, "getaddrinfo", zoned)
+        with pytest.raises(ValueError, match="disallowed address"):
+            ssrf_guard.validate_webhook_url("https://zoned.example/hook")
+
+    def test_scheme_check_does_no_dns(self, monkeypatch):
+        # validate_url_scheme is what runs inside the Pydantic validator, on
+        # the event loop. If it ever starts resolving, one caller-supplied
+        # hostname on a slow nameserver stalls the whole API process.
+        def explode(*args, **kwargs):
+            raise AssertionError("validate_url_scheme must not resolve DNS")
+
+        monkeypatch.setattr(ssrf_guard.socket, "getaddrinfo", explode)
+        ssrf_guard.validate_url_scheme("https://example.com/hook")
+        with pytest.raises(ValueError, match="https"):
+            ssrf_guard.validate_url_scheme("http://example.com/hook")
+
+    def test_async_wrapper_enforces_the_same_rules(self, monkeypatch):
+        monkeypatch.setattr(ssrf_guard.socket, "getaddrinfo", self._resolves_to("127.0.0.1"))
+        with pytest.raises(ValueError, match="disallowed address"):
+            asyncio.run(ssrf_guard.validate_webhook_url_async("https://internal.example/hook"))
+
+
+# --- webhook delivery ----------------------------------------------------------
+# worker._set_status_and_notify wraps _set_status: same Redis write as always,
+# plus a best-effort POST to callback_url when one was supplied. Delivery must
+# never raise -- a webhook failure is not an audit failure.
+
+
+class _FakeHTTPError(Exception):
+    """Stand-in for httpx2.HTTPError."""
+
+
+async def _allow_any_url(url: str) -> None:
+    """Stands in for ssrf_guard.validate_webhook_url_async in tests that are
+    about delivery mechanics rather than about the guard."""
+
+
+def _fake_httpx(responder=None, raises: Exception | None = None):
+    """Returns a (fake httpx module, calls list) pair. `responder` builds the
+    response for a successful post(); `raises` makes post() raise instead."""
+    calls = []
+
+    class _Response:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    class _Client:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def post(self, url, content=None, headers=None):
+            calls.append({"url": url, "content": content, "headers": headers, "client_kwargs": self.kwargs})
+            if raises is not None:
+                raise raises
+            return _Response(responder() if responder else 200)
+
+    return SimpleNamespace(AsyncClient=_Client, HTTPError=_FakeHTTPError), calls
+
+
+class TestWebhookDelivery:
+    def test_posts_the_job_result_as_json(self, monkeypatch):
+        fake_httpx, calls = _fake_httpx()
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", _allow_any_url)
+
+        payload = {"job_id": "job-1", "status": "done", "report": "ok", "error": None}
+        asyncio.run(worker._deliver_webhook("https://example.com/hook", payload))
+
+        assert len(calls) == 1
+        assert calls[0]["url"] == "https://example.com/hook"
+        assert json.loads(calls[0]["content"]) == payload
+        assert calls[0]["client_kwargs"]["follow_redirects"] is False
+        assert "X-ARES-Signature" not in calls[0]["headers"]
+
+    def test_signing_secret_adds_a_verifiable_signature(self, monkeypatch):
+        fake_httpx, calls = _fake_httpx()
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", _allow_any_url)
+        monkeypatch.setenv("ARES_WEBHOOK_SIGNING_SECRET", "shh")
+
+        asyncio.run(worker._deliver_webhook("https://example.com/hook", {"job_id": "job-1"}))
+
+        body = calls[0]["content"]
+        expected = hmac.new(b"shh", body, hashlib.sha256).hexdigest()
+        assert calls[0]["headers"]["X-ARES-Signature"] == f"sha256={expected}"
+
+    def test_no_secret_configured_means_no_signature_header(self, monkeypatch):
+        fake_httpx, calls = _fake_httpx()
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", _allow_any_url)
+        monkeypatch.delenv("ARES_WEBHOOK_SIGNING_SECRET", raising=False)
+
+        asyncio.run(worker._deliver_webhook("https://example.com/hook", {"job_id": "job-1"}))
+
+        assert "X-ARES-Signature" not in calls[0]["headers"]
+
+    def test_ssrf_rejection_skips_delivery_without_raising(self, monkeypatch):
+        async def reject(url):
+            raise ValueError("callback_url resolves to a disallowed address: 127.0.0.1")
+
+        fake_httpx, calls = _fake_httpx()
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", reject)
+
+        asyncio.run(worker._deliver_webhook("https://internal.example/hook", {"job_id": "job-1"}))
+
+        assert calls == []  # rejected before a connection was ever attempted
+
+    def test_transport_failure_does_not_raise(self, monkeypatch):
+        fake_httpx, calls = _fake_httpx(raises=_FakeHTTPError("connection refused"))
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", _allow_any_url)
+
+        # Must not raise: a webhook failure must never fail the audit job.
+        asyncio.run(worker._deliver_webhook("https://example.com/hook", {"job_id": "job-1"}))
+        assert len(calls) == 1
+
+    @pytest.mark.parametrize(
+        "err",
+        [
+            ValueError("not an httpx error at all"),
+            RuntimeError("something unexpected"),
+            OSError("socket exploded"),
+        ],
+    )
+    def test_non_httpx_exceptions_are_also_swallowed(self, monkeypatch, err):
+        """Regression: the catch here used to be `except httpx.HTTPError`.
+
+        httpx2's InvalidURL, CookieConflict and StreamError derive from
+        Exception, not HTTPError (verified against the pinned httpx2 2.9.1),
+        and this URL is caller-controlled -- Pydantic's HttpUrl and httpx's
+        URL parser do not accept the same set of strings. Anything escaping
+        _deliver_webhook reaches run_audit's catch-all, which records
+        "failed" and re-raises, so arq would re-run the entire LLM audit
+        because a notification failed.
+        """
+        fake_httpx, calls = _fake_httpx(raises=err)
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", _allow_any_url)
+
+        asyncio.run(worker._deliver_webhook("https://example.com/hook", {"job_id": "job-1"}))
+        assert len(calls) == 1
+
+    def test_cancellation_still_propagates(self, monkeypatch):
+        # The broad `except Exception` must not swallow cancellation --
+        # CancelledError is a BaseException precisely so shutdown keeps
+        # unwinding. If this ever starts passing silently, worker shutdown
+        # hangs instead of aborting.
+        fake_httpx, _ = _fake_httpx(raises=asyncio.CancelledError())
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", _allow_any_url)
+
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(worker._deliver_webhook("https://example.com/hook", {"job_id": "job-1"}))
+
+    def test_non_2xx_response_does_not_raise(self, monkeypatch):
+        fake_httpx, calls = _fake_httpx(responder=lambda: 500)
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", _allow_any_url)
+
+        asyncio.run(worker._deliver_webhook("https://example.com/hook", {"job_id": "job-1"}))
+        assert len(calls) == 1
+
+    def test_redirects_are_not_followed(self, monkeypatch):
+        # Following a 3xx would re-send the payload -- and its signature --
+        # to a host the guard never validated. That is the standard SSRF
+        # bypass, so the client must be constructed with redirects off.
+        fake_httpx, calls = _fake_httpx(responder=lambda: 302)
+        monkeypatch.setattr(worker, "httpx", fake_httpx)
+        monkeypatch.setattr(worker, "validate_webhook_url_async", _allow_any_url)
+
+        asyncio.run(worker._deliver_webhook("https://example.com/hook", {"job_id": "job-1"}))
+        assert calls[0]["client_kwargs"]["follow_redirects"] is False
+
+
+class TestSetStatusAndNotify:
+    class _RecordingRedis:
+        def __init__(self):
+            self.writes: list[dict] = []
+
+        async def set(self, key, value, ex=None):
+            self.writes.append(json.loads(value))
+
+    def test_writes_status_then_notifies_with_the_same_payload(self, monkeypatch):
+        redis = self._RecordingRedis()
+        notified = []
+
+        async def fake_deliver(url, payload):
+            notified.append((url, payload))
+
+        monkeypatch.setattr(worker, "_deliver_webhook", fake_deliver)
+        asyncio.run(worker._set_status_and_notify(
+            redis, "job-1", "https://example.com/hook", status="done", report="ok",
+        ))
+
+        assert redis.writes == [
+            {"job_id": "job-1", "status": "done", "report": "ok", "error": None}
+        ]
+        assert notified == [("https://example.com/hook", redis.writes[0])]
+
+    def test_no_callback_url_means_no_delivery_attempt(self, monkeypatch):
+        called = False
+
+        async def fake_deliver(*args, **kwargs):
+            nonlocal called
+            called = True
+
+        monkeypatch.setattr(worker, "_deliver_webhook", fake_deliver)
+        asyncio.run(
+            worker._set_status_and_notify(self._RecordingRedis(), "job-1", None, status="done")
+        )
+        assert called is False
+
+
+class TestWebhooksOnlyFireForTrulyTerminalOutcomes:
+    """Regression: `_set_status_and_notify` was wired into both catch-all
+    handlers in `run_audit`. Both of those re-raise, which is precisely what
+    asks arq to retry the job -- so a caller was told "failed" for a job that
+    the next attempt could finish as "done", once per attempt. A status write
+    is not the same event as a job ending.
+
+    The Redis write on those paths must stay (polling should show the interim
+    failure); only the callback is withheld.
+    """
+
+    class _RecordingRedis:
+        def __init__(self):
+            self.writes: list[dict] = []
+
+        async def set(self, key, value, ex=None):
+            self.writes.append(json.loads(value))
+
+    @pytest.fixture
+    def notified(self, monkeypatch):
+        sent = []
+
+        async def fake_deliver(url, payload):
+            sent.append(payload)
+
+        monkeypatch.setattr(worker, "_deliver_webhook", fake_deliver)
+        return sent
+
+    def test_unexpected_exception_records_status_but_sends_no_webhook(
+        self, monkeypatch, notified
+    ):
+        redis = self._RecordingRedis()
+
+        async def blow_up(*args, **kwargs):
+            raise PermissionError("cannot exec npm")
+
+        monkeypatch.setattr(worker, "_audit_and_record", blow_up)
+
+        with pytest.raises(PermissionError):
+            asyncio.run(
+                worker.run_audit({"redis": redis}, "job-1", "target.rs", "https://example.com/hook")
+            )
+
+        assert [w["status"] for w in redis.writes] == ["running", "failed"]
+        assert notified == [], "arq will retry this job; a 'failed' callback would be premature"
+
+    def test_cancellation_records_status_but_sends_no_webhook(self, monkeypatch, notified):
+        redis = self._RecordingRedis()
+
+        async def cancel(*args, **kwargs):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(worker, "_audit_and_record", cancel)
+
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(
+                worker.run_audit({"redis": redis}, "job-1", "target.rs", "https://example.com/hook")
+            )
+
+        assert [w["status"] for w in redis.writes] == ["running", "failed"]
+        assert notified == []
+
+    @pytest.mark.parametrize(
+        "returncode,expected_status",
+        [(0, "done"), (1, "failed"), (2, "payment_required")],
+    )
+    def test_a_completed_run_does_send_one_webhook(
+        self, monkeypatch, notified, returncode, expected_status
+    ):
+        # The other side of the guard: withholding callbacks on retryable
+        # paths must not have silenced the paths that genuinely end a job.
+        redis = self._RecordingRedis()
+
+        class _FakeProc:
+            def __init__(self):
+                self.returncode = returncode
+
+            async def communicate(self):
+                return b"FINDINGS: none", b'{"level":"error","err":"boom"}\n'
+
+        async def fake_exec(*args, **kwargs):
+            return _FakeProc()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        asyncio.run(
+            worker.run_audit({"redis": redis}, "job-1", "target.rs", "https://example.com/hook")
+        )
+
+        assert [w["status"] for w in redis.writes] == ["running", expected_status]
+        assert [p["status"] for p in notified] == [expected_status]
+
+    def test_no_callback_url_means_a_completed_run_notifies_nothing(self, monkeypatch, notified):
+        redis = self._RecordingRedis()
+
+        class _FakeProc:
+            returncode = 0
+
+            async def communicate(self):
+                return b"FINDINGS: none", b""
+
+        async def fake_exec(*args, **kwargs):
+            return _FakeProc()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        asyncio.run(worker.run_audit({"redis": redis}, "job-1", "target.rs"))
+
+        assert [w["status"] for w in redis.writes] == ["running", "done"]
+        assert notified == []
+
+
+class TestDocsRoutesAreNotPubliclyExposed:
+    """`FastAPI(dependencies=[...])` covers APIRoutes only. `/openapi.json`,
+    `/docs` and `/redoc` are plain Starlette routes FastAPI adds itself, so
+    require_api_key never runs for them -- all three answered 200 with no
+    credentials, publishing every route, model and field name of an
+    otherwise authenticated API. They are now off unless ARES_ENABLE_DOCS
+    says otherwise."""
+
+    @pytest.mark.parametrize("path", ["/openapi.json", "/docs", "/redoc"])
+    def test_docs_routes_are_absent_by_default(self, path):
+        # 404 = the route was never built. Asserting "not 200" would also
+        # pass if it were built and merely erroring.
+        assert TestClient(app=main.app).get(path).status_code == 404
+
+    def test_docs_can_be_enabled_deliberately(self, monkeypatch):
+        # Opt-in must actually work, or the flag is a trap for whoever needs
+        # the schema in a dev environment.
+        monkeypatch.setenv("ARES_ENABLE_DOCS", "true")
+        import importlib
+
+        reloaded = importlib.reload(main)
+        try:
+            assert TestClient(app=reloaded.app).get("/openapi.json").status_code == 200
+        finally:
+            # Other tests hold a reference to the module object; restore the
+            # default-off app so ordering can't leak this setting.
+            monkeypatch.delenv("ARES_ENABLE_DOCS", raising=False)
+            importlib.reload(main)
+
+
+class TestApiKeyComparisonIsConstantTime:
+    def test_uses_compare_digest_not_plain_equality(self):
+        # `presented in valid_keys` falls back to str.__eq__, which
+        # short-circuits on length and then on the first differing byte, so
+        # response timing leaks how much of a key a guess got right.
+        assert main._api_key_is_valid("abc", {"abc"}) is True
+        assert main._api_key_is_valid("abd", {"abc"}) is False
+        assert main._api_key_is_valid("ab", {"abc"}) is False
+        assert main._api_key_is_valid("abc", {"xyz", "abc"}) is True
+        assert main._api_key_is_valid("abc", set()) is False
+
+    def test_non_ascii_key_is_rejected_not_crashed(self):
+        # compare_digest raises TypeError on non-ASCII str; the presented
+        # value is caller-controlled, so comparing as utf-8 bytes is what
+        # keeps a unicode bearer token a 401 instead of a 500.
+        assert main._api_key_is_valid("kéy", {"test-key"}) is False
+        assert main._api_key_is_valid("ké", {"ké"}) is True
+
+
 class TestCveSnapshotInfo:
     """GET /cve/snapshot reports the manifest of whichever advisory DB
     revision is actually loaded, so a report generated from a /cve/scan call
@@ -662,7 +1231,7 @@ class TestCveSnapshotInfo:
     which revision a past result came from)."""
 
     def test_returns_the_real_committed_snapshots_manifest(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.get("/cve/snapshot")
         assert resp.status_code == 200
         body = resp.json()
@@ -681,7 +1250,7 @@ class TestCveSnapshotInfo:
             raise main.SnapshotError("simulated missing snapshot")
 
         monkeypatch.setattr(main.AdvisoryDB, "load", staticmethod(blow_up))
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.get("/cve/snapshot")
         assert resp.status_code == 503
         assert "simulated missing snapshot" in resp.json()["detail"]
@@ -694,25 +1263,25 @@ class TestCveScanNoLockfileIsSkippedNotFailed:
     never as `failed` (which would look like a broken request)."""
 
     def test_absent_lockfield_is_skipped(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/cve/scan", json={})
         assert resp.status_code == 200
         assert resp.json()["outcome"] == "skipped"
 
     def test_null_lockfile_is_skipped(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/cve/scan", json={"lockfile": None})
         assert resp.json()["outcome"] == "skipped"
 
     def test_blank_lockfile_is_skipped_not_failed(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/cve/scan", json={"lockfile": "   "})
         assert resp.json()["outcome"] == "skipped"
 
 
 class TestCveScanMalformedLockfileFailsLoudly:
     def test_garbage_input_is_failed_with_a_detail(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/cve/scan", json={"lockfile": "{ not toml or json"})
         body = resp.json()
         assert body["outcome"] == "failed"
@@ -721,7 +1290,7 @@ class TestCveScanMalformedLockfileFailsLoudly:
     def test_oversized_lockfile_is_rejected_before_parsing(self):
         # Content-in (not a path) means the request body itself must be
         # bounded, or a large POST could burn parse time before validation.
-        client = TestClient(main.app)
+        client = _authed_client()
         huge = "x" * (main._MAX_LOCKFILE_BYTES + 1)
         resp = client.post("/cve/scan", json={"lockfile": huge})
         assert resp.status_code == 422
@@ -732,13 +1301,13 @@ class TestCveScanEmptyPackageArrayIsDegraded:
         # Distinct from an empty [] array below: this document isn't even
         # shaped like a lockfile, so it's a parse failure, not a clean scan
         # that happened to find zero dependencies.
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/cve/scan", json={"lockfile": "version = 4\n"})
         body = resp.json()
         assert body["outcome"] == "failed"
 
     def test_empty_package_array_is_degraded(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         # A syntactically valid lockfile with a package array that resolved
         # to zero entries -- distinct from "not a lockfile" above.
         lockfile_text = "version = 4\npackage = []\n"
@@ -802,7 +1371,7 @@ class TestCveScanAgainstTheRealCommittedLockfile:
         lockfile_path = REPO_ROOT / "core" / "Cargo.lock"
         if not lockfile_path.exists():
             pytest.skip("core/Cargo.lock not present in this checkout")
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/cve/scan", json={"lockfile": lockfile_path.read_text(encoding="utf-8")})
         body = resp.json()
         assert body["outcome"] == "ok"
@@ -866,7 +1435,7 @@ class TestCveScanAgainstTheRealCommittedLockfile:
         lockfile_path = REPO_ROOT / "core" / "Cargo.lock"
         if not lockfile_path.exists():
             pytest.skip("core/Cargo.lock not present in this checkout")
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/cve/scan", json={"lockfile": lockfile_path.read_text(encoding="utf-8")})
         body = resp.json()
         assert body["dependencies_skipped_local"] >= 7  # ares-core, ares-mapper, etc.
