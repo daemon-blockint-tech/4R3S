@@ -275,7 +275,10 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                     s.contains("has_one") || s.contains("constraint") || s.contains("owner")
                 });
 
-                let has_one = field.attrs.iter().any(|a| attr_to_string(a).contains("has_one"));
+                let has_one = field
+                    .attrs
+                    .iter()
+                    .any(|a| attr_to_string(a).contains("has_one"));
 
                 let has_owner = field.attrs.iter().any(|a| {
                     let s = attr_to_string(a);
@@ -1056,8 +1059,6 @@ pub fn ast_category_to_core_category_str(catalog_category: &str) -> &str {
         other => other,
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -1930,7 +1931,8 @@ mod eng4_solitaire_mut_info_gap {
         "#;
         let findings = findings_for(src);
         assert!(
-            !has_category(&findings, "missing-signer-check") && !has_category(&findings, "missing-owner-check"),
+            !has_category(&findings, "missing-signer-check")
+                && !has_category(&findings, "missing-owner-check"),
             "Mut<Data<...>> is a validated account and must not be flagged as raw info, got: {:?}",
             findings
         );
@@ -1946,7 +1948,8 @@ mod eng4_solitaire_mut_info_gap {
         "#;
         let findings = findings_for(src);
         assert!(
-            !has_category(&findings, "missing-signer-check") && !has_category(&findings, "missing-owner-check"),
+            !has_category(&findings, "missing-signer-check")
+                && !has_category(&findings, "missing-owner-check"),
             "Mut<Signer<...>> is already signer-validated and must not be flagged, got: {:?}",
             findings
         );

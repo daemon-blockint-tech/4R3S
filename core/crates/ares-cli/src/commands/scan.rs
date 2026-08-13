@@ -218,7 +218,8 @@ pub async fn execute(
             ast_scanner_result.findings.len()
         );
         for af in ast_scanner_result.findings {
-            let core_category_str = ares_mapper::ast_scanner::ast_category_to_core_category_str(&af.category);
+            let core_category_str =
+                ares_mapper::ast_scanner::ast_category_to_core_category_str(&af.category);
             let category = VulnerabilityCategory::from_str_checked(core_category_str)
                 .unwrap_or(VulnerabilityCategory::InvariantViolation);
             // Only three severities exist in ares-mapper's own output today
@@ -243,18 +244,23 @@ pub async fn execute(
                     // which describe a whole Accounts struct, not one
                     // expression) — reporting it literally would read as a
                     // real, if odd, line number rather than "unknown".
-                    line_start: if af.line == 0 { None } else { Some(af.line as u32) },
+                    line_start: if af.line == 0 {
+                        None
+                    } else {
+                        Some(af.line as u32)
+                    },
                     ..Default::default()
                 },
                 proof_of_concept: None,
-                recommendation: "Review the flagged Anchor/Solitaire account constraint or taint-tracked sink.".to_string(),
+                recommendation:
+                    "Review the flagged Anchor/Solitaire account constraint or taint-tracked sink."
+                        .to_string(),
                 references: vec![],
                 confidence: af.confidence,
                 validation: None,
             });
         }
     }
-
 
     if fuzz {
         info!("[3/5] Fuzzer Orchestrator: Running Trident fuzz campaign...");
