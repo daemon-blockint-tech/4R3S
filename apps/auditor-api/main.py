@@ -137,6 +137,17 @@ from lockfile import MalformedLockfile, parse_lockfile  # noqa: E402
 from match import match_dependencies  # noqa: E402
 from severity import severity_for_advisory  # noqa: E402
 
+# Same sys.path convention as services/cve above -- services/risk has no
+# __init__.py/pyproject.toml either, and both service dirs use flat sibling
+# imports internally (risk_score.py imports `from factors import ...`, not
+# `from services.risk.factors import ...`), so both must be on sys.path.
+_RISK_SERVICE_DIR = REPO_ROOT / "services" / "risk"
+if str(_RISK_SERVICE_DIR) not in sys.path:
+    sys.path.insert(0, str(_RISK_SERVICE_DIR))
+
+from catalog_calibration import CATALOG_PATH, CatalogCalibrationError, calibrate  # noqa: E402
+from risk_score import RiskVector, UnsupportedRiskFactor, score_risk  # noqa: E402
+
 
 class AuditRequest(BaseModel):
     source: str
@@ -464,4 +475,112 @@ async def get_snapshot_info() -> CveSnapshotInfo:
         revision_date=db.manifest["revision_date"],
         advisory_count=db.manifest["advisory_count"],
         source=db.manifest["source"],
+    )
+
+
+# --- Risk scoring (OWASP Risk Rating Methodology) ---------------------------
+#
+# Deterministic by construction: plain averaging + table lookups against
+# OWASP's own published tables (services/risk/factors.py, risk_score.py), no
+# LLM, no network. See services/risk/README.md for why OWASP was the reading
+# used for "port risk-scoring engine."
+
+
+class RiskScoreRequest(BaseModel):
+    likelihood: dict[str, int]
+    technical_impact: dict[str, int]
+    business_impact: dict[str, int] | None = None
+
+
+class RiskScoreResult(BaseModel):
+    likelihood_score: float
+    likelihood_level: str
+    technical_impact_score: float
+    business_impact_score: float | None
+    impact_score: float
+    impact_level: str
+    impact_basis: str  # "business" | "technical"
+    severity: str
+
+
+@app.post("/risk/score", response_model=RiskScoreResult)
+async def score_risk_endpoint(req: RiskScoreRequest) -> RiskScoreResult:
+    """Score a caller-supplied risk vector. Unlike /cve/scan's outcome
+    vocabulary (built for arbitrary external target data that legitimately
+    varies in quality), a risk vector is a structured request the caller
+    controls directly -- an unknown factor name or an out-of-table score is
+    a client request error, so it is rejected with 400, not folded into a
+    result-object outcome field."""
+    try:
+        scored = score_risk(
+            RiskVector(
+                likelihood=req.likelihood,
+                technical_impact=req.technical_impact,
+                business_impact=req.business_impact,
+            )
+        )
+    except UnsupportedRiskFactor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RiskScoreResult(
+        likelihood_score=scored.likelihood_score,
+        likelihood_level=scored.likelihood_level,
+        technical_impact_score=scored.technical_impact_score,
+        business_impact_score=scored.business_impact_score,
+        impact_score=scored.impact_score,
+        impact_level=scored.impact_level,
+        impact_basis=scored.impact_basis,
+        severity=scored.severity,
+    )
+
+
+class RiskCalibrationEntry(BaseModel):
+    id: str
+    category: str
+    catalog_default_severity: str
+    computed_severity: str
+    likelihood_level: str
+    impact_level: str
+
+
+class RiskCalibrationResult(BaseModel):
+    total: int
+    match_count: int
+    mismatch_count: int
+    # Only mismatches are listed -- a match just confirms the catalog default
+    # already agrees with the OWASP-methodology template, which isn't
+    # actionable; a mismatch is the thing a reviewer needs to see. See
+    # services/risk/README.md's "Today's real divergence" section.
+    mismatches: list[RiskCalibrationEntry]
+
+
+@app.get("/risk/calibration", response_model=RiskCalibrationResult)
+async def get_risk_calibration() -> RiskCalibrationResult:
+    """Diffs src/knowledge/vuln-catalog.generated.json's static
+    defaultSeverity values against what services/risk/catalog_calibration.py's
+    per-category OWASP templates would compute. Recomputed on every request
+    (cheap: 34 entries, pure arithmetic) rather than cached, so this always
+    reflects the currently-committed catalog file, not a stale snapshot --
+    unlike the advisory DB above, there is no separate refresh step to be
+    stale relative to."""
+    try:
+        report = calibrate(path=CATALOG_PATH)
+    except CatalogCalibrationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return RiskCalibrationResult(
+        total=report.total,
+        match_count=len(report.matches),
+        mismatch_count=len(report.mismatches),
+        mismatches=[
+            RiskCalibrationEntry(
+                id=m.id,
+                category=m.category,
+                catalog_default_severity=m.catalog_default_severity,
+                computed_severity=m.computed_severity,
+                likelihood_level=m.likelihood_level,
+                impact_level=m.impact_level,
+            )
+            for m in report.mismatches
+        ],
     )

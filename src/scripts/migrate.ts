@@ -15,6 +15,7 @@ import { dirname, resolve } from "node:path";
 import { logger } from "../config/logger.js";
 import { createPostgresCheckpointer } from "../persistence/checkpointer.js";
 import { hasNeo4j, withNeo4jWriteSession, closeNeo4j } from "../persistence/neo4j.js";
+import { ensureChainIntakeSchema, closeChainIntake } from "../persistence/chain-intake.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -27,6 +28,19 @@ async function migratePostgres(): Promise<void> {
   } finally {
     await saver.end();
   }
+
+  // chain_intake is separate from the checkpoint tables and owns its own DDL,
+  // so it is created here rather than inside PostgresSaver.setup(). A failure
+  // is reported, not thrown: chain-intake caching is an optimisation and an
+  // audit must still run without it (see persistence/chain-intake.ts).
+  const intakeReady = await ensureChainIntakeSchema();
+  logger.info(
+    { component: "migrate", ready: intakeReady },
+    intakeReady
+      ? "chain_intake table ready"
+      : "chain_intake table unavailable; audits will read chain without caching",
+  );
+  await closeChainIntake();
 }
 
 async function migrateNeo4j(): Promise<void> {

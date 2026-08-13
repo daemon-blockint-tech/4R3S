@@ -1,0 +1,9 @@
+# services/risk runtime + test dependencies.
+#
+# Runtime is stdlib-only: the scoring arithmetic is plain averaging and
+# dict lookups (risk_score.py), and the catalog calibration reads a
+# committed JSON file (catalog_calibration.py). Same absence-is-justified
+# convention as services/cve/requirements.txt.
+#
+# Test-only:
+pytest==9.1.1
