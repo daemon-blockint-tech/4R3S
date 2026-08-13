@@ -1,0 +1,124 @@
+name: "ARES Security Scan"
+description: >-
+  Runs the ARES Solana-security auditor against this repository's checked-out
+  source and fails the build if findings at or above the configured severity
+  threshold are found. Internal-only for now — not published to the public
+  Marketplace; referenced within the org as
+  daemon-blockint-tech/4R3S/.github/actions/ares-scan@main.
+
+inputs:
+  source-path:
+    description: >-
+      Path to the Solana program source to scan, relative to the calling
+      workflow's checkout. Defaults to the whole checkout.
+    required: false
+    default: ${{ github.workspace }}
+  severity-threshold:
+    description: >-
+      Fail the check on findings at or above this severity: critical, high,
+      medium, low, or info. Default matches this Action's own conservative
+      starting point — flip to a stricter default only once real usage
+      across a few repos has shown the noise level is acceptable at that
+      level, the same rollout discipline the scanner's own detectors follow
+      internally (see ENG-4).
+    required: false
+    default: "critical"
+  warn-severity-threshold:
+    description: >-
+      Annotate (but do not fail the build for) findings at or above this
+      severity and below severity-threshold. Set to the same value as
+      severity-threshold, or "none", to disable warning annotations
+      entirely.
+    required: false
+    default: "high"
+  ares-repo-ref:
+    description: >-
+      Git ref of daemon-blockint-tech/4R3S to run (the scanner's own code,
+      not the repo being scanned). Pin this in consuming workflows once this
+      Action stabilizes — floating on a branch means a change here can
+      silently change what a downstream repo's CI gates on.
+    required: false
+    default: "main"
+  ares-repo-token:
+    description: >-
+      A token with read access to daemon-blockint-tech/4R3S. The calling
+      workflow's own default GITHUB_TOKEN is scoped to the repo it runs in —
+      it will not have access to this (separate, private) repo. Provide a
+      PAT or GitHub App token with read access to this repo, stored as a
+      secret in the calling repo/org.
+    required: true
+  openrouter-api-key:
+    description: "OPENROUTER_API_KEY — required; this is an LLM-based auditor, there is no offline mode for the audit itself."
+    required: true
+  solana-rpc-url:
+    description: "Optional; only needed if scanning by on-chain program address rather than source path."
+    required: false
+    default: "https://api.mainnet-beta.solana.com"
+
+outputs:
+  findings-json:
+    description: "Path to the full, structured findings JSON."
+    value: ${{ steps.gate.outputs.findings-json }}
+  finding-count:
+    description: "Total number of findings, before any severity filtering."
+    value: ${{ steps.gate.outputs.finding-count }}
+  gate-passed:
+    description: "\"true\" or \"false\" — whether findings stayed under the configured threshold."
+    value: ${{ steps.gate.outputs.gate-passed }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout ARES auditor
+      uses: actions/checkout@v4
+      with:
+        repository: daemon-blockint-tech/4R3S
+        ref: ${{ inputs.ares-repo-ref }}
+        token: ${{ inputs.ares-repo-token }}
+        path: .ares-scan-tool
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Install ARES dependencies
+      shell: bash
+      working-directory: .ares-scan-tool
+      run: npm ci
+
+    - name: Run ARES scan
+      shell: bash
+      working-directory: .ares-scan-tool
+      env:
+        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+        SOLANA_RPC_URL: ${{ inputs.solana-rpc-url }}
+      # Goes through INT-1's own consolidated CLI (npm run ares -- scan),
+      # not the underlying npm run audit directly — the task's own explicit
+      # ask ("wrapping the consolidated CLI"), not just something that
+      # happens to produce the same result today. cmdScan is a thin
+      # pass-through right now, so this is behaviorally identical either
+      # way — but going through the actual front door INT-1 built means any
+      # future validation/logic added there is automatically inherited
+      # here too, rather than silently bypassed.
+      #
+      # --ephemeral: an in-memory checkpointer, no Postgres required — a CI
+      # check should be stateless, not need a database provisioned just to
+      # run. --report-json: structured findings for the gate step below to
+      # actually parse, rather than the human-readable report (see
+      # docs/INT-5-ci-action-usage.md for why parsing that would have been
+      # unacceptably fragile for something a CI pass/fail depends on).
+      run: |
+        npm run ares -- scan \
+          --source "${{ inputs.source-path }}" \
+          --ephemeral \
+          --report-json "${{ github.workspace }}/.ares-findings.json"
+
+    - name: Apply severity gate
+      id: gate
+      shell: bash
+      run: |
+        node "${{ github.action_path }}/gate.mjs" \
+          "${{ github.workspace }}/.ares-findings.json" \
+          "${{ inputs.severity-threshold }}" \
+          "${{ inputs.warn-severity-threshold }}"

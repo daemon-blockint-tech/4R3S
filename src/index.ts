@@ -13,6 +13,7 @@
  * (requires OPENAI_API_KEY + SCRAPYBARA_API_KEY; see .env.example).
  */
 import { parseArgs } from "node:util";
+import { writeFile } from "node:fs/promises";
 
 import { env, modelEndpointWarning } from "./config/env.js";
 import { auditThreadId } from "./config/thread.js";
@@ -54,6 +55,7 @@ interface Cli {
   ephemeral: boolean;
   cua: boolean;
   request: string;
+  reportJson?: string;
 }
 
 function parseCli(): Cli {
@@ -64,6 +66,7 @@ function parseCli(): Cli {
       ephemeral: { type: "boolean", default: false },
       cua: { type: "boolean", default: false },
       request: { type: "string" },
+      "report-json": { type: "string" },
     },
     allowPositionals: true,
   });
@@ -90,6 +93,7 @@ function parseCli(): Cli {
     ephemeral: Boolean(values.ephemeral),
     cua: Boolean(values.cua),
     request,
+    reportJson: values["report-json"],
   };
 }
 
@@ -208,6 +212,24 @@ async function main(): Promise<void> {
       { component: "ares", findings: result.mergedFindings.length },
       "Audit complete",
     );
+
+    // Opt-in, additive only — nothing about the existing report changes when
+    // this isn't passed. INT-5's CI Action needs structured data to gate on;
+    // mergedFindings never otherwise reaches anything outside this process
+    // (only its *count* gets logged, never the findings themselves), so
+    // parsing the human-readable report's prose would be the only other way
+    // to build a severity gate — deliberately avoided as too fragile for
+    // something a CI pipeline's pass/fail depends on. Deliberately no
+    // filtering by status here — that's the gate's own policy decision to
+    // make, kept out of this file so adjusting it doesn't mean touching the
+    // production audit entrypoint again.
+    if (cli.reportJson) {
+      await writeFile(
+        cli.reportJson,
+        JSON.stringify(result.mergedFindings, null, 2),
+        "utf8",
+      );
+    }
 
     const report = result.report || "(no report generated)";
 
