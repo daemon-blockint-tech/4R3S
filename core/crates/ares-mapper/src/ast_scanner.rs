@@ -63,6 +63,7 @@ pub struct AnchorAccountField {
     pub is_mut: bool,
     pub has_owner_check: bool,
     pub has_constraint: bool,
+    pub has_one: bool,
     pub is_unchecked_account: bool,
 }
 
@@ -241,6 +242,9 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                 ..Default::default()
             };
 
+            let mut all_attrs_text = String::new();
+            let mut authority_like_fields: Vec<String> = Vec::new();
+
             for field in &node.fields {
                 let field_name = field
                     .ident
@@ -271,10 +275,35 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                     s.contains("has_one") || s.contains("constraint") || s.contains("owner")
                 });
 
+                let has_one = field
+                    .attrs
+                    .iter()
+                    .any(|a| attr_to_string(a).contains("has_one"));
+
                 let has_owner = field.attrs.iter().any(|a| {
                     let s = attr_to_string(a);
                     s.contains("owner =") || s.contains("owner:")
                 });
+
+                // has_one = authority lives on the account being validated (e.g.
+                // the vault field), not on the authority field itself — Anchor
+                // checks `vault.authority == authority.key()`. So whether *this*
+                // field is properly guarded is a whole-struct question: does any
+                // field's attribute text reference it by name via has_one? Collect
+                // the raw text and the authority-like names now; check after the
+                // loop once every field has been seen.
+                for attr in &field.attrs {
+                    all_attrs_text.push_str(&attr_to_string(attr));
+                    all_attrs_text.push(' ');
+                }
+                if !field_name.is_empty()
+                    && (field_name == "authority"
+                        || field_name == "admin"
+                        || field_name.ends_with("_authority")
+                        || field_name.ends_with("_admin"))
+                {
+                    authority_like_fields.push(field_name.clone());
+                }
 
                 account_struct.fields.push(AnchorAccountField {
                     name: field_name.clone(),
@@ -283,13 +312,17 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                     is_mut,
                     has_owner_check: has_owner,
                     has_constraint,
+                    has_one,
                     is_unchecked_account: is_unchecked,
                 });
 
-                // Finding: UncheckedAccount without signer/owner/constraints → type-cosplay / ownership-check risk
+                // Finding: UncheckedAccount without signer/owner/constraints — this is
+                // precisely what anchor-constraint-gap's own catalog description names
+                // ("using UncheckedAccount without #[account(address = ...)]"), not a
+                // generic ownership-check catch-all.
                 if is_unchecked && !is_signer && !has_owner && !has_constraint {
                     self.scanner.findings.push(AstFinding {
-                        category: "ownership-check".to_string(),
+                        category: "anchor-constraint-gap".to_string(),
                         severity: "High".to_string(),
                         file: self.path.clone(),
                         line: 0,
@@ -298,6 +331,32 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                             field_name, node.ident
                         ),
                         confidence: 0.80,
+                    });
+                }
+            }
+
+            // Struct-level: an authority-like field (by Anchor's own conventional
+            // naming — the catalog's detection hint names exactly this pattern:
+            // "Check for missing has_one on authority fields") that no field's
+            // has_one constraint ever references by name. A mutable account can
+            // then be acted on without Anchor ever confirming it actually belongs
+            // to this particular authority.
+            for authority_field in &authority_like_fields {
+                let referenced = all_attrs_text.contains("has_one")
+                    && all_attrs_text.contains(authority_field.as_str());
+                if !referenced {
+                    self.scanner.findings.push(AstFinding {
+                        category: "anchor-constraint-gap".to_string(),
+                        severity: "Medium".to_string(),
+                        file: self.path.clone(),
+                        line: 0,
+                        description: format!(
+                            "`{}` has an authority-like field `{}`, but no field's `has_one` constraint \
+                            references it. Without `has_one = {}` on the account it authorizes, Anchor \
+                            never confirms this signer actually owns/matches the account being acted on.",
+                            node.ident, authority_field, authority_field
+                        ),
+                        confidence: 0.55,
                     });
                 }
             }
@@ -385,7 +444,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                         });
                     } else {
                         self.scanner.findings.push(AstFinding {
-                            category: "ownership-check".to_string(),
+                            category: "missing-owner-check".to_string(),
                             severity: "High".to_string(),
                             file: self.path.clone(),
                             line: 0,
@@ -572,7 +631,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                 }
                 if is_oracle {
                     self.scanner.findings.push(AstFinding {
-                        category: "ownership-check".to_string(),
+                        category: "missing-owner-check".to_string(),
                         severity: "High".to_string(),
                         file: self.path.clone(),
                         line: node.span().start().line,
@@ -583,7 +642,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                         confidence: 0.85,
                     });
                     self.scanner.findings.push(AstFinding {
-                        category: "unchecked-cast".to_string(),
+                        category: "unsafe-type-cast".to_string(),
                         severity: "Medium".to_string(),
                         file: self.path.clone(),
                         line: node.span().start().line,
@@ -595,7 +654,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
                 }
                 if !is_unpack && !is_oracle && expr_compact.contains("_unchecked(") {
                     self.scanner.findings.push(AstFinding {
-                        category: "ownership-check".to_string(),
+                        category: "missing-owner-check".to_string(),
                         severity: "Medium".to_string(),
                         file: self.path.clone(),
                         line: node.span().start().line,
@@ -618,7 +677,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
             || expr_str.contains("bytemuck::cast_slice");
         if is_bytemuck_unsafe {
             self.scanner.findings.push(AstFinding {
-                category: "unchecked-cast".to_string(),
+                category: "unsafe-type-cast".to_string(),
                 severity: "Medium".to_string(),
                 file: self.path.clone(),
                 line: node.span().start().line,
@@ -668,7 +727,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
 
             if !is_safe && !is_safe_source && has_financial_context {
                 self.scanner.findings.push(AstFinding {
-                    category: "unchecked-cast".to_string(),
+                    category: "unsafe-type-cast".to_string(),
                     severity: "High".to_string(),
                     file: self.path.clone(),
                     line: node.span().start().line,
@@ -711,7 +770,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
         // Detect manual lamport drain (revival-attack / account-closure)
         if expr_str.contains("lamports.borrow_mut()") && expr_str.contains("= 0") {
             self.scanner.findings.push(AstFinding {
-                category: "revival-attack".to_string(),
+                category: "account-close-revival".to_string(),
                 severity: "Critical".to_string(),
                 file: self.path.clone(),
                 line: node.span().start().line,
@@ -725,7 +784,7 @@ impl<'a, 'ast> Visit<'ast> for SolanaVisitor<'a> {
             let has_is_initialized = expr_str.contains("is_initialized");
             if !has_is_initialized {
                 self.scanner.findings.push(AstFinding {
-                    category: "re-initialization".to_string(),
+                    category: "account-reinitialization".to_string(),
                     severity: "Critical".to_string(),
                     file: self.path.clone(),
                     line: node.span().start().line,
@@ -840,9 +899,19 @@ fn is_raw_solitaire_info(ty_str: &str) -> bool {
     if trimmed.contains("Signer<") || trimmed.contains("Sysvar<") || trimmed.contains("Derive<") {
         return false;
     }
+    // Mut<...> only marks writability — it is not a validation wrapper the way
+    // Signer<>/Sysvar<> are, so `Mut<Info<'b>>` is still exactly as unvalidated
+    // as bare `Info<'b>`, and arguably worse: a mutable, unvalidated account can
+    // be written to, not just read. Strip one leading Mut<...> layer before the
+    // prefix check, or `starts_with("Info<")` never matches it at all — this
+    // account type was completely invisible to this check.
+    let inner = trimmed
+        .strip_prefix("Mut<")
+        .and_then(|s| s.strip_suffix(">"))
+        .unwrap_or(trimmed.as_str());
     // Check for bare Info<'b> or Info<...> that is not inside another generic
     // Use regex-like heuristic: starts with Info< and doesn't contain nested generics
-    trimmed.starts_with("Info<") || trimmed.starts_with("Info<'")
+    inner.starts_with("Info<") || inner.starts_with("Info<'")
 }
 
 fn attr_to_string(attr: &Attribute) -> String {
@@ -918,6 +987,77 @@ pub fn ast_categories_to_benchmark(findings: &[AstFinding]) -> Vec<String> {
         }
     }
     cats.into_iter().collect()
+}
+
+/// Translate an `AstFinding`/`TaintFinding` category (aligned to
+/// `src/knowledge/solana-vulns.ts`'s catalog IDs, per `ENG-3`/`ENG-4`) into
+/// the string `ares_core::VulnerabilityCategory::from_str_checked` already
+/// recognizes — so a caller wiring this crate's findings into a real scan
+/// (`ares-cli`'s `scan.rs`) gets the correct, specific category, not a
+/// silent collapse into `InvariantViolation`.
+///
+/// Deliberately *not* a new `ares-core` enum variant or a change to
+/// `from_str_checked` itself, and deliberately not a dependency on
+/// `ares_core` from this crate at all — matching the existing vocabulary
+/// rather than extending it.
+///
+/// **Sourcing, disclosed precisely rather than left to look uniform:**
+/// most pairings below are taken directly from
+/// `eval/mappings/ares-core-categories.json`, which already documents
+/// this exact two-vocabulary split with its own confidence rating per
+/// pair. `anchor-constraint-gap` and `non-canonical-bump` have **no
+/// entry there at all** — both are categories this crate added after
+/// that file was last written, so both are my own coarse-stretch
+/// judgment calls, not sourced from anything authoritative. Keep this in
+/// sync with that file if either side's vocabulary changes.
+///
+/// **A real, known limitation worth stating plainly, not leaving
+/// implicit:** `from_str_checked` maps `"re-initialization"` and
+/// `"revival-attack"` to the *same* `AccountReloading` variant. This
+/// crate's `ENG-3` work deliberately keeps `account-reinitialization` and
+/// `account-close-revival` as two distinct detection classes — different
+/// exploits, different remediation — and that distinction is preserved
+/// all the way through this function. It is lost one step later, in
+/// `ares-core`'s own enum, which is coarser here than the catalog. Not
+/// something this function can fix without either a new `ares-core`
+/// variant or a change to `from_str_checked` — both deliberately avoided
+/// here in favor of matching what already exists.
+pub fn ast_category_to_core_category_str(catalog_category: &str) -> &str {
+    match catalog_category {
+        // Exact matches, from the mapping file's own table.
+        "type-cosplay" => "type-cosplay",
+        "arbitrary-cpi" => "arbitrary-cpi",
+        "account-data-matching" => "account-data-matching",
+        "pda-privileges" => "pda-privileges",
+        "reentrancy-risk" => "reentrancy-risk",
+        "missing-revalidation" => "missing-revalidation",
+        "state-transition-gap" => "state-transition-gap",
+        "fuzzing-crash" => "fuzzing-crash",
+        // Semantic pairings, also from the mapping file's own table.
+        "missing-owner-check" => "ownership-check",
+        "missing-signer-check" => "signer-authorization",
+        "unsafe-type-cast" => "unchecked-cast",
+        "integer-overflow-underflow" => "arithmetic-overflow",
+        "account-reinitialization" => "re-initialization",
+        "account-close-revival" => "revival-attack",
+        // Not in the mapping file at all — my own coarse-stretch, not
+        // sourced. anchor-constraint-gap: every finding using it is an
+        // account whose relationship/validation was never checked at all
+        // (an UncheckedAccount with no signer/owner/constraint, or an
+        // authority field no has_one ever references) — the same shape
+        // ownership-check already exists to describe.
+        "anchor-constraint-gap" => "ownership-check",
+        // Not in the mapping file either. non-canonical-bump is
+        // create_program_address called with a tainted bump instead of
+        // find_program_address's own canonical result — a weak/predictable
+        // PDA derivation, the same failure mode pda-privileges' own
+        // detection hints describe ("seeds don't include an
+        // attacker-unpredictable value").
+        "non-canonical-bump" => "pda-privileges",
+        // Anything else this crate doesn't currently produce falls
+        // through to ares_core's own fallback in from_str_checked.
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -1507,6 +1647,447 @@ mod eng3_smoke_test_real_fixture {
             categories.contains(&"type-cosplay"),
             "expected type-cosplay on the real Cashio fixture, got categories: {:?}",
             categories
+        );
+    }
+}
+
+#[cfg(test)]
+mod eng4_catalog_category_fixes {
+    //! ENG-4: found by literally doing the task's own to-do — cross-referencing
+    //! every detection's category string against the real canonical catalog
+    //! (src/knowledge/solana-vulns.ts). 8 findings used category strings that
+    //! don't exist in the catalog at all, breaking the link back to it.
+    use super::*;
+
+    fn findings_for(src: &str) -> Vec<AstFinding> {
+        analyze_file(std::path::Path::new("test.rs"), src).findings
+    }
+
+    fn has_category(findings: &[AstFinding], category: &str) -> bool {
+        findings.iter().any(|f| f.category == category)
+    }
+
+    #[test]
+    fn unchecked_account_with_no_validation_is_anchor_constraint_gap_not_generic_ownership_check() {
+        // This is precisely what anchor-constraint-gap's own catalog description
+        // names — "UncheckedAccount without #[account(address = ...)]" — not a
+        // generic ownership-check catch-all that doesn't exist in the catalog.
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Withdraw<'info> {
+                pub target: UncheckedAccount<'info>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "anchor-constraint-gap"),
+            "expected anchor-constraint-gap, got: {:?}",
+            findings
+        );
+        assert!(
+            !has_category(&findings, "ownership-check"),
+            "the old, non-existent category string should never appear again, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn no_finding_anywhere_still_uses_a_category_string_absent_from_the_real_catalog() {
+        // The real, authoritative list from src/knowledge/solana-vulns.ts, kept
+        // in sync manually — if this test starts failing because a new,
+        // legitimate category was added to the scanner, add it here too rather
+        // than assume the mismatch is fine.
+        const REAL_CATALOG_IDS: &[&str] = &[
+            "missing-signer-check",
+            "missing-owner-check",
+            "account-data-matching",
+            "arbitrary-cpi",
+            "non-canonical-bump",
+            "pda-seed-collision",
+            "account-reinitialization",
+            "missing-reload-after-cpi",
+            "integer-overflow-underflow",
+            "precision-loss",
+            "account-close-revival",
+            "duplicate-mutable-account",
+            "missing-rent-exemption",
+            "sysvar-spoofing",
+            "anchor-constraint-gap",
+            "unchecked-cpi-return",
+            "authority-mismanagement",
+            "oracle-price-manipulation",
+            "insecure-init-order",
+            "spl-authority-check",
+            "type-cosplay",
+            "unsafe-type-cast",
+            "missing-slippage-protection",
+            "denial-of-service",
+            "business-logic-error",
+            "upgrade-authority-risk",
+            "token-2022-extension-risk",
+            "remaining-accounts-validation",
+            "instruction-introspection",
+            "pda-privileges",
+            "reentrancy-risk",
+            "missing-revalidation",
+            "state-transition-gap",
+            "fuzzing-crash",
+        ];
+
+        // A broad sweep across every detection path this file has, so a single
+        // input exercising many different checks at once catches any category
+        // string this test doesn't otherwise touch.
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Ctx<'info> {
+                pub raw: UncheckedAccount<'info>,
+            }
+
+            fn process_withdraw(admin: AccountInfo, data: &[u8]) {
+                invoke(admin, data);
+                let bank_data = Bank::try_from_slice(&data)?;
+                let amount = data.len() as u64;
+                unpack_unchecked(data);
+            }
+
+            fn close_account(account: AccountInfo) {
+                **account.lamports.borrow_mut() = 0;
+            }
+
+            fn initialize_vault(vault: AccountInfo) {
+                let _ = vault;
+            }
+        "#;
+        let findings = findings_for(src);
+        for f in &findings {
+            assert!(
+                REAL_CATALOG_IDS.contains(&f.category.as_str()),
+                "category \"{}\" does not exist in the real catalog — found in: {:?}",
+                f.category,
+                f
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod eng4_anchor_has_one_gap {
+    //! ENG-4: the catalog's own anchor-constraint-gap detection hint says
+    //! plainly — "Check for missing has_one on authority fields." This is a
+    //! genuine gap: has_one lived only as part of a generic has_constraint
+    //! catch-all, indistinguishable from an unrelated constraint attribute.
+    use super::*;
+
+    fn findings_for(src: &str) -> Vec<AstFinding> {
+        analyze_file(std::path::Path::new("test.rs"), src).findings
+    }
+
+    fn has_category(findings: &[AstFinding], category: &str) -> bool {
+        findings.iter().any(|f| f.category == category)
+    }
+
+    #[test]
+    fn authority_field_with_no_has_one_anywhere_in_the_struct_is_flagged() {
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Withdraw<'info> {
+                pub authority: Signer<'info>,
+                #[account(mut)]
+                pub vault: Account<'info, Vault>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "anchor-constraint-gap"),
+            "expected anchor-constraint-gap for an unreferenced authority field, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn authority_field_referenced_by_a_real_has_one_is_not_flagged_for_this() {
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Withdraw<'info> {
+                pub authority: Signer<'info>,
+                #[account(mut, has_one = authority)]
+                pub vault: Account<'info, Vault>,
+            }
+        "#;
+        let findings = findings_for(src);
+        // Not a blanket "no anchor-constraint-gap at all" assertion — this
+        // struct could still trip other, unrelated checks. Specifically: no
+        // finding whose description names this authority field as unreferenced.
+        let unreferenced_authority_finding = findings.iter().any(|f| {
+            f.category == "anchor-constraint-gap" && f.description.contains("no field's `has_one`")
+        });
+        assert!(
+            !unreferenced_authority_finding,
+            "did not expect an unreferenced-authority finding once has_one references it, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn a_struct_with_no_authority_like_field_at_all_is_not_flagged_for_this() {
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct Ping<'info> {
+                #[account(mut)]
+                pub counter: Account<'info, Counter>,
+            }
+        "#;
+        let findings = findings_for(src);
+        let unreferenced_authority_finding = findings.iter().any(|f| {
+            f.category == "anchor-constraint-gap" && f.description.contains("no field's `has_one`")
+        });
+        assert!(
+            !unreferenced_authority_finding,
+            "no authority-like field exists here, so this specific check should not fire, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn a_named_variant_admin_authority_is_also_recognised() {
+        let src = r#"
+            #[derive(Accounts)]
+            pub struct UpdateConfig<'info> {
+                pub pool_authority: Signer<'info>,
+                #[account(mut)]
+                pub config: Account<'info, Config>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "anchor-constraint-gap"),
+            "expected the *_authority naming convention to also be recognised, got: {:?}",
+            findings
+        );
+    }
+}
+
+#[cfg(test)]
+mod eng4_solitaire_mut_info_gap {
+    //! ENG-4: `is_raw_solitaire_info` only matched a type string that started
+    //! with "Info<" directly — `Mut<Info<'b>>` starts with "Mut<" instead, so a
+    //! mutable, completely unvalidated Solitaire account was invisible to this
+    //! check entirely. Mut<> only marks writability, not validation, so this is
+    //! at least as dangerous as the already-detected immutable case — arguably
+    //! more so, since it can be written to, not just read.
+    use super::*;
+
+    fn findings_for(src: &str) -> Vec<AstFinding> {
+        analyze_file(std::path::Path::new("test.rs"), src).findings
+    }
+
+    fn has_category(findings: &[AstFinding], category: &str) -> bool {
+        findings.iter().any(|f| f.category == category)
+    }
+
+    #[test]
+    fn mut_wrapped_raw_info_is_now_detected() {
+        let src = r#"
+            #[derive(FromAccounts)]
+            pub struct VerifySignatures<'b> {
+                pub instruction_acc: Mut<Info<'b>>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "missing-signer-check"),
+            "expected Mut<Info<'b>> to be detected same as bare Info<'b>, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn bare_raw_info_still_fires_unaffected_by_the_mut_fix() {
+        // Regression check: the already-working, unwrapped case must still work.
+        let src = r#"
+            #[derive(FromAccounts)]
+            pub struct VerifySignatures<'b> {
+                pub instruction_acc: Info<'b>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            has_category(&findings, "missing-signer-check"),
+            "expected bare Info<'b> to still fire, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn mut_wrapped_data_account_is_not_misidentified_as_raw_info() {
+        // Data<> is Solitaire's typed, owner-checked wrapper (via Seeded) — a
+        // real validation wrapper, unlike Mut<> which only marks writability.
+        // Mut<Data<...>> must stay correctly excluded, not swept up by the fix.
+        let src = r#"
+            #[derive(FromAccounts)]
+            pub struct UpdateConfig<'b> {
+                pub config: Mut<Data<'b, ConfigAccount, { AccountType::Config }>>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            !has_category(&findings, "missing-signer-check")
+                && !has_category(&findings, "missing-owner-check"),
+            "Mut<Data<...>> is a validated account and must not be flagged as raw info, got: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn mut_wrapped_signer_is_not_misidentified_as_raw_info() {
+        let src = r#"
+            #[derive(FromAccounts)]
+            pub struct Withdraw<'b> {
+                pub authority: Mut<Signer<Info<'b>>>,
+            }
+        "#;
+        let findings = findings_for(src);
+        assert!(
+            !has_category(&findings, "missing-signer-check")
+                && !has_category(&findings, "missing-owner-check"),
+            "Mut<Signer<...>> is already signer-validated and must not be flagged, got: {:?}",
+            findings
+        );
+    }
+}
+
+#[cfg(test)]
+mod eng4_core_category_translation {
+    //! ENG-4: bridges this crate's catalog-aligned category strings to the
+    //! separate, older Rust-side vocabulary `ares_core::VulnerabilityCategory`
+    //! already recognizes — found while investigating wiring this crate into
+    //! the real scan pipeline. Without this, every one of ENG-3/ENG-4's
+    //! carefully-fixed categories would silently collapse into
+    //! InvariantViolation the moment they reached a real report.
+    use super::*;
+
+    /// The real, authoritative set lives in
+    /// `core/crates/ares-core/src/lib.rs`'s `from_str_checked` — this crate
+    /// doesn't depend on ares-core, so this is a hand-copied mirror of every
+    /// string that function recognizes, checked directly against that file
+    /// when this test was written. If ares-core's own recognized set changes,
+    /// this needs updating too — that's the point of asserting against a
+    /// concrete, explicit list rather than nothing at all.
+    const CORE_RECOGNIZED_STRINGS: &[&str] = &[
+        "type-cosplay",
+        "ownership-check",
+        "signer-authorization",
+        "missing-signer",
+        "arbitrary-cpi",
+        "initialization-frontrunning",
+        "reentrancy-risk",
+        "reentrancy",
+        "duplicate-mutable-accounts",
+        "arithmetic-overflow",
+        "close-account",
+        "account-reloading",
+        "revival-attack",
+        "re-initialization",
+        "account-data-matching",
+        "pda-privileges",
+        "fuzzing-crash",
+        "fuzzing",
+        "invariant-violation",
+        "invariant",
+        "missing-revalidation",
+        "unchecked-cast",
+        "state-transition-gap",
+        "generic",
+    ];
+
+    #[test]
+    fn every_catalog_category_this_crate_produces_translates_to_a_string_core_recognizes() {
+        // The real, complete set this crate can actually emit — every
+        // category string used anywhere in ast_scanner.rs or
+        // taint_engine.rs, kept in sync by hand since both files are
+        // string-literal-based, not a shared enum.
+        let catalog_categories = [
+            "arbitrary-cpi",
+            "missing-signer-check",
+            "anchor-constraint-gap",
+            "missing-owner-check",
+            "account-data-matching",
+            "unsafe-type-cast",
+            "type-cosplay",
+            "account-close-revival",
+            "account-reinitialization",
+            "non-canonical-bump",
+            "integer-overflow-underflow",
+        ];
+        for cat in catalog_categories {
+            let translated = ast_category_to_core_category_str(cat);
+            assert!(
+                CORE_RECOGNIZED_STRINGS.contains(&translated),
+                "category \"{}\" translated to \"{}\", which ares_core's \
+                from_str_checked does not recognize — it would silently \
+                collapse to InvariantViolation",
+                cat,
+                translated
+            );
+        }
+    }
+
+    #[test]
+    fn integer_overflow_underflow_maps_to_its_own_distinct_string_not_unchecked_cast() {
+        // Real bug caught while writing this: arithmetic and casting are
+        // different concepts, and core has a separate, correctly-recognized
+        // string for arithmetic specifically — collapsing this into
+        // unchecked-cast would have been wrong, not just imprecise.
+        assert_eq!(
+            ast_category_to_core_category_str("integer-overflow-underflow"),
+            "arithmetic-overflow"
+        );
+    }
+
+    #[test]
+    fn an_unknown_category_passes_through_unchanged_rather_than_panicking() {
+        // Falls through to core's own from_str_checked fallback
+        // (unwrap_or(InvariantViolation)) rather than this function
+        // guessing at something it has no mapping for.
+        assert_eq!(
+            ast_category_to_core_category_str("some-future-category-this-fn-does-not-know-yet"),
+            "some-future-category-this-fn-does-not-know-yet"
+        );
+    }
+}
+
+#[cfg(test)]
+mod eng4_smoke_test_realistic_fixture {
+    //! ENG-4: Checkpoints 1-4 tested only hand-crafted, minimal snippets —
+    //! a real gap against the original task's own explicit to-do ("test
+    //! against real Anchor programs with known issues"). No existing fixture
+    //! in this repo uses Anchor's #[derive(Accounts)] style at all, and a
+    //! missing has_one check isn't usually tied to one specific, named,
+    //! dollar-amount incident the way Cashio/Wormhole/Mango are — it's a
+    //! common vulnerability class. Rather than fabricate a fake incident
+    //! attribution, this runs against a realistic, complete Anchor program
+    //! (eval/fixtures/rs/pattern-examples/), not a 2-line synthetic snippet.
+    use super::*;
+
+    const VAULT_WITHDRAW_FIXTURE: &str = include_str!(
+        "../../../../eval/fixtures/rs/pattern-examples/missing-has-one-vault-withdraw.rs"
+    );
+
+    #[test]
+    fn detects_the_missing_has_one_in_a_realistic_complete_anchor_program() {
+        let scanner = analyze_file(
+            std::path::Path::new("missing-has-one-vault-withdraw.rs"),
+            VAULT_WITHDRAW_FIXTURE,
+        );
+        let unreferenced_authority_finding = scanner.findings.iter().any(|f| {
+            f.category == "anchor-constraint-gap" && f.description.contains("no field's `has_one`")
+        });
+        assert!(
+            unreferenced_authority_finding,
+            "expected the has_one gap check to fire on a realistic, complete \
+            program, not just the minimal synthetic snippets in \
+            eng4_anchor_has_one_gap — got: {:?}",
+            scanner.findings
         );
     }
 }

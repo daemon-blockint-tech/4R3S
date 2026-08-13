@@ -346,7 +346,7 @@ impl TaintEngine {
                     let right_taint = self.expr_taint(&binary.right);
                     if left_taint.is_tainted || right_taint.is_tainted {
                         self.findings.push(TaintFinding {
-                            category: "unchecked-cast".to_string(),
+                            category: "integer-overflow-underflow".to_string(),
                             severity: "High".to_string(),
                             sink: format!("arithmetic {}", op_str),
                             tainted_var: format!(
@@ -387,7 +387,7 @@ impl TaintEngine {
                     || expr_str.parse::<i64>().is_ok();
                 if expr_taint.is_tainted && !is_safe_source {
                     self.findings.push(TaintFinding {
-                        category: "unchecked-cast".to_string(),
+                        category: "unsafe-type-cast".to_string(),
                         severity: "High".to_string(),
                         sink: "cast".to_string(),
                         tainted_var: expr_str,

@@ -60,6 +60,15 @@ enum Commands {
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         poc: bool,
 
+        /// Merge ares-mapper's AST-based scanner findings (Anchor/Solitaire
+        /// constraint checks, taint-tracked sinks) into this scan's report.
+        /// Defaults to false: this detection path has never been measured
+        /// against a real corpus at scale, unlike the hypothesis pipeline
+        /// (EVAL-3 measured F1 0.3007). Opt in explicitly to start gathering
+        /// that evidence; flip the default once it's justified, not before.
+        #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+        ast_scan: bool,
+
         /// Maximum scan duration in seconds
         #[arg(long, default_value = "3600")]
         max_duration: u64,
@@ -279,12 +288,13 @@ async fn main() -> Result<()> {
             full_pipeline,
             fuzz,
             poc,
+            ast_scan,
             max_duration,
             output,
         }) => {
             info!(
-                "Scanning {:?} | pipeline={} fuzz={} poc={} duration={}s",
-                program_path, full_pipeline, fuzz, poc, max_duration
+                "Scanning {:?} | pipeline={} fuzz={} poc={} ast_scan={} duration={}s",
+                program_path, full_pipeline, fuzz, poc, ast_scan, max_duration
             );
             ares_v3::commands::scan::execute(
                 &program_path,
@@ -293,6 +303,7 @@ async fn main() -> Result<()> {
                 full_pipeline,
                 fuzz,
                 poc,
+                ast_scan,
                 max_duration,
                 &output,
             )
