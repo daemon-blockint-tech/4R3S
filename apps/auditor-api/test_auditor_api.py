@@ -1456,7 +1456,7 @@ _HIGH_TECHNICAL_IMPACT = {
 
 class TestRiskScoreEndpoint:
     def test_high_likelihood_and_impact_scores_critical(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post(
             "/risk/score",
             json={"likelihood": _HIGH_LIKELIHOOD, "technical_impact": _HIGH_TECHNICAL_IMPACT},
@@ -1468,7 +1468,7 @@ class TestRiskScoreEndpoint:
         assert body["business_impact_score"] is None
 
     def test_business_impact_is_used_over_technical_impact_when_supplied(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         low_business_impact = {
             "financial_damage": 1, "reputation_damage": 1,
             "non_compliance": 2, "privacy_violation": 3,
@@ -1486,7 +1486,7 @@ class TestRiskScoreEndpoint:
         assert body["impact_level"] == "low"
 
     def test_unknown_factor_name_is_a_400_not_a_500(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         bad_likelihood = dict(_HIGH_LIKELIHOOD, not_a_real_factor=5)
         resp = client.post(
             "/risk/score",
@@ -1498,7 +1498,7 @@ class TestRiskScoreEndpoint:
     def test_off_table_score_is_a_400_not_a_500(self):
         # Motive only defines {1, 4, 9} per the OWASP table -- 5 is not one
         # of the enumerated options.
-        client = TestClient(main.app)
+        client = _authed_client()
         bad_likelihood = dict(_HIGH_LIKELIHOOD, motive=5)
         resp = client.post(
             "/risk/score",
@@ -1507,7 +1507,7 @@ class TestRiskScoreEndpoint:
         assert resp.status_code == 400
 
     def test_missing_required_field_is_422(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.post("/risk/score", json={"likelihood": _HIGH_LIKELIHOOD})
         assert resp.status_code == 422
 
@@ -1518,7 +1518,7 @@ class TestRiskCalibrationEndpoint:
     templates. See services/risk/README.md's "Today's real divergence"."""
 
     def test_returns_the_real_catalogs_current_divergence(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.get("/risk/calibration")
         assert resp.status_code == 200
         body = resp.json()
@@ -1528,7 +1528,7 @@ class TestRiskCalibrationEndpoint:
         assert len(body["mismatches"]) == 16
 
     def test_a_known_mismatch_is_present_with_both_severities(self):
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.get("/risk/calibration")
         by_id = {m["id"]: m for m in resp.json()["mismatches"]}
         assert by_id["account-close-revival"]["catalog_default_severity"] == "critical"
@@ -1543,7 +1543,7 @@ class TestRiskCalibrationEndpoint:
             encoding="utf-8",
         )
         monkeypatch.setattr(main, "CATALOG_PATH", fixture)
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.get("/risk/calibration")
         assert resp.status_code == 503
 
@@ -1566,6 +1566,6 @@ class TestRiskCalibrationEndpoint:
         fixture = tmp_path / "catalog.json"
         fixture.write_text(json.dumps(catalog), encoding="utf-8")
         monkeypatch.setattr(main, "CATALOG_PATH", fixture)
-        client = TestClient(main.app)
+        client = _authed_client()
         resp = client.get("/risk/calibration")
         assert resp.status_code == 503
