@@ -103,7 +103,7 @@
     "url": "git+https://github.com/elder-plinius/ares.git"
   },
   "dependencies": {
-    "@langchain/core": "^1.2.4",
+    "@langchain/core": "^1.2.5",
     "@langchain/langgraph": "^1.4.9",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "boxen": "^8.0.1",
@@ -120,7 +120,7 @@
     "inquirer": "^14.0.2",
     "langsmith": "^0.8.9",
     "ora": "^9.4.1",
-    "tsx": "^4.23.6"
+    "tsx": "^4.23.11"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -130,9 +130,9 @@
     "@types/figlet": "^1.5.8",
     "@types/gradient-string": "^1.1.5",
     "@types/inquirer": "^9.0.10",
-    "@types/node": "^26.1.2",
-    "eslint": "^10.8.0",
-    "typescript": "~7.0.2",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.8.1",
+    "typescript": "~6.0.3",
     "typescript-eslint": "^8.66.0",
     "vitest": "^4.1.10"
   },

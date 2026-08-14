@@ -331,6 +331,7 @@ impl AgentOrchestrator {
                     true,
                     false, // Fuzz disabled by default for scan tool
                     false, // PoC disabled
+                    false, // AST scan: unmeasured against a real corpus, opt-in only
                     3600,
                     &output_dir
                 ).await;

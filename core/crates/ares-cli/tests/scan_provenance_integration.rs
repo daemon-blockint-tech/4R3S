@@ -85,6 +85,7 @@ async fn a_static_scan_does_not_need_the_fuzzer_and_does_not_claim_it() {
         false, // full_pipeline
         false, // fuzz — the flag under test
         false, // poc
+        false, // ast_scan
         60,
         &output,
     )
@@ -132,6 +133,74 @@ async fn a_static_scan_does_not_need_the_fuzzer_and_does_not_claim_it() {
     );
 }
 
+/// ENG-4: the actual wiring of ares-mapper's AST scanner into a real scan —
+/// `--ast-scan` defaults to false (unmeasured against a real corpus, opt-in
+/// only), but when explicitly enabled its findings must genuinely reach the
+/// final report, not just get computed and silently dropped, the exact
+/// failure mode ORC2-F7 already found once for the hypothesis pipeline.
+#[tokio::test]
+async fn ast_scan_true_makes_ast_scanner_findings_reach_the_real_report() {
+    let root = std::env::current_dir()
+        .expect("cwd")
+        .join(format!(".ares-eng4-wiring-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let _scratch = Scratch(root.clone());
+    let target = root.join("program");
+    let output = root.join("out");
+    // A raw AccountInfo handler with no is_signer check anywhere — the exact
+    // pattern eng4/eng3's own unit tests already confirm ast_scanner detects
+    // (missing-signer-check), reused here to verify the real, end-to-end
+    // wiring rather than re-testing the detection logic itself again.
+    write_program(
+        &target,
+        "pub fn withdraw(admin: AccountInfo, amount: u64) {\n\
+         \x20   let _ = amount;\n\
+         }\n",
+    );
+
+    let result = ares_v3::commands::scan::execute(
+        &target,
+        &config(&output),
+        None,
+        false, // full_pipeline
+        false, // fuzz
+        false, // poc
+        true,  // ast_scan — the flag under test
+        60,
+        &output,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "an ast_scan-enabled scan must still complete: {:?}",
+        result.err()
+    );
+
+    let report_path = std::fs::read_dir(&output)
+        .expect("output dir")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|e| e == "json"))
+        .expect("a report was written");
+
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read report"))
+            .expect("report is JSON");
+
+    let findings = report["findings"].as_array().expect("findings array");
+    let has_ast_finding = findings.iter().any(|f| {
+        f["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("ARES-AST-"))
+    });
+    assert!(
+        has_ast_finding,
+        "expected at least one ARES-AST-* finding once ast_scan is enabled, \
+        got: {findings:?}"
+    );
+}
+
 /// ORC2-F6: scanning a path that does not exist wrote a fully-formed report —
 /// exit 0, `findings: []`, an all-zero summary, and a `target.name` taken from
 /// the last path segment. Indistinguishable from a genuine clean audit.
@@ -150,6 +219,7 @@ async fn a_missing_target_is_an_error_not_a_clean_report() {
         &missing,
         &config(&output),
         None,
+        false,
         false,
         false,
         false,
@@ -195,6 +265,7 @@ async fn a_target_with_no_source_root_is_an_error_not_a_clean_report() {
         &target,
         &config(&output),
         None,
+        false,
         false,
         false,
         false,

@@ -107,7 +107,13 @@ export function makeVerifyNode(deps: GraphDeps) {
         // was not rendered above it.
         `Return one verdict per finding, referencing each index (0..${batch.length - 1}).`,
       ]
-        .filter(Boolean)
+        // `.filter(Boolean)` here dropped the two `""` entries above, because an
+        // empty string is falsy — collapsing the three sections into one run of
+        // lines with no separator between the instruction, the fenced data, and
+        // the range. The fence markers still delimited the untrusted block, so
+        // nothing was mis-parsed, but the blank lines were written deliberately
+        // and were silently absent. There is no conditional entry left to
+        // filter: the first element is a ternary that always yields a string.
         .join("\n");
 
       // A thrown error is deliberately NOT caught here. The checkpointer parks the

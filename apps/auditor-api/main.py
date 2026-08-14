@@ -15,6 +15,7 @@ building on top of it.
 """
 from __future__ import annotations
 
+import hmac
 import os
 import sys
 from pathlib import Path
@@ -22,8 +23,9 @@ from uuid import uuid4
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ValidationError, field_validator
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, HttpUrl, ValidationError, field_validator
 
 # Sibling top-level module (see the sys.path note below for why that is the
 # convention here). Reused rather than re-implemented so `audit-result:{id}`
@@ -31,8 +33,76 @@ from pydantic import BaseModel, ValidationError, field_validator
 # indistinguishable in shape and TTL from one the worker writes later, or a
 # poller would have to know which process wrote what it is reading.
 from worker import _set_status
+from ssrf_guard import validate_url_scheme, validate_webhook_url_async
 
-app = FastAPI(title="ares-auditor-api")
+_bearer_scheme = HTTPBearer()
+
+
+def _valid_api_keys() -> set[str]:
+    # Read per call, not cached at import, for the same reason
+    # allowed_source_root() below is: binding it once would freeze whatever
+    # the process saw first, which defeats an env var set after import (e.g.
+    # by a test) and survives a key rotation only after a restart nothing
+    # here would tell the operator to perform.
+    raw = os.environ.get("ARES_API_KEYS", "")
+    return {key.strip() for key in raw.split(",") if key.strip()}
+
+
+def _api_key_is_valid(presented: str, valid_keys: set[str]) -> bool:
+    """Constant-time membership test.
+
+    `presented in valid_keys` looks equivalent and is not: set lookup falls
+    back to `str.__eq__`, which short-circuits on the first differing byte
+    (and on length before that), so response timing leaks how much of a
+    configured key a guess got right. compare_digest is the primitive that
+    doesn't. Compared as utf-8 bytes because compare_digest rejects str
+    containing non-ASCII, and the presented value is caller-controlled.
+    """
+    presented_bytes = presented.encode("utf-8")
+    # `any` short-circuits, but only ever on a *match* — a wrong key is still
+    # compared against every configured key in constant time each.
+    return any(
+        hmac.compare_digest(presented_bytes, key.encode("utf-8")) for key in valid_keys
+    )
+
+
+async def require_api_key(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+) -> None:
+    """Fails closed: an unconfigured deployment (ARES_API_KEYS unset or
+    empty) rejects every request rather than serving as an open API. The
+    alternative — treating "no keys configured" as "no auth required" — is
+    exactly the kind of silent-open default that turns a forgotten env var
+    into an unauthenticated queue, the failure mode this replaces."""
+    valid_keys = _valid_api_keys()
+    if not valid_keys:
+        raise HTTPException(
+            status_code=500,
+            detail="server misconfigured: no API keys configured (ARES_API_KEYS)",
+        )
+    if not _api_key_is_valid(credentials.credentials, valid_keys):
+        raise HTTPException(status_code=401, detail="invalid API key")
+
+
+# The interactive docs and the schema they read are OFF unless explicitly
+# enabled. `FastAPI(dependencies=[...])` applies to APIRoutes only — the
+# `/openapi.json`, `/docs` and `/redoc` handlers are plain Starlette routes
+# added by FastAPI itself, so require_api_key never runs for them. Verified
+# before this line existed: both answered 200 with no credentials, publishing
+# every route, model and field name of an otherwise authenticated API.
+# Unlike ARES_API_KEYS this is read once at import, because it decides which
+# routes get built at all rather than how a request is handled.
+_DOCS_ENABLED = os.environ.get("ARES_ENABLE_DOCS", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+app = FastAPI(
+    title="ares-auditor-api",
+    dependencies=[Depends(require_api_key)],
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+)
 
 REDIS_SETTINGS = RedisSettings()  # host/port from env via arq defaults
 
@@ -42,10 +112,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]  # apps/auditor-api/main.py -> 4
 # Rust engine's policy boundary (`core/crates/ares-policy`). Override with
 # ARES_ALLOWED_SOURCE_ROOT when the deployment stages checkouts elsewhere.
 #
-# NOTE, unresolved: this route is still UNAUTHENTICATED. Containment bounds what
-# an anonymous caller can reach; it does not stop them from queueing work and
-# spending LLM quota. Putting auth in front of it is a deployment-level decision
-# (who the callers are, which scheme), so it is flagged here rather than guessed.
 # Resolved per call, not captured at import: the root is derived from REPO_ROOT,
 # and binding it once would freeze whatever the module saw first — which both
 # defeats the env override for a process started before it was set, and silently
@@ -71,9 +137,41 @@ from lockfile import MalformedLockfile, parse_lockfile  # noqa: E402
 from match import match_dependencies  # noqa: E402
 from severity import severity_for_advisory  # noqa: E402
 
+# Same sys.path convention as services/cve above -- services/risk has no
+# __init__.py/pyproject.toml either, and both service dirs use flat sibling
+# imports internally (risk_score.py imports `from factors import ...`, not
+# `from services.risk.factors import ...`), so both must be on sys.path.
+_RISK_SERVICE_DIR = REPO_ROOT / "services" / "risk"
+if str(_RISK_SERVICE_DIR) not in sys.path:
+    sys.path.insert(0, str(_RISK_SERVICE_DIR))
+
+from catalog_calibration import CATALOG_PATH, CatalogCalibrationError, calibrate  # noqa: E402
+from risk_score import RiskVector, UnsupportedRiskFactor, score_risk  # noqa: E402
+
 
 class AuditRequest(BaseModel):
     source: str
+    # Optional: if set, the worker POSTs the final job result here instead of
+    # (in addition to) the caller having to poll GET /audits/{job_id}. Kept
+    # per-job rather than a standing registration — this API has no store
+    # beyond the per-job, 24h-TTL Redis key, and a subscription that outlives
+    # a single job would need real persistence this app doesn't have.
+    callback_url: HttpUrl | None = None
+
+    @field_validator("callback_url")
+    @classmethod
+    def callback_url_scheme_must_be_safe(cls, v: HttpUrl | None) -> HttpUrl | None:
+        # Scheme only. The address check needs DNS, and a Pydantic validator
+        # runs inline on the event loop — a blocking getaddrinfo here lets one
+        # caller-supplied hostname on a slow nameserver stall every other
+        # request in the process. submit_audit does that half off-thread; see
+        # the call to validate_webhook_url_async there.
+        if v is not None:
+            try:
+                validate_url_scheme(str(v))
+            except ValueError as err:
+                raise ValueError(f"callback_url rejected: {err}") from err
+        return v
 
     @field_validator("source")
     @classmethod
@@ -96,9 +194,10 @@ class AuditRequest(BaseModel):
         # Containment. Existence was the only check, so `{"source":
         # "/Users/me/some-client-repo"}` — or `../../.ssh` — was accepted and the
         # worker then walked every `.rs` file under it into an LLM prompt and
-        # served the result back from `GET /audits/<id>`. This route has no
-        # authentication (see the module note below), so that was an unauthenticated
-        # read of arbitrary host directories.
+        # served the result back from `GET /audits/<id>`. Authentication (see
+        # require_api_key above) narrows who can reach this at all, but does
+        # not narrow what an authenticated caller can read — containment is
+        # still the control that does that.
         #
         # `.resolve()` follows symlinks, which matters for the same reason it does
         # in `core/crates/ares-policy`: a link inside the allowed root otherwise
@@ -128,10 +227,28 @@ class AuditStatus(BaseModel):
 async def submit_audit(req: AuditRequest) -> AuditAccepted:
     """Enqueue an audit. Returns immediately — an audit run takes minutes,
     not milliseconds, so this is fire-and-poll, not request-response."""
+    # The half of the callback_url check that needs DNS, kept out of the
+    # Pydantic validator so it can go off-thread (see
+    # AuditRequest.callback_url_scheme_must_be_safe). Done here, before the
+    # pool is opened and before anything is queued, so a rejected target
+    # costs nothing: no queue slot, no Redis record to clean up. The worker
+    # re-checks at delivery time because DNS can change in between.
+    if req.callback_url is not None:
+        try:
+            await validate_webhook_url_async(str(req.callback_url))
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=f"callback_url rejected: {err}") from err
+
     job_id = str(uuid4())
     redis = await create_pool(REDIS_SETTINGS)
     try:
-        job = await redis.enqueue_job("run_audit", job_id, req.source, _job_id=job_id)
+        job = await redis.enqueue_job(
+            "run_audit",
+            job_id,
+            req.source,
+            str(req.callback_url) if req.callback_url else None,
+            _job_id=job_id,
+        )
 
         # arq returns None when a job with this id already exists (it checks
         # job_key and result_key and bails out — see ArqRedis.enqueue_job).
@@ -358,4 +475,112 @@ async def get_snapshot_info() -> CveSnapshotInfo:
         revision_date=db.manifest["revision_date"],
         advisory_count=db.manifest["advisory_count"],
         source=db.manifest["source"],
+    )
+
+
+# --- Risk scoring (OWASP Risk Rating Methodology) ---------------------------
+#
+# Deterministic by construction: plain averaging + table lookups against
+# OWASP's own published tables (services/risk/factors.py, risk_score.py), no
+# LLM, no network. See services/risk/README.md for why OWASP was the reading
+# used for "port risk-scoring engine."
+
+
+class RiskScoreRequest(BaseModel):
+    likelihood: dict[str, int]
+    technical_impact: dict[str, int]
+    business_impact: dict[str, int] | None = None
+
+
+class RiskScoreResult(BaseModel):
+    likelihood_score: float
+    likelihood_level: str
+    technical_impact_score: float
+    business_impact_score: float | None
+    impact_score: float
+    impact_level: str
+    impact_basis: str  # "business" | "technical"
+    severity: str
+
+
+@app.post("/risk/score", response_model=RiskScoreResult)
+async def score_risk_endpoint(req: RiskScoreRequest) -> RiskScoreResult:
+    """Score a caller-supplied risk vector. Unlike /cve/scan's outcome
+    vocabulary (built for arbitrary external target data that legitimately
+    varies in quality), a risk vector is a structured request the caller
+    controls directly -- an unknown factor name or an out-of-table score is
+    a client request error, so it is rejected with 400, not folded into a
+    result-object outcome field."""
+    try:
+        scored = score_risk(
+            RiskVector(
+                likelihood=req.likelihood,
+                technical_impact=req.technical_impact,
+                business_impact=req.business_impact,
+            )
+        )
+    except UnsupportedRiskFactor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RiskScoreResult(
+        likelihood_score=scored.likelihood_score,
+        likelihood_level=scored.likelihood_level,
+        technical_impact_score=scored.technical_impact_score,
+        business_impact_score=scored.business_impact_score,
+        impact_score=scored.impact_score,
+        impact_level=scored.impact_level,
+        impact_basis=scored.impact_basis,
+        severity=scored.severity,
+    )
+
+
+class RiskCalibrationEntry(BaseModel):
+    id: str
+    category: str
+    catalog_default_severity: str
+    computed_severity: str
+    likelihood_level: str
+    impact_level: str
+
+
+class RiskCalibrationResult(BaseModel):
+    total: int
+    match_count: int
+    mismatch_count: int
+    # Only mismatches are listed -- a match just confirms the catalog default
+    # already agrees with the OWASP-methodology template, which isn't
+    # actionable; a mismatch is the thing a reviewer needs to see. See
+    # services/risk/README.md's "Today's real divergence" section.
+    mismatches: list[RiskCalibrationEntry]
+
+
+@app.get("/risk/calibration", response_model=RiskCalibrationResult)
+async def get_risk_calibration() -> RiskCalibrationResult:
+    """Diffs src/knowledge/vuln-catalog.generated.json's static
+    defaultSeverity values against what services/risk/catalog_calibration.py's
+    per-category OWASP templates would compute. Recomputed on every request
+    (cheap: 34 entries, pure arithmetic) rather than cached, so this always
+    reflects the currently-committed catalog file, not a stale snapshot --
+    unlike the advisory DB above, there is no separate refresh step to be
+    stale relative to."""
+    try:
+        report = calibrate(path=CATALOG_PATH)
+    except CatalogCalibrationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return RiskCalibrationResult(
+        total=report.total,
+        match_count=len(report.matches),
+        mismatch_count=len(report.mismatches),
+        mismatches=[
+            RiskCalibrationEntry(
+                id=m.id,
+                category=m.category,
+                catalog_default_severity=m.catalog_default_severity,
+                computed_severity=m.computed_severity,
+                likelihood_level=m.likelihood_level,
+                impact_level=m.impact_level,
+            )
+            for m in report.mismatches
+        ],
     )
