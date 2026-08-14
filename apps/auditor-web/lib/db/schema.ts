@@ -194,7 +194,18 @@ export const insertTaskSchema = z.object({
   userId: z.string().min(1, 'User ID is required'),
   prompt: z.string().min(1, 'Prompt is required'),
   title: z.string().optional(),
-  repoUrl: z.string().url('Must be a valid URL').optional(),
+  repoUrl: z
+    .string()
+    .url('Must be a valid URL')
+    .refine((url) => {
+      try {
+        const parsed = new URL(url)
+        return parsed.protocol === 'https:' && parsed.hostname === 'github.com'
+      } catch {
+        return false
+      }
+    }, 'Repository URL must be an https://github.com/... URL')
+    .optional(),
   selectedAgent: z.enum(['claude', 'codex', 'copilot', 'cursor', 'gemini', 'opencode', 'lmstudio']).default('claude'),
   selectedModel: z.string().optional(),
   installDependencies: z.boolean().default(false),

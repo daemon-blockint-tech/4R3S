@@ -4,6 +4,7 @@ import { tasks } from '@/lib/db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 import { getServerSession } from '@/lib/session/get-server-session'
 import { PROJECT_DIR } from '@/lib/sandbox/commands'
+import { resolveSandboxPath } from '@/lib/sandbox/safe-path'
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   try {
@@ -18,6 +19,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!operation || !sourceFile) {
       return NextResponse.json({ success: false, error: 'Missing required parameters' }, { status: 400 })
+    }
+
+    // Resolve against PROJECT_DIR and reject traversal outside the project root
+    const safeSourceFile = resolveSandboxPath(sourceFile)
+    if (!safeSourceFile) {
+      return NextResponse.json({ success: false, error: 'Invalid source file path' }, { status: 400 })
+    }
+    let safeTargetDir = '.'
+    if (targetPath) {
+      const resolvedTargetDir = resolveSandboxPath(targetPath)
+      if (!resolvedTargetDir) {
+        return NextResponse.json({ success: false, error: 'Invalid target path' }, { status: 400 })
+      }
+      safeTargetDir = resolvedTargetDir
     }
 
     // Get task from database and verify ownership
@@ -61,16 +76,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ success: false, error: 'Sandbox not found' }, { status: 404 })
     }
 
-    // Determine target directory
-    const targetDir = targetPath || '.'
-    const sourceBasename = sourceFile.split('/').pop()
-    const targetFile = targetPath ? `${targetPath}/${sourceBasename}` : sourceBasename
+    // Determine target directory (sourceBasename can't contain '/', so this
+    // concatenation stays confined within safeTargetDir, itself already
+    // confined to PROJECT_DIR by resolveSandboxPath above)
+    const sourceBasename = safeSourceFile.split('/').pop()
+    const targetFile = targetPath ? `${safeTargetDir}/${sourceBasename}` : sourceBasename
 
     if (operation === 'copy') {
       // Copy file
       const copyResult = await sandbox.runCommand({
         cmd: 'cp',
-        args: ['-r', sourceFile, targetFile],
+        args: ['-r', safeSourceFile, targetFile],
         cwd: PROJECT_DIR,
       })
 
@@ -85,7 +101,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       // Move file
       const mvResult = await sandbox.runCommand({
         cmd: 'mv',
-        args: [sourceFile, targetFile],
+        args: [safeSourceFile, targetFile],
         cwd: PROJECT_DIR,
       })
 

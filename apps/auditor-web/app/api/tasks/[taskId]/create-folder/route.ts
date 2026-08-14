@@ -4,6 +4,7 @@ import { tasks } from '@/lib/db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 import { getServerSession } from '@/lib/session/get-server-session'
 import { PROJECT_DIR } from '@/lib/sandbox/commands'
+import { resolveSandboxPath } from '@/lib/sandbox/safe-path'
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   try {
@@ -18,6 +19,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!foldername || typeof foldername !== 'string') {
       return NextResponse.json({ success: false, error: 'Foldername is required' }, { status: 400 })
+    }
+
+    // Resolve against PROJECT_DIR and reject traversal outside the project root
+    const safeFoldername = resolveSandboxPath(foldername)
+    if (!safeFoldername) {
+      return NextResponse.json({ success: false, error: 'Invalid foldername' }, { status: 400 })
     }
 
     // Get task from database and verify ownership (exclude soft-deleted)
@@ -64,7 +71,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // Create the folder using mkdir -p
     const mkdirResult = await sandbox.runCommand({
       cmd: 'mkdir',
-      args: ['-p', foldername],
+      args: ['-p', safeFoldername],
       cwd: PROJECT_DIR,
     })
 

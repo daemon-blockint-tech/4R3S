@@ -4,6 +4,7 @@ import { tasks } from '@/lib/db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 import { getServerSession } from '@/lib/session/get-server-session'
 import { PROJECT_DIR } from '@/lib/sandbox/commands'
+import { resolveSandboxPath } from '@/lib/sandbox/safe-path'
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   try {
@@ -18,6 +19,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     if (!filename) {
       return NextResponse.json({ success: false, error: 'Missing filename parameter' }, { status: 400 })
+    }
+
+    // Resolve against PROJECT_DIR and reject traversal outside the project root
+    const safeFilename = resolveSandboxPath(filename)
+    if (!safeFilename) {
+      return NextResponse.json({ success: false, error: 'Invalid filename' }, { status: 400 })
     }
 
     // Get task from database and verify ownership (exclude soft-deleted)
@@ -64,7 +71,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // Check if file is tracked in git
     const lsFilesResult = await sandbox.runCommand({
       cmd: 'git',
-      args: ['ls-files', filename],
+      args: ['ls-files', safeFilename],
       cwd: PROJECT_DIR,
     })
     const isTracked = (await lsFilesResult.stdout()).trim().length > 0
@@ -73,7 +80,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       // File is tracked, use git checkout to revert changes
       const checkoutResult = await sandbox.runCommand({
         cmd: 'git',
-        args: ['checkout', 'HEAD', '--', filename],
+        args: ['checkout', 'HEAD', '--', safeFilename],
         cwd: PROJECT_DIR,
       })
 
@@ -86,7 +93,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       // File is untracked (new file), delete it
       const rmResult = await sandbox.runCommand({
         cmd: 'rm',
-        args: [filename],
+        args: [safeFilename],
         cwd: PROJECT_DIR,
       })
 
