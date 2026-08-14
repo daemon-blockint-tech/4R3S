@@ -81,9 +81,31 @@ def test_container_security_kwargs_baseline():
     assert kwargs["cap_drop"] == ["ALL"]
     assert kwargs["security_opt"] == ["no-new-privileges:true"]
     assert kwargs["labels"] == hardening.ORPHAN_LABEL
+    assert kwargs["user"] == "65534:65534"  # non-root by default
     assert "cap_add" not in kwargs
     assert "read_only" not in kwargs
     assert "tmpfs" not in kwargs
+
+
+def test_container_security_kwargs_user_override():
+    cfg = hardening.HardeningConfig()
+    kwargs = hardening.container_security_kwargs(cfg, network_name="net", run_as_user="root")
+    assert kwargs["user"] == "root"
+
+
+def test_container_security_kwargs_user_opt_out_skips_kwarg_entirely():
+    """Passing "" is an explicit opt-out (run as the image's own default/USER
+    directive), distinct from leaving run_as_user unset (which applies the
+    non-root default)."""
+    cfg = hardening.HardeningConfig()
+    kwargs = hardening.container_security_kwargs(cfg, network_name="net", run_as_user="")
+    assert "user" not in kwargs
+
+
+def test_hardening_config_container_user_env_override(monkeypatch):
+    monkeypatch.setenv("CTF_CONTAINER_USER", "1000:1000")
+    cfg = hardening.HardeningConfig()
+    assert cfg.container_user == "1000:1000"
 
 
 def test_container_security_kwargs_allow_egress_does_not_change_container_kwargs():
@@ -450,6 +472,7 @@ def test_start_challenge_applies_hardened_kwargs(ctf_executor_module, tmp_path):
     assert run_kwargs["cap_drop"] == ["ALL"]
     assert run_kwargs["security_opt"] == ["no-new-privileges:true"]
     assert run_kwargs["network"] == "ctf-run-demo_1"
+    assert run_kwargs["user"] == "65534:65534"  # non-root by default
     assert "mem_limit" in run_kwargs
     assert "pids_limit" in run_kwargs
 

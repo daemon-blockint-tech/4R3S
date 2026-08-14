@@ -96,6 +96,12 @@ class HardeningConfig:
     container_timeout: int = field(
         default_factory=lambda: _env_int("CTF_CONTAINER_TIMEOUT", 600)
     )
+    # Non-root UID:GID challenges run as by default. 65534:65534 is the
+    # conventional Linux "nobody:nogroup" low-privilege pair -- used as a
+    # bare numeric ID (not a username) so it works regardless of whether the
+    # challenge image's /etc/passwd defines that user. A challenge that
+    # genuinely needs root can override via the manifest's docker.user.
+    container_user: str = field(default_factory=lambda: _env_str("CTF_CONTAINER_USER", "65534:65534"))
 
     @property
     def nano_cpus(self) -> int:
@@ -111,6 +117,7 @@ def container_security_kwargs(
     cap_add: Optional[List[str]] = None,
     read_only: bool = False,
     extra_mem_limit: Optional[str] = None,
+    run_as_user: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the hardened kwargs to splat into `docker.containers.run()`.
 
@@ -131,11 +138,16 @@ def container_security_kwargs(
             default off, since it breaks any challenge that writes to disk.
         extra_mem_limit: per-challenge memory override (e.g. "2g") replacing the
             baseline mem_limit for both memory and memory-swap.
+        run_as_user: overrides `cfg.container_user` (e.g. "root" for a
+            challenge that genuinely needs it). Passing "" runs as whatever
+            the image's own Dockerfile USER/default is, skipping the `user`
+            kwarg entirely — an explicit opt-out, not just "unset".
 
     Returns:
         dict of docker-py `containers.run` kwargs (security-relevant only).
     """
     mem = extra_mem_limit or cfg.mem_limit
+    user = cfg.container_user if run_as_user is None else run_as_user
     kwargs: Dict[str, Any] = {
         # --- Resource limits (measure #1) -------------------------------
         "mem_limit": mem,
@@ -152,6 +164,9 @@ def container_security_kwargs(
         # --- Provenance / reaping (measure #4) --------------------------
         "labels": dict(ORPHAN_LABEL),
     }
+
+    if user:
+        kwargs["user"] = user
 
     if cap_add:
         kwargs["cap_add"] = list(cap_add)

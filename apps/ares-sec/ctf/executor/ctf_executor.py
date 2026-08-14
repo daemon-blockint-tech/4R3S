@@ -399,6 +399,7 @@ class DockerChallengeManager:
                 cap_add=docker_config.get('cap_add'),
                 read_only=bool(docker_config.get('read_only', False)),
                 extra_mem_limit=docker_config.get('mem_limit'),
+                run_as_user=docker_config.get('user'),
             )
 
             # Start container
