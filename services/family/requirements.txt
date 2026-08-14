@@ -1,0 +1,11 @@
+# services/family runtime + test dependencies.
+#
+# Runtime is stdlib-only: winnowing is integer hashing over string slices and
+# set arithmetic (fingerprint.py), and clustering is union-find over those sets
+# (cluster.py). No numeric or ML library is needed, and adding one would put a
+# non-determinism surface into a service whose output has to be reproducible
+# from committed source. Same absence-is-justified convention as
+# services/cve/requirements.txt and services/risk/requirements.txt.
+#
+# Test-only:
+pytest==9.1.1
