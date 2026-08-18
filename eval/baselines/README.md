@@ -14,6 +14,12 @@ Full write-up and what each number decides: [docs/ENG-5-MEASUREMENT.md](../../do
 | `eng5-<date>-default-suppression.json` | `score_suppression.py` | same run |
 | `eng5-<date>-astscan.json` / `-suppression.json` | same two scripts | `ares scan --fuzz false --ast-scan true` |
 | `eng5-<date>-extended.json` / `-suppression.json` | same two scripts | `ares scan --fuzz false` with `judge_extended = true` in `AresConfig` |
+| `eng5-<date>-astscan-extended.json` / `-suppression.json` | same two scripts | both together — `--ast-scan true` **and** `judge_extended = true` |
+
+The fourth combination exists because the third is not a fair test on its own: the
+default detector path emits zero findings in the two categories `judge_extended`'s
+rules target, so those rules have no input unless `--ast-scan` is also on. See
+Result 4 in the write-up.
 
 ## Reproducing
 

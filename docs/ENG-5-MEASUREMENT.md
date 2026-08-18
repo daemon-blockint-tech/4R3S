@@ -10,7 +10,7 @@ and why (`AuditReport.suppressed_findings[]`), and nothing in `eval/` read it.
 
 Step A (`eval/score_suppression.py`, `eval/test_score_suppression.py`) built the
 reader. This is Step B: running it for real, on a freshly fetched corpus and a
-freshly built engine, three ways.
+freshly built engine, four ways.
 
 **All figures below are re-derivable** from the committed files in
 `eval/baselines/` (GOLDEN RULE 3) — see `eval/baselines/README.md` for the exact
@@ -21,16 +21,18 @@ separately and reads `eval/predictions/ares-latest.csv`, not this file.
 
 ## Machine / corpus state at measurement time
 
-- Engine rebuilt from `main` at commit `3f5f14b` (this branch's tip;
-  `core/` itself unchanged since `dc51811`).
+- Engine rebuilt from `core/` as of `dc51811` (this branch changes no Rust code,
+  so the engine measured here is exactly `main`'s).
 - Corpus fetched fresh: `fetch_datasets.py` (152 rows) then
   `fetch_sealevel_attacks.py`, `fetch_neodyme_workshop.py`,
   `build_incident_repros.py` (append + de-dupe) → 170 rows / 159 targets.
-- Three scans, `--fuzz false` in all: **default** (documented flags, nothing
-  added), **`--ast-scan true`** (the ENG-3/ENG-4 taint path, opt-in,
-  `scan.rs:213`), **`judge_extended`** (the local judge's two dormant rules,
-  reachable only via `AresConfig`, no CLI flag — see the config note below).
-- All three: 159/159 targets scanned, 0 failures.
+- Four scans, `--fuzz false` in all: **A** default (documented flags, nothing
+  added), **B** `--ast-scan true` (the ENG-3/ENG-4 taint path, opt-in,
+  `scan.rs:213`), **C** `judge_extended = true` (the local judge's two dormant
+  rules, reachable only via `AresConfig`, no CLI flag), and **D** both together —
+  added after C alone turned out not to be a fair test of the extended rules
+  (see Result 4).
+- All four: 159/159 targets scanned, 0 failures.
 
 ## Result 1 — the committed evidence is not stale
 
@@ -41,13 +43,14 @@ committed `eval/predictions/ares-latest.csv`** — despite 9 commits touching
 mode (R1); it didn't happen. DET-3/4/5's and EVAL-4's numbers still describe
 `main` accurately.
 
-## Result 2 — the local judge suppressed nothing, on any of the three runs
+## Result 2 — the local judge suppressed nothing, in any of the four runs
 
 | Run | `local_judge` suppressions | `llm_judge` suppressions | Other suppressors |
 |---|---|---|---|
-| Default | **0** | 0 (disabled by default) | `semantic_validator`: 4 |
-| `--ast-scan true` | **0** | 0 | `semantic_validator`: 4, `triager`: 7 |
-| `judge_extended` | **0** | 0 | `semantic_validator`: 4 |
+| A — default | **0** | 0 (disabled by default) | `semantic_validator`: 4 |
+| B — `--ast-scan true` | **0** | 0 | `semantic_validator`: 4, `triager`: 7 |
+| C — `judge_extended` | **0** | 0 | `semantic_validator`: 4 |
+| D — both | **0** | 0 | `semantic_validator`: 4, `triager`: 7 |
 
 `LocalJudge` ([local_judge.rs](../core/crates/ares-mapper/src/local_judge.rs)) has
 four rules plus two extended heuristics, targeting `TypeCosplay`,
@@ -58,16 +61,26 @@ arbitrary-cpi (8-9), missing-signer-check (7-56) all reach the judge before the
 triager or the LLM judge run. It suppressed none of them, in any run, including
 the 169-finding-larger set from `--ast-scan`.
 
-**Root cause, confirmed by direct read, not inference:** the judge decides from
-`SourcePatterns` ([source_patterns.rs](../core/crates/ares-mapper/src/source_patterns.rs))
-— 10 program-wide booleans (`is_anchor_heavy`, `has_raw_handler`, etc.),
-populated once per program at
-[lib.rs:974](../core/crates/ares-mapper/src/lib.rs:974). Across this 159-target
-corpus — a mix of native Solana, Anchor, and incident-repro code — those
-booleans and the judge's specific per-category conditions (e.g. Rule 1 requires
-`is_anchor_heavy && unchecked_fields == 0`) never aligned. This is not a
-tuning gap in the four rules; it's evidence the judge's *inputs* are too coarse
-for this corpus's diversity to ever trigger a suppression.
+**Root cause.** The judge decides from `SourcePatterns`
+([source_patterns.rs](../core/crates/ares-mapper/src/source_patterns.rs)) — 10
+program-wide booleans (`is_anchor_heavy`, `has_raw_handler`, …), populated once
+per program at [lib.rs:974](../core/crates/ares-mapper/src/lib.rs:974). Each rule
+is a conjunction over them plus a category test; Rule 1, for instance, needs
+`is_anchor_heavy && unchecked_fields == 0`.
+
+Being precise about what is established here, since it drives a design decision:
+the rule conditions are read directly from the source, and the judge is confirmed
+to have *executed* (it logs `Local Judge: Suppressed 0 false positives
+deterministically` on every target). Given that it ran, and that findings in its
+target categories were present, it follows that none of those conjunctions ever
+held. What is **not** recoverable from the artifacts is *which* clause failed on
+which target — `SourcePatterns` is never serialized into the report. Anyone doing
+Tier 2 should log those booleans first; this measurement can prove the rules
+don't fire but not, per target, why.
+
+Either way the conclusion for ENG-5 is the same: this is not a tuning gap in the
+four rules' thresholds, it is the judge's *inputs* being too coarse for a corpus
+this varied.
 
 A second, much richer field-level `SourcePatterns` (~30 booleans, tracking
 individual struct fields rather than whole-program aggregates) already exists in
@@ -81,7 +94,7 @@ The only thing that suppressed anything was `semantic_validator` (runs before
 the local judge) and, once `--ast-scan` added lower-confidence findings,
 `triager` (the 0.70 confidence-threshold filter, which runs last). Both are
 outside ENG-5's scope. `semantic_validator`'s 4 removals were 3 correct FP kills
-and 1 real finding wrongly dropped (see Result 4), all in `arbitrary-cpi`.
+and 1 real finding wrongly dropped (see Result 5), all in `arbitrary-cpi`.
 
 ## Result 3 — flipping `--ast-scan` to default-on today would fail the CI gate
 
@@ -103,6 +116,18 @@ damage concentrates in one category:
 | `missing-reload-after-cpi` (new) | — | 0 / 7 |
 | `unsafe-type-cast` (new) | — | 0 / 5 |
 
+"Fails the gate" here means verified by exit code, not read off a threshold:
+`score_detections.py` returns 1 when F1 is under `--target-f1`
+([score_detections.py:262](../eval/score_detections.py:262)), and the
+`verify-claims` scoring step passes `--target-f1 0.61`
+([ci.yml:400](../.github/workflows/ci.yml:400)). Running Run B's predictions
+through that exact invocation exits **1**; Run A's exits **0**.
+
+Note for whoever touches that job next: the comment directly above that command
+claims it is "Scored WITHOUT `--target-f1`", which the command itself
+contradicts. The 0.61 comparison *does* block; the separate non-blocking check
+below it is the 0.94 one. Not corrected here — `ci.yml` belongs to DET-3/4/5.
+
 `missing-signer-check` precision is 0.0179. That heuristic is
 `ast_scanner.rs`'s per-parameter signer check
 ([ast_scanner.rs:150,432](../core/crates/ares-mapper/src/ast_scanner.rs:150)) —
@@ -115,22 +140,52 @@ The answer today is *not yet*, with a named culprit. This document does not
 change the flag — that stays ENG-4's call — but the two runs above are
 reproducible inputs to it.
 
-## Result 4 — `judge_extended`'s two dormant rules never fire on this corpus
+## Result 4 — `judge_extended`'s two dormant rules never fire, even when given input
 
-Run C (`judge_extended = true`) is **byte-identical** to the default run: same
-232 predictions, same suppression table, same F1. `judge_extended` has gated two
-rules since it was added — a large-DEX unchecked-cast allowance and an
-Anchor-heavy duplicate-mutable-accounts allowance — and neither has ever
-executed in CI or in this measurement. Not urgent to remove or fix; recorded so
-nobody spends time tuning a flag that provably does nothing on the available
-corpus, and so enabling it isn't mistaken for a win without first checking why
-it's silent.
+`judge_extended` gates two rules: a large-DEX unchecked-cast allowance
+(`UncheckedCast`) and an Anchor-heavy duplicate-mutable-accounts allowance
+(`DuplicateMutableAccounts`).
+
+Run C (`judge_extended = true`, default detector path) is byte-identical to the
+default run. **But Run C alone does not prove the rules are inert** — the default
+path emits **zero** `unchecked-cast` and zero `duplicate-mutable-accounts`
+findings, so neither rule had any input to act on. That is an unfair test, and
+reporting it as proof would have been wrong.
+
+`unchecked-cast` findings appear only with `--ast-scan` (11 of them), so a fourth
+run was added to close the gap:
+
+| Run | `--ast-scan` | `judge_extended` | `unchecked-cast` findings | `local_judge` suppressions |
+|---|---|---|---|---|
+| A | off | off | 0 | 0 |
+| B | **on** | off | **11** | 0 |
+| C | off | **on** | 0 | 0 |
+| D | **on** | **on** | **11** | **0** |
+
+**Run D is byte-identical to Run B.** So with its target category present and its
+flag enabled, the extended unchecked-cast rule still suppressed nothing. Reading
+the rule explains why: it additionally requires `patterns.is_large_dex`, defined
+as `graph.instructions.len() > 100`
+([lib.rs:983](../core/crates/ares-mapper/src/lib.rs:983)) — a threshold no
+single-file staged target in this corpus reaches. The second rule
+(`DuplicateMutableAccounts`) had zero input in every run, so it remains genuinely
+untested rather than disproven.
+
+Recorded so nobody mistakes enabling this flag for a fix, and so the distinction
+between "tested and inert" (rule 1) and "never had input" (rule 2) is not lost.
 
 ## Result 5 — the one real defect found: `semantic_validator` deleted a true positive
 
 Across every run, `semantic_validator` suppressed 4 `arbitrary-cpi` findings: 3
 were not in ground truth (correct kills) and 1 was (`lost_tp` — a real finding
 destroyed before the local judge, the triager, or the LLM judge ever saw it).
+
+The lost one is named, not aggregated: **`sealevel-attacks:5-arbitrary-cpi`** —
+the sealevel-attacks corpus's own textbook arbitrary-CPI example, where ground
+truth records `arbitrary-cpi` as precisely the vulnerability being taught, and no
+retained finding covers it. The detector found it and `validator.rs` threw it
+away.
+
 This is outside `local_judge.rs` and therefore outside ENG-5's direct scope, but
 it is the only concrete false-negative-causing bug this measurement surfaced,
 and it's worth a follow-up ticket against `validator.rs` rather than silently
@@ -145,9 +200,14 @@ runs used different directories, by necessity, to compare them), and the
 generated PoC `.rs` file's header carries a wall-clock `// Generated:` comment.
 After normalizing both, **0 real differences across 159/159 targets** in
 `findings`, `suppressed_findings`, and `summary` — the fields every score in
-this document is built from. Determinism holds for everything that matters here;
-it does not hold for two cosmetic fields that were never claimed to be
-deterministic.
+this document is built from. Determinism holds for everything that matters here.
+
+Worth noting rather than burying, though: the `// Generated:` wall-clock stamp
+means a generated PoC file is **not** byte-reproducible across runs, even for
+identical input. That breaks nothing measured here and violates no current
+claim — GOLDEN RULE 2 is about the *detection path*, which is clean — but if the
+project ever wants to claim reproducible PoC artifacts, that timestamp is the
+one thing standing in the way. Not changed here; `poc.rs` is outside this ticket.
 
 ## What this justifies going forward
 
@@ -158,8 +218,11 @@ deterministic.
 2. **`--ast-scan`'s default should stay off** until `missing-signer-check`'s
    precision is fixed — that is ENG-4/ENG-3 territory, not this ticket's, but the
    number is now on record for whoever picks it up.
-3. **`judge_extended` is inert, not proven, and not disproven** — worth
-   understanding why before either removing it or promoting it.
+3. **`judge_extended` is measured, and split:** its unchecked-cast rule is
+   *tested and inert* (Run D gave it 11 findings of its target category and it
+   still fired zero — blocked by `is_large_dex`, which no single-file target
+   reaches); its duplicate-mutable-accounts rule is *still untested*, having had
+   zero input in every run. Neither is a reason to enable the flag today.
 4. **One bug filed, not fixed here:** `semantic_validator`'s `arbitrary-cpi`
    false-negative, owned by `validator.rs`, outside this ticket's file.
 
