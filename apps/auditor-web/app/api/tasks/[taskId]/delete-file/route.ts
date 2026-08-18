@@ -4,6 +4,7 @@ import { tasks } from '@/lib/db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 import { getServerSession } from '@/lib/session/get-server-session'
 import { PROJECT_DIR } from '@/lib/sandbox/commands'
+import { resolveSandboxPath } from '@/lib/sandbox/safe-path'
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   try {
@@ -18,6 +19,12 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
     if (!filename || typeof filename !== 'string') {
       return NextResponse.json({ success: false, error: 'Filename is required' }, { status: 400 })
+    }
+
+    // Resolve against PROJECT_DIR and reject traversal outside the project root
+    const safeFilename = resolveSandboxPath(filename)
+    if (!safeFilename) {
+      return NextResponse.json({ success: false, error: 'Invalid filename' }, { status: 400 })
     }
 
     // Get task from database and verify ownership (exclude soft-deleted)
@@ -64,7 +71,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     // Delete the file using rm
     const rmResult = await sandbox.runCommand({
       cmd: 'rm',
-      args: [filename],
+      args: [safeFilename],
       cwd: PROJECT_DIR,
     })
 

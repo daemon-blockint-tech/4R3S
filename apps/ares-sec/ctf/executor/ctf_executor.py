@@ -18,6 +18,8 @@ import asyncio
 import json
 import os
 import re
+import sys
+import threading
 import time
 import subprocess
 import logging
@@ -27,6 +29,24 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import docker
 import httpx
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hardening import (  # noqa: E402
+    CONTAINER_PREFIX,
+    HardeningConfig,
+    ORPHAN_LABEL,
+    ORPHAN_LABEL_FILTER,
+    container_security_kwargs,
+    egress_block_rule_args,
+    kill_process_group,
+    list_iptables_rules,
+    network_create_kwargs,
+    orphaned_ares_ctf_rule_delete_args,
+    posix_process_group_kwargs,
+    register_cleanup_handlers,
+    run_iptables,
+    run_network_name,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -177,12 +197,15 @@ class ToolSandbox:
         timeout = self.ALLOWED_TOOLS.get(tool, {}).get('timeout', 30)
 
         try:
-            # Execute in subprocess
+            # Execute in subprocess, in its own process group so a timeout
+            # kill can take down the whole tree (e.g. a shell's children),
+            # not just the shell PID itself.
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.working_dir)
+                cwd=str(self.working_dir),
+                **posix_process_group_kwargs()
             )
 
             try:
@@ -191,7 +214,7 @@ class ToolSandbox:
                     timeout=timeout
                 )
             except asyncio.TimeoutError:
-                process.kill()
+                kill_process_group(process)
                 return {
                     'success': False,
                     'stdout': '',
@@ -246,16 +269,76 @@ class FlagVerifier:
 
 
 class DockerChallengeManager:
-    """Manages Docker containers for CTF challenges"""
+    """Manages Docker containers for CTF challenges.
+
+    POC-3 hardening: every container this manager starts runs on a private,
+    egress-blocked (`internal=True`) per-run network with enforced memory/CPU/
+    PID caps and all Linux capabilities dropped. See hardening.py for the
+    actual kwargs — this class only wires them in and owns cleanup.
+    """
 
     def __init__(self):
         self.client = docker.from_env()
         self.running_containers = {}
+        self.hardening_config = HardeningConfig()
+        self._reap_orphans()
+
+    def _reap_orphans(self):
+        """Remove containers/networks left behind by a crashed prior run.
+
+        Anything this manager creates is stamped with ORPHAN_LABEL, so a
+        leftover from a process that died before calling stop_challenge()/
+        cleanup_all() can still be found and torn down on the next startup.
+        """
+        try:
+            orphan_containers = self.client.containers.list(
+                all=True, filters={"label": [ORPHAN_LABEL_FILTER]}
+            )
+        except Exception as e:
+            logger.warning(f"Could not list orphaned containers: {e}")
+            orphan_containers = []
+
+        for container in orphan_containers:
+            try:
+                container.remove(force=True)
+                logger.info(f"Reaped orphaned container {getattr(container, 'id', container)}")
+            except Exception as e:
+                logger.warning(f"Could not remove orphaned container: {e}")
+
+        try:
+            orphan_networks = self.client.networks.list(
+                filters={"label": [ORPHAN_LABEL_FILTER]}
+            )
+        except Exception as e:
+            logger.warning(f"Could not list orphaned networks: {e}")
+            orphan_networks = []
+
+        for network in orphan_networks:
+            try:
+                network.remove()
+                logger.info(f"Reaped orphaned network {getattr(network, 'name', network)}")
+            except Exception as e:
+                logger.warning(f"Could not remove orphaned network: {e}")
+
+        # Firewall rules outlive both the container AND the network they were
+        # scoped to, since they live in the host's DOCKER-USER chain, not in
+        # Docker's own object model — a crashed prior process leaves them
+        # behind with nothing else to key cleanup off of. Reap by our own
+        # comment tag instead.
+        try:
+            rule_lines = list_iptables_rules(self.client, "DOCKER-USER")
+            for delete_args in orphaned_ares_ctf_rule_delete_args(rule_lines):
+                if run_iptables(self.client, delete_args):
+                    logger.info(f"Reaped orphaned firewall rule: {' '.join(delete_args)}")
+        except Exception as e:
+            logger.warning(f"Could not reap orphaned firewall rules: {e}")
 
     def start_challenge(self, challenge: Dict) -> Dict[str, Any]:
-        """Start a challenge's Docker container(s)"""
+        """Start a challenge's Docker container, hardened per POC-3."""
         docker_config = challenge.get('docker', {})
         challenge_id = challenge['id']
+        network = None
+        iptables_delete_args = None
 
         try:
             # Pull or build image
@@ -282,20 +365,72 @@ class DockerChallengeManager:
             import secrets
             flag = f"ARES{{{secrets.token_hex(16)}}}"
 
+            # Per-run isolated network. Egress is blocked (unless a challenge
+            # opts in via docker.allow_egress) by two layers: the network's
+            # own disabled masquerade, plus a DOCKER-USER iptables rule below
+            # — masquerade alone was empirically found insufficient on Docker
+            # Desktop, where a broader pre-existing MASQUERADE rule for the
+            # whole default IPAM pool still covers our subnet.
+            allow_egress = bool(docker_config.get('allow_egress', False))
+            network_name = run_network_name(challenge_id, int(time.time()))
+            network = self.client.networks.create(
+                network_name, **network_create_kwargs(allow_egress=allow_egress)
+            )
+            iptables_delete_args = None
+            if not allow_egress:
+                try:
+                    network.reload()
+                    subnet = network.attrs['IPAM']['Config'][0]['Subnet']
+                    insert_args, delete_args = egress_block_rule_args(subnet, network_name)
+                    if run_iptables(self.client, insert_args):
+                        iptables_delete_args = delete_args
+                    else:
+                        logger.warning(
+                            f"Egress firewall rule not applied for {challenge_id}; "
+                            "relying on network masquerade-disable alone"
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not determine subnet for {challenge_id}: {e}")
+
+            security_kwargs = container_security_kwargs(
+                self.hardening_config,
+                network_name=getattr(network, 'name', network_name),
+                allow_egress=allow_egress,
+                cap_add=docker_config.get('cap_add'),
+                read_only=bool(docker_config.get('read_only', False)),
+                extra_mem_limit=docker_config.get('mem_limit'),
+                run_as_user=docker_config.get('user'),
+            )
+
             # Start container
             container = self.client.containers.run(
                 image,
                 detach=True,
                 ports=ports,
                 environment={'CTF_FLAG': flag},
-                name=f"ctf_{challenge_id}_{int(time.time())}",
-                remove=True
+                name=f"{CONTAINER_PREFIX}{challenge_id}_{int(time.time())}",
+                remove=True,
+                **security_kwargs
             )
+
+            # Hard wall-clock cap, independent of the agent loop's own
+            # time_limit_seconds — force-stops the container even if the
+            # agent loop itself hangs.
+            watchdog = threading.Timer(
+                self.hardening_config.container_timeout,
+                self._on_container_timeout,
+                args=(challenge_id,)
+            )
+            watchdog.daemon = True
+            watchdog.start()
 
             self.running_containers[challenge_id] = {
                 'container': container,
+                'network': network,
                 'flag': flag,
-                'started_at': datetime.now()
+                'started_at': datetime.now(),
+                'watchdog': watchdog,
+                'iptables_delete_args': iptables_delete_args,
             }
 
             # Wait for healthcheck
@@ -311,24 +446,82 @@ class DockerChallengeManager:
 
         except Exception as e:
             logger.error(f"Failed to start challenge {challenge_id}: {e}")
+            if iptables_delete_args is not None:
+                run_iptables(self.client, iptables_delete_args)
+            if network is not None:
+                # Container never started (or failed before registration) —
+                # don't leak the network we just created.
+                try:
+                    network.remove()
+                except Exception:
+                    pass
             return {
                 'success': False,
                 'error': str(e)
             }
 
-    def stop_challenge(self, challenge_id: str):
-        """Stop and cleanup a challenge container"""
-        if challenge_id in self.running_containers:
+    def _on_container_timeout(self, challenge_id: str):
+        logger.warning(
+            f"Container wall-clock timeout exceeded for {challenge_id}; force-stopping"
+        )
+        self.stop_challenge(challenge_id)
+
+    def _remove_network_with_retry(self, network, challenge_id: str, attempts: int = 5, delay: float = 1.0):
+        """Retry network removal to absorb the container-teardown race.
+
+        `remove=True` on `containers.run()` removes the container
+        asynchronously once it stops; removing the network immediately after
+        can race that and fail with "network has active endpoints".
+        """
+        last_error = None
+        for _ in range(attempts):
             try:
-                container = self.running_containers[challenge_id]['container']
-                container.stop(timeout=5)
-                del self.running_containers[challenge_id]
-                logger.info(f"Stopped challenge {challenge_id}")
+                network.remove()
+                return
             except Exception as e:
-                logger.warning(f"Error stopping {challenge_id}: {e}")
+                last_error = e
+                time.sleep(delay)
+        logger.warning(
+            f"Could not remove network for {challenge_id} after {attempts} attempts: {last_error}"
+        )
+
+    def stop_challenge(self, challenge_id: str):
+        """Stop and cleanup a challenge's container and its private network.
+
+        Guaranteed to drop `challenge_id` from `running_containers` even if
+        stopping the container or removing the network fails — a partial
+        failure here must never leave the registry (and cleanup_all's loop
+        over it) stuck on a broken entry.
+        """
+        entry = self.running_containers.get(challenge_id)
+        if not entry:
+            return
+
+        watchdog = entry.get('watchdog')
+        if watchdog is not None:
+            watchdog.cancel()
+
+        try:
+            container = entry.get('container')
+            if container is not None:
+                try:
+                    container.stop(timeout=5)
+                    logger.info(f"Stopped challenge {challenge_id}")
+                except Exception as e:
+                    logger.warning(f"Error stopping {challenge_id}: {e}")
+
+            iptables_delete_args = entry.get('iptables_delete_args')
+            if iptables_delete_args is not None:
+                run_iptables(self.client, iptables_delete_args)
+
+            network = entry.get('network')
+            if network is not None:
+                self._remove_network_with_retry(network, challenge_id)
+        finally:
+            self.running_containers.pop(challenge_id, None)
 
     def cleanup_all(self):
-        """Stop all running challenge containers"""
+        """Stop all running challenge containers and their networks."""
         for challenge_id in list(self.running_containers.keys()):
             self.stop_challenge(challenge_id)
 
@@ -619,6 +812,13 @@ async def main():
         api_key=args.api_key,
         results_dir=args.results
     )
+
+    # Guaranteed teardown of any live challenge container/network on normal
+    # exit, SIGTERM, or Ctrl+C — even if the agent loop above never reaches
+    # its own finally block (e.g. the process is killed externally).
+    # Registered here, not at import time, so importing this module for
+    # tests never installs global signal handlers as a side effect.
+    register_cleanup_handlers(executor.docker_manager.cleanup_all)
 
     try:
         if args.challenge:
