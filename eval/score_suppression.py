@@ -9,14 +9,20 @@ effect on precision has never been measured. That is the gap this script closes,
 and it is why ENG-5 cannot start by writing new judge rules: there is no baseline
 to improve against.
 
-Three suppressors write into the same array, in this order
-(core/crates/ares-cli/src/commands/scan.rs):
+Four suppressors write into the same array, in this order
+(core/crates/ares-cli/src/commands/scan.rs) -- confirmed by reading scan.rs
+directly; the struct's own doc comment on `suppressed_by` only names the middle
+two ("local_judge" or "llm_judge") and is stale:
 
-    SemanticValidator  ->  LocalJudge  ->  LlmJudge
+    SemanticValidator  ->  LocalJudge  ->  LlmJudge  ->  Triager
+
+Triager is the confidence-threshold filter (scan.rs "[5/5] Triager", cutoff
+0.70) -- a plain sort, but it removes findings the same as the other three and
+is measured the same way here.
 
 They are reported separately here, never as one total. The ordering matters when
-reading the output: anything the semantic validator removed never reached the
-local judge, so the judge's ceiling is bounded by what survives to it.
+reading the output: anything an earlier suppressor removed never reached a later
+one, so each suppressor's ceiling is bounded by what survives to it.
 
 WHAT "GOOD" AND "BAD" MEAN HERE
 
