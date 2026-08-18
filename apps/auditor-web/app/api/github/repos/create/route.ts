@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from '@/lib/session/get-server-session'
 import { getUserGitHubToken } from '@/lib/github/user-token'
+import { userHasCapability, cheapestPlanFor } from '@/lib/billing/capabilities'
 import { Octokit } from '@octokit/rest'
 
 interface RepoTemplate {
@@ -135,6 +136,23 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Repository name can only contain alphanumeric characters, periods, hyphens, and underscores' },
         { status: 400 },
+      )
+    }
+
+    // BIZ-2: private repos are gated to ARES Dev ($29) and above — the
+    // free ARES Dev tier is public/OSS-only, matching core/Resources.md's
+    // own description ("public PR comments"). Checked server-side, not
+    // just hidden in the UI, since a client-side-only restriction can
+    // always be bypassed by calling this route directly.
+    if (isPrivate && !(await userHasCapability(session.user.id, 'private-repo'))) {
+      const upgradeTo = await cheapestPlanFor('private-repo')
+      return NextResponse.json(
+        {
+          error: upgradeTo
+            ? `Private repositories require the ${upgradeTo} plan or above.`
+            : 'Private repositories are not available on your current plan.',
+        },
+        { status: 403 },
       )
     }
 
