@@ -20,6 +20,13 @@ export const plans = pgTable('plans', {
   computeHoursLimit: integer('compute_hours_limit').notNull(),
   onDemandRunsLimit: integer('on_demand_runs_limit').notNull(),
   features: jsonb('features').$type<string[]>().default([]).notNull(),
+  // Separate from `features` deliberately. `features` is human-readable
+  // display copy for the usage page (lib/db/usage.ts) — free to reword
+  // for marketing/display purposes at any time. Capability-gating logic
+  // (lib/billing/capabilities.ts) needs stable, machine-checkable keys
+  // that don't change just because the display copy gets reworded, so
+  // it checks this field instead, never `features`. BIZ-2.
+  capabilities: jsonb('capabilities').$type<string[]>().default([]).notNull(),
   isActive: boolean('is_active').default(true).notNull(),
   stripePriceId: text('stripe_price_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
