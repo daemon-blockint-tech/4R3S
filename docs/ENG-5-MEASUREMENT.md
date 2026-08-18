@@ -82,12 +82,14 @@ Either way the conclusion for ENG-5 is the same: this is not a tuning gap in the
 four rules' thresholds, it is the judge's *inputs* being too coarse for a corpus
 this varied.
 
-A second, much richer field-level `SourcePatterns` (~30 booleans, tracking
+A second, much richer field-level `SourcePatterns` (34 booleans, tracking
 individual struct fields rather than whole-program aggregates) already exists in
 [benchmark/patterns.rs](../core/crates/ares-cli/src/commands/benchmark/patterns.rs),
-but is wired only into `ares benchmark`, not `scan`. This remains a genuinely open
-option — **not attempted tonight**, not disproven either. See "Tier 2 attempt"
-below for what was tried instead, and why it didn't reach this option.
+but is wired only into `ares benchmark`, not `scan`. This was measured, not just
+discussed — see "Tier 2 attempt", Idea 4, below. Short version: 9 of the 34
+fields do fire on this corpus, but the ones with real data describe vulnerable
+patterns (useful for detecting, not suppressing), and the ones written as safe
+patterns barely occur here. Not a clean win.
 
 The only thing that suppressed anything was `semantic_validator` (runs before
 the local judge) and, once `--ast-scan` added lower-confidence findings,
@@ -228,14 +230,18 @@ one thing standing in the way. Not changed here; `poc.rs` is outside this ticket
 Nothing in `core/`, `.github/workflows/ci.yml`, or `eval/predictions/ares-latest.csv`
 was changed to produce this document.
 
-## Tier 2 attempt: three rule ideas, three dead ends — no new judge rule shipped
+## Tier 2 attempt: four ideas checked, no new judge rule shipped
 
 Given Result 2's root cause, the obvious next step is a per-finding rule instead
-of a per-program one. Three were checked against the actual code and data before
-writing anything into `local_judge.rs`. Each failed for a different, concrete
-reason, and the third surfaced a genuine bug elsewhere. No suppression rule and
-no plumbing change shipped from this — changing the judge's signature only earns
-its place once a rule needs the richer data; none of these three did.
+of a per-program one. Four ideas were checked against the actual code and data
+before writing a suppression rule into `local_judge.rs`. Each failed for a
+different, concrete reason, and two of them (Ideas 3 and 4) surfaced real
+findings elsewhere along the way. `local_judge.rs` and `scan.rs` are untouched —
+changing the judge's signature only earns its place once a rule needs the richer
+data, and none of these four produced one. What *did* change: one module
+visibility widened by a line (`benchmark/mod.rs`) and one new throwaway
+diagnostic test, both kept as reusable infrastructure for whoever picks this up
+next — see Idea 4.
 
 **Idea 1 — cross-validate a finding against the mapper's own per-instruction
 flag.** `InstructionNode` already carries `has_signer_check` / `has_owner_check`
@@ -307,3 +313,57 @@ one real cast can generate one misleadingly-labeled finding per ancestor node on
 its path to the nearest enclosing statement or call — a duplication-and-mislabeling
 bug, not a suppression opportunity for `local_judge.rs`. Flagged for whoever owns
 `ast_scanner.rs`; not investigated further or fixed here.
+
+**Idea 4 — measured, not just discussed: does `benchmark/patterns.rs`'s richer
+34-field `SourcePatterns` fire on this corpus at all?** Earlier in this document
+that option was left "open, not attempted." It was checked properly rather than
+left as a guess.
+
+*What was needed to even test it, cheaply.* `scan_source_patterns()`
+([patterns.rs:133](../core/crates/ares-cli/src/commands/benchmark/patterns.rs:133))
+takes only `&ares_mapper::ProgramGraph`, so no cross-crate move was required just
+to test it — but `patterns` was a private module
+([benchmark/mod.rs:4](../core/crates/ares-cli/src/commands/benchmark/mod.rs:4),
+`mod patterns;`, not `pub`), and the existing `ares benchmark` diagnostic tests
+need a `../../dataset` directory that does not exist in this environment (the
+repo's own `datasets/` is a documented skeleton). So: one line widened to
+`pub mod patterns;`, plus one new throwaway test,
+[`eng5_source_patterns_probe.rs`](../core/crates/ares-cli/tests/eng5_source_patterns_probe.rs),
+that builds a `ProgramGraph` for each of the 159 already-staged targets the same
+way `scan` does, and counts how often each of the 34 fields is `true`.
+
+*Result: 9 of 34 fields fired, some meaningfully — the "DEX-scale bias" concern
+was only half right.* The 7 fields whose doc comments name a specific
+whole-protocol audit (Axelar ITS, Dexalot, Pump Science H-01/H-02, MetaDAO,
+LayerZero) fired **zero** times, exactly the `is_large_dex` failure mode.
+But `has_cpi_after_state_read` and `has_post_cpi_stale_field_read` each fired on
+10/159 targets, `has_manual_lamport_drain` on 7, `has_try_from_slice` on 7,
+`has_unchecked_numeric_cast` and `has_raw_rust_unchecked_calls` on 2 each.
+
+*Followed up, and this is where it turns: the fields that fire point the wrong
+way for a suppression rule.* Checking the 10 targets with
+`has_cpi_after_state_read`/`has_post_cpi_stale_field_read` set against their real
+findings and ground truth shows real overlap — 4 of them (the three
+`neodyme-workshop` levels plus one `solana-vuln-rust` target) carry an
+`account-reloading` finding, exactly the pattern those two fields describe. But
+every one of these fields' own doc comments describes a *vulnerable* pattern —
+the kind `benchmark/categories.rs` uses to *add* a detected category, not remove
+one. A signal that corroborates a finding is being present is not evidence the
+finding is false; using it to suppress would run backwards, deleting findings
+that are *more* plausible, not less — the same `lost_tp` failure mode flagged all
+night. The two fields on this struct that are written as *safe*-pattern
+signals — `has_typed_program_field` and `has_hardcoded_endpoint_id`, the only
+two `benchmark/categories.rs` itself uses in a suppression direction (see the
+"LayerZero OApp arbitrary-cpi suppression" rule at
+[execute.rs:165-169](../core/crates/ares-cli/src/commands/benchmark/execute.rs:165))
+— fired **1** and **0** times respectively on this corpus. So the part of this
+option that could legitimately suppress something has almost no data to work
+with here, and the part with real data isn't suppression-shaped.
+
+**Net result: measured, not disproven in principle, but not worth the move on
+this corpus.** The probe and the one-line visibility widen are kept — they're
+cheap, reusable, and the honest record of what was actually checked — but no
+further code moved. If the corpus later grows to include the kind of
+whole-protocol programs these 34 fields were written for, rerunning
+`eng5_source_patterns_probe.rs` is the fast way to find out whether that
+changes.
