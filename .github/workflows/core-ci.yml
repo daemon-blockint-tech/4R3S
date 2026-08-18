@@ -93,16 +93,18 @@ jobs:
       # events that action fails the check on informational unmaintained/unsound
       # warnings, not just vulnerabilities. Plain `cargo audit` fails ONLY on
       # vulnerabilities and leaves warnings informational — the intended gate.
-      # The ignored IDs are DoS-class advisories accepted on the ENG-1 import,
-      # tracked for a follow-up dep bump. Two of the three bumps are still
-      # outstanding: quick-xml is 0.39.4 (needs >=0.41) and crossbeam-epoch is
-      # 0.9.18 (needs >=0.9.20).
       #
-      # RUSTSEC-2026-0187 (lopdf stack overflow, needs >=0.42) is NO LONGER
-      # ignored: the printpdf 0.7 -> 0.12.5 bump pulled lopdf 0.44.0, so the
-      # advisory does not apply. Dropped rather than left in place, because
+      # No --ignore flags: the three DoS-class advisories accepted on the
+      # ENG-1 import (RUSTSEC-2026-0194/0195 quick-xml, RUSTSEC-2026-0204
+      # crossbeam-epoch) are now actually fixed — plist 1.9.0 -> 1.10.0 pulled
+      # quick-xml 0.41.0, and crossbeam-epoch bumped to 0.9.20 directly — not
+      # just deferred again, so there's nothing left to ignore for them.
+      # Dropped from the command rather than left in place, matching the
+      # RUSTSEC-2026-0187/lopdf precedent this comment used to describe:
       # `cargo audit --ignore` accepts an ID that matches nothing without
-      # complaint — a stale entry silently pre-approves the vulnerability's
-      # return. Re-add only with a fresh justification.
+      # complaint, so a stale entry silently pre-approves the vulnerability's
+      # return. Re-add only with a fresh justification, same as RUSTSEC-2026-0258
+      # (h2 unbounded empty DATA frames, disclosed 2026-08-17) was fixed on sight
+      # — h2 0.4.14 -> 0.4.16 — rather than added here.
       - name: Audit
-        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 --ignore RUSTSEC-2026-0204
+        run: cargo audit

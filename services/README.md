@@ -8,5 +8,5 @@ Status, per service:
 |---|---|
 | `cve` | Built — offline RustSec advisory matching. See `services/cve/README.md`. |
 | `risk` | Built — OWASP Risk Rating Methodology scoring + vuln-catalog calibration. See `services/risk/README.md`. |
-| `family` | Skeleton. |
+| `family` | Built — winnowing-based clone clustering + fork flag propagation. See `services/family/README.md`. |
 | `evidence` | Skeleton. |
