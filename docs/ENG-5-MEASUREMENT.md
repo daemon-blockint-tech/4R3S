@@ -85,10 +85,9 @@ this varied.
 A second, much richer field-level `SourcePatterns` (~30 booleans, tracking
 individual struct fields rather than whole-program aggregates) already exists in
 [benchmark/patterns.rs](../core/crates/ares-cli/src/commands/benchmark/patterns.rs),
-but is wired only into `ares benchmark`, not `scan`. **This is the concrete Tier
-2 direction:** give `LocalJudge` the benchmark's field-level view instead of
-writing more program-wide rules of the same shape, which this measurement shows
-don't fire.
+but is wired only into `ares benchmark`, not `scan`. This remains a genuinely open
+option — **not attempted tonight**, not disproven either. See "Tier 2 attempt"
+below for what was tried instead, and why it didn't reach this option.
 
 The only thing that suppressed anything was `semantic_validator` (runs before
 the local judge) and, once `--ast-scan` added lower-confidence findings,
@@ -228,3 +227,83 @@ one thing standing in the way. Not changed here; `poc.rs` is outside this ticket
 
 Nothing in `core/`, `.github/workflows/ci.yml`, or `eval/predictions/ares-latest.csv`
 was changed to produce this document.
+
+## Tier 2 attempt: three rule ideas, three dead ends — no new judge rule shipped
+
+Given Result 2's root cause, the obvious next step is a per-finding rule instead
+of a per-program one. Three were checked against the actual code and data before
+writing anything into `local_judge.rs`. Each failed for a different, concrete
+reason, and the third surfaced a genuine bug elsewhere. No suppression rule and
+no plumbing change shipped from this — changing the judge's signature only earns
+its place once a rule needs the richer data; none of these three did.
+
+**Idea 1 — cross-validate a finding against the mapper's own per-instruction
+flag.** `InstructionNode` already carries `has_signer_check` / `has_owner_check`
+/ `has_cpi_program_id_check` per instruction
+([lib.rs:79-81](../core/crates/ares-mapper/src/lib.rs:79)), and
+`finding.location.function` is already populated with the matching instruction
+name for `SignerAuthorization`, `OwnershipCheck`, and `ArbitraryCpi`
+([scan.rs:698](../core/crates/ares-cli/src/commands/scan.rs:698),
+[:736](../core/crates/ares-cli/src/commands/scan.rs:736),
+[:752](../core/crates/ares-cli/src/commands/scan.rs:752)). A per-finding join
+looked immediately possible.
+
+*Dead on arrival:* `generate_initial_hypotheses` only ever generates each of
+those three hypotheses when the *same* flag already reads "bad" — e.g.
+`SignerAuthorization` requires `has_signer_check == Some(false)`
+([scan.rs:691](../core/crates/ares-cli/src/commands/scan.rs:691)). By the time a
+finding exists, the flag it would be cross-checked against can never say
+"checked." This is not two independent opinions disagreeing; it's one opinion
+checking itself. The same holds for `OwnershipCheck` and `ArbitraryCpi`.
+
+**Idea 2 — the same cross-check for `--ast-scan`'s `missing-signer-check`,** a
+genuinely separate detector (`ast_scanner.rs`) and, per Result 3, the single
+biggest false-positive source (55 FPs) — a real disagreement is at least
+possible there.
+
+*Blocked, not disproven:* `AstFinding`
+([ast_scanner.rs:42-49](../core/crates/ares-mapper/src/ast_scanner.rs:42)) carries
+no function/instruction name, and `location.function` is left `None` for every
+finding this path produces
+([scan.rs:240](../core/crates/ares-cli/src/commands/scan.rs:240)). There is no
+join key today. Adding one means editing `ast_scanner.rs`, ENG-3/ENG-4's
+actively-developed file, not ENG-5's.
+
+**Idea 3 — loosen the extended `UncheckedCast` rule's `is_large_dex` gate** so it
+can act on the 5 `unsafe-type-cast` findings `--ast-scan` already produces
+(Result 4). `is_large_dex` (`instructions.len() > 100`) never holds on a
+single-file staged target, so the rule is unreachable regardless of corpus
+content — loosening it looked like a safe, narrow, testable change.
+
+*Rejected after reading the actual findings, not the rule.* None of the 11 raw
+findings behind those 5 rows resemble the rule's own stated justification
+("large DEX with custom fixed-point math wrappers" — Drift/Mango style). They're
+small `solana-vuln-rust` training snippets: a fee-calculation cast, a
+quantity/price multiplication, and one reading "Unchecked cast on tainted data
+(InstructionData)" — a description naming exactly the shape of a real finding,
+not obvious noise. Ground truth has no row for this category on any of these
+targets, so "0 TP" means *unlabeled*, not *confirmed false*. Loosening the gate
+would suppress these under a rationale that is factually false for this data —
+moving a number by asserting something untrue about the code, the one thing
+GOLDEN RULE 3 exists to prevent. Not done.
+
+**What Idea 3 surfaced instead: a confirmed bug in `ast_scanner.rs`'s cast
+detector**, unrelated to the local judge and not fixed here. `visit_expr`
+([ast_scanner.rs:569](../core/crates/ares-mapper/src/ast_scanner.rs:569)) is
+`syn`'s generic per-expression visitor: it fires once for *every* `Expr` node,
+including every ancestor of a real cast, not only the `Expr::Cast` node itself.
+`expr_str = quote::quote!(#node).to_string()`
+([:570](../core/crates/ares-mapper/src/ast_scanner.rs:570)) stringifies whichever
+node is currently being visited, so an outer expression that merely *contains* a
+cast somewhere inside it also matches `expr_str.contains("as u64")`
+([:694](../core/crates/ares-mapper/src/ast_scanner.rs:694)). The description then
+shows `expr_str.chars().take(60)`
+([:736](../core/crates/ares-mapper/src/ast_scanner.rs:736)) — the first 60
+characters of that *outer* node, which is the ancestor's own start, not the cast.
+That is exactly what the three `6bae2130540f` findings show: three different
+60-character prefixes, each a bigger enclosing expression, none showing the
+actual `as` keyword because it sits past character 60 in all three. Net effect:
+one real cast can generate one misleadingly-labeled finding per ancestor node on
+its path to the nearest enclosing statement or call — a duplication-and-mislabeling
+bug, not a suppression opportunity for `local_judge.rs`. Flagged for whoever owns
+`ast_scanner.rs`; not investigated further or fixed here.
