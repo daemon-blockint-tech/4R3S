@@ -23,47 +23,94 @@
 //!
 //! Run with: cargo test -p ares-v3 --test eng5_source_patterns_probe -- --nocapture
 
-use ares_v3::commands::benchmark::patterns::scan_source_patterns;
 use ares_mapper::MapperAgent;
+use ares_v3::commands::benchmark::patterns::scan_source_patterns;
 use std::path::Path;
 
 /// Every field on the richer `SourcePatterns`, paired with its own value for
 /// one target. No reflection in Rust, so this is written out by hand rather
 /// than derived — verified against patterns.rs's own field list directly.
-fn field_values(p: &ares_v3::commands::benchmark::patterns::SourcePatterns) -> [(&'static str, bool); 34] {
+fn field_values(
+    p: &ares_v3::commands::benchmark::patterns::SourcePatterns,
+) -> [(&'static str, bool); 34] {
     [
         ("has_account_info_unchecked", p.has_account_info_unchecked),
         ("has_check_annotation", p.has_check_annotation),
         ("has_try_from_slice", p.has_try_from_slice),
         ("has_manual_lamport_drain", p.has_manual_lamport_drain),
-        ("has_init_with_unchecked_admin", p.has_init_with_unchecked_admin),
+        (
+            "has_init_with_unchecked_admin",
+            p.has_init_with_unchecked_admin,
+        ),
         ("has_init_with_fixed_seeds", p.has_init_with_fixed_seeds),
-        ("has_cpi_context_new_variable", p.has_cpi_context_new_variable),
+        (
+            "has_cpi_context_new_variable",
+            p.has_cpi_context_new_variable,
+        ),
         ("has_cpi_after_state_read", p.has_cpi_after_state_read),
-        ("has_state_set_then_cpi_then_state_set", p.has_state_set_then_cpi_then_state_set),
+        (
+            "has_state_set_then_cpi_then_state_set",
+            p.has_state_set_then_cpi_then_state_set,
+        ),
         ("has_pda_without_constraint", p.has_pda_without_constraint),
         ("has_invoke_helper_call", p.has_invoke_helper_call),
-        ("has_mutable_account_with_signer_no_link", p.has_mutable_account_with_signer_no_link),
-        ("has_token_account_without_authority", p.has_token_account_without_authority),
-        ("has_any_init_with_fixed_seeds", p.has_any_init_with_fixed_seeds),
+        (
+            "has_mutable_account_with_signer_no_link",
+            p.has_mutable_account_with_signer_no_link,
+        ),
+        (
+            "has_token_account_without_authority",
+            p.has_token_account_without_authority,
+        ),
+        (
+            "has_any_init_with_fixed_seeds",
+            p.has_any_init_with_fixed_seeds,
+        ),
         ("has_unchecked_numeric_cast", p.has_unchecked_numeric_cast),
-        ("has_init_global_unconstrained", p.has_init_global_unconstrained),
+        (
+            "has_init_global_unconstrained",
+            p.has_init_global_unconstrained,
+        ),
         ("has_duplicate_mutable_pair", p.has_duplicate_mutable_pair),
         ("has_cpi_new_with_signer", p.has_cpi_new_with_signer),
-        ("has_pda_as_cpi_signer_no_link", p.has_pda_as_cpi_signer_no_link),
-        ("has_check_on_seeded_no_has_one", p.has_check_on_seeded_no_has_one),
+        (
+            "has_pda_as_cpi_signer_no_link",
+            p.has_pda_as_cpi_signer_no_link,
+        ),
+        (
+            "has_check_on_seeded_no_has_one",
+            p.has_check_on_seeded_no_has_one,
+        ),
         ("has_same_type_mutable_pair", p.has_same_type_mutable_pair),
         ("has_init_if_needed_no_guard", p.has_init_if_needed_no_guard),
         ("has_custom_math_macro_cast", p.has_custom_math_macro_cast),
-        ("has_post_cpi_stale_field_read", p.has_post_cpi_stale_field_read),
-        ("has_mutable_unchecked_account_pair", p.has_mutable_unchecked_account_pair),
+        (
+            "has_post_cpi_stale_field_read",
+            p.has_post_cpi_stale_field_read,
+        ),
+        (
+            "has_mutable_unchecked_account_pair",
+            p.has_mutable_unchecked_account_pair,
+        ),
         ("has_remaining_accounts_cpi", p.has_remaining_accounts_cpi),
         ("has_hardcoded_endpoint_id", p.has_hardcoded_endpoint_id),
         ("has_typed_program_field", p.has_typed_program_field),
-        ("has_unchecked_escrow_invoke_signed", p.has_unchecked_escrow_invoke_signed),
-        ("has_settings_field_write_gap", p.has_settings_field_write_gap),
-        ("has_unchecked_token_manager_cpi", p.has_unchecked_token_manager_cpi),
-        ("has_raw_rust_unchecked_calls", p.has_raw_rust_unchecked_calls),
+        (
+            "has_unchecked_escrow_invoke_signed",
+            p.has_unchecked_escrow_invoke_signed,
+        ),
+        (
+            "has_settings_field_write_gap",
+            p.has_settings_field_write_gap,
+        ),
+        (
+            "has_unchecked_token_manager_cpi",
+            p.has_unchecked_token_manager_cpi,
+        ),
+        (
+            "has_raw_rust_unchecked_calls",
+            p.has_raw_rust_unchecked_calls,
+        ),
         ("has_bytemuck_unsafe_cast", p.has_bytemuck_unsafe_cast),
         ("has_solitaire_raw_info", p.has_solitaire_raw_info),
     ]
