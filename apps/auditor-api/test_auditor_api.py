@@ -1361,11 +1361,21 @@ class TestCveScanAgainstTheRealCommittedLockfile:
 
     @staticmethod
     def _accepted_vulnerabilities_from_workflow() -> set[str]:
-        """The advisory ids core-ci.yml's audit step accepts as known risk."""
+        """The advisory ids core-ci.yml's audit step accepts as known risk.
+
+        An empty set is legitimate, not a red flag: RUSTSEC-2026-0194/0195
+        (quick-xml) and RUSTSEC-2026-0204 (crossbeam-epoch) were fixed outright
+        by dependency bumps rather than deferred with `--ignore` (see the audit
+        job's comment in core-ci.yml), so there is nothing left to ignore. What
+        must never silently pass is the audit step itself disappearing or being
+        renamed out from under the regex below — that failure mode is asserted
+        directly, rather than inferred from "the ignore set happened to be
+        non-empty", which would have made this helper wrongly reject the very
+        state (zero ignores) that fixing every deferred advisory produces.
+        """
         workflow = (REPO_ROOT / ".github" / "workflows" / "core-ci.yml").read_text(encoding="utf-8")
-        ids = set(re.findall(r"--ignore\s+(RUSTSEC-\d{4}-\d{4})", workflow))
-        assert ids, "no --ignore ids found in core-ci.yml — did the audit step move?"
-        return ids
+        assert "run: cargo audit" in workflow, "cargo audit step not found in core-ci.yml — did it move or get renamed?"
+        return set(re.findall(r"--ignore\s+(RUSTSEC-\d{4}-\d{4})", workflow))
 
     def _scan_committed_lockfile(self) -> dict:
         lockfile_path = REPO_ROOT / "core" / "Cargo.lock"
