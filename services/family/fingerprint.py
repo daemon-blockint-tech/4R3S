@@ -46,6 +46,7 @@ down.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -80,18 +81,39 @@ def normalize(source: str) -> str:
     return _WHITESPACE.sub(" ", without_line).strip()
 
 
+def _stable_hash(text: str) -> int:
+    """A hash of ``text`` that is the same for the same input in every
+    process, forever — not just within one run.
+
+    Deliberately not Python's own ``hash()``: CPython randomizes ``str``
+    hashing per process by default (``PYTHONHASHSEED``, on since 3.3, as a
+    hash-flood DoS mitigation), so ``hash()`` on the identical k-gram text
+    returns a *different* integer in every fresh process. That silently
+    breaks this module's own determinism claim (GOLDEN RULE 3): winnowing
+    selects the *minimum* hash per window, so a different seed can select a
+    different representative k-gram, which changes the fingerprint set,
+    which changes the Jaccard score — confirmed directly, the same pair of
+    programs scored anywhere from 0.32 to 0.53 across five separate process
+    runs before this fix, straddling ``DEFAULT_THRESHOLD`` (0.55) in
+    practice. BLAKE2b has no such per-process seed: the same string hashes
+    to the same digest in this run, the next run, and next year's CI run.
+    Truncated to 8 bytes — winnowing only needs a total order to pick a
+    minimum from, not the full 32-byte digest.
+    """
+    return int.from_bytes(hashlib.blake2b(text.encode("utf-8"), digest_size=8).digest(), "big")
+
+
 def _kgram_hashes(text: str, k: int) -> list[int]:
     """Hashes of every length-``k`` substring, in order.
 
-    Uses Python's ``hash`` on the substring rather than a rolling hash: the
-    input here is one source file, not a web-scale corpus, and a rolling hash
-    would add an arithmetic-overflow surface for no measurable gain at this
-    size. ``hash`` on ``str`` is stable within a process, which is all that is
-    needed — fingerprints are never persisted across runs.
+    Uses :func:`_stable_hash` on the substring rather than a rolling hash:
+    the input here is one source file, not a web-scale corpus, and a rolling
+    hash would add an arithmetic-overflow surface for no measurable gain at
+    this size.
     """
     if len(text) < k:
         return []
-    return [hash(text[i : i + k]) for i in range(len(text) - k + 1)]
+    return [_stable_hash(text[i : i + k]) for i in range(len(text) - k + 1)]
 
 
 def fingerprint(source: str, k: int = DEFAULT_K, t: int = DEFAULT_T) -> set[int]:

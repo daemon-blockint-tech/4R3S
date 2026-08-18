@@ -19,6 +19,10 @@ bar", not the digits.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from cluster import (
@@ -112,6 +116,47 @@ class TestFingerprintParameters:
         base = vault_program("let x = amount;")
         recommented = "// entirely different header\n" + base
         assert fingerprint(base) == fingerprint(recommented)
+
+
+class TestFingerprintIsStableAcrossProcesses:
+    """A same-process comparison (test_identical_source_fingerprints_identically,
+    above) cannot catch this: CPython randomizes ``str`` hashing per process by
+    default (``PYTHONHASHSEED``), so a bug here only shows up by actually
+    launching separate interpreters — which is what caught it originally: the
+    same pair of programs scored anywhere from 0.32 to 0.53 across five
+    separate ``python3 -c`` runs before ``fingerprint.py`` switched from
+    ``hash()`` to a BLAKE2b-based stable hash.
+    """
+
+    _SRC_A = vault_program("let fee = amount / 100; token::transfer(cpi, fee)?;")
+    _SRC_B = vault_program("let clock = Clock::get()?; require!(clock.slot > 0, E::X);")
+
+    def _similarity_in_a_fresh_process(self) -> float:
+        script = (
+            "from fingerprint import fingerprint, similarity\n"
+            f"a = {self._SRC_A!r}\n"
+            f"b = {self._SRC_B!r}\n"
+            "print(similarity(fingerprint(a), fingerprint(b)))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).parent,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return float(result.stdout.strip())
+
+    def test_similarity_is_identical_across_separate_process_runs(self):
+        # Real subprocesses, not in-process calls: PYTHONHASHSEED is chosen
+        # once per process at startup, so this is the only way to actually
+        # exercise a second, independently-seeded hash() this test would need
+        # to catch a regression back to it.
+        scores = {self._similarity_in_a_fresh_process() for _ in range(5)}
+        assert len(scores) == 1, (
+            f"similarity varied across process runs: {scores} — a fingerprint "
+            "hash is no longer PYTHONHASHSEED-independent"
+        )
 
 
 class TestSimilarity:
