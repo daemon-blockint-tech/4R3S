@@ -1,5 +1,15 @@
 #!/usr/bin/env node
 
+import { config } from 'dotenv'
+
+// Runs standalone via tsx, outside Next.js — Next.js auto-loads .env.local
+// for its own dev/build process, but a standalone script needs to load it
+// explicitly, the same way drizzle.config.ts already does for drizzle-kit.
+// Missing this caused a real, confirmed failure: "POSTGRES_URL environment
+// variable is required" even with a correct .env.local sitting right there.
+config({ path: '.env.local' })
+config({ path: '.env' })
+
 /**
  * Seed real ARES pricing tiers — BIZ-2.
  *

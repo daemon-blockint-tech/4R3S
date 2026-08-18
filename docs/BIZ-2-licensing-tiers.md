@@ -90,17 +90,15 @@ npm run db:migrate    # applies it
 npx tsx scripts/seed-pricing-tiers.ts
 ```
 
-## Verified
+## Verified — genuinely, end-to-end, against a real database
 
-- `npx tsc --noEmit`: zero errors in any file this work touched
-  (`lib/billing/capabilities.ts`, `scripts/seed-pricing-tiers.ts`,
-  `lib/db/schema.ts`, `app/api/github/repos/create/route.ts`)
-- The 45 pre-existing type errors elsewhere in the codebase (unrelated
-  `sandboxId`/markdown-component typing issues) confirmed identical and
-  unaffected — checked directly via `git stash`, not assumed
+This was actually run against a real, local Postgres, not just typechecked. Real, useful bugs got found and fixed along the way:
 
-**Not verified: an actual database migration + seed run.** No Postgres
-instance available here. The schema change and seed script are correct
-TypeScript, checked directly, but `npm run db:generate`/`db:migrate` and
-the seed script itself need a real run against a real database before
-merging.
+- **Migrations `0021`/`0022` were never tracked by drizzle-kit's own snapshot system** (`meta/` jumps from `0020` straight to `0023`) — they were hand-written without going through `drizzle-kit generate`. This meant `drizzle-kit generate` for the `capabilities` column produced a migration that redundantly recreated everything `0021`/`0022` already did, bundled with the one real change. Confirmed by actually running it: `0000`–`0022` applied cleanly (including seeding the 3 placeholder plans), then `0023` correctly failed with "already exists" errors on the redundant parts — **and lost the one genuinely new thing, `capabilities`, since it was only defined inside the failed `CREATE TABLE` statement.** Fixed: `0023` now contains only the real, minimal, incremental change (`ALTER TABLE "plans" ADD COLUMN "capabilities"...`), confirmed correct against what `0000`–`0022` already, actually established.
+- **The seed script never loaded `.env.local` itself** — `drizzle.config.ts` does this explicitly for `drizzle-kit`; a standalone script needs the same. Fixed directly.
+- **`npm run db:migrate` silently did nothing**, with no visible error — traced to a wrong port in a locally-created `.env.local` (`5432` vs. the container's actual `127.0.0.1:5433` mapping), confirmed via a direct connection test isolating `drizzle-kit` from raw connectivity. Not a code bug — a local environment-setup issue, but worth knowing `drizzle-kit migrate` can fail this silently rather than erroring clearly.
+- **The real gating function itself** (`userHasCapability`) was tested end-to-end against two real test users on different real tiers: `free` correctly lacks `private-repo`, `pro` correctly has it, `pro` correctly lacks the higher-tier `poc-generation`. All three assertions passed.
+
+**One remaining, separate mystery, not solved here:** `npm run db:migrate` itself never produced any visible output or error even when it silently failed — worth a closer look at some point, since a silent no-op on migration failure is a real footgun for anyone else running this workflow. Not blocking this PR; noted for whoever owns drizzle tooling here.
+
+`npx tsc --noEmit`: zero errors in any file this work touches, confirmed both independently and on your machine.
