@@ -231,7 +231,12 @@ impl fmt::Display for ValidationOutcome {
 pub struct SuppressedFinding {
     pub finding: Finding,
     pub reason: String,
-    pub suppressed_by: String, // "local_judge" or "llm_judge"
+    // Four write sites, not two: "semantic_validator" (validator.rs),
+    // "llm_judge" and "triager" (commands/scan.rs), "local_judge"
+    // (ares-mapper/src/local_judge.rs). This is a bare String, not an enum, so
+    // this comment is the only place the full vocabulary is written down --
+    // keep it in sync with the write sites if a new suppressor is added.
+    pub suppressed_by: String,
 }
 
 /// Code location reference.
@@ -271,6 +276,15 @@ pub struct ProgramTarget {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReportMetadata {
     pub generated_at: chrono::DateTime<chrono::Utc>,
+    /// When `ares confirm` last fork-ran this report's PoCs, if it ever has.
+    /// `generated_at` above is set once, at `scan` time, and `confirm` does not
+    /// touch it -- so before this field existed, a `.confirmed.json` carried
+    /// only the original scan's timestamp and nothing recorded when the
+    /// confirmation pass itself ran. `#[serde(default)]` so a report written
+    /// before this field existed still deserializes, the same convention
+    /// `Finding.validation` already uses.
+    #[serde(default)]
+    pub confirmed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub ares_version: String,
     pub scan_duration_secs: u64,
     pub agent_pipeline: Vec<String>,
