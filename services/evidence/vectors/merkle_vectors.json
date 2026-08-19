@@ -1,0 +1,134 @@
+{
+  "_comment": "SVC-4 cross-language golden vectors. Rust (services/evidence/onchain/spec), Python (services/evidence) and TypeScript (scripts/) must all reproduce these exactly. Generated and cross-checked by two independent implementations of the RFC 6962 recurrence; see docs/SVC-4-ASSUMPTIONS.md.",
+  "algorithm": {
+    "commitment_prefix": "02",
+    "domain": "ares.evidence.v1",
+    "domain_hex": "617265732e65766964656e63652e7631",
+    "hash": "sha256",
+    "leaf_prefix": "00",
+    "node_prefix": "01",
+    "target_binding_prefix": "03",
+    "tree": "rfc6962"
+  },
+  "empty_root": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "inclusion_proofs_n5": [
+    {
+      "index": 0,
+      "leaf_payload": "leaf-0",
+      "proof": [
+        {
+          "hash": "2c726d68051f5af857be58363ef21a0680863e43d0f050eab5a9e7b419d9bc66",
+          "position": "right"
+        },
+        {
+          "hash": "237ad99888bb13f74a994ec7c0d3edc44eba5003f59d7261c446eb3cd6f1a608",
+          "position": "right"
+        },
+        {
+          "hash": "854c6c0ddf20f9d0424266f50510f731d125085b77b6dc01cf10636d288e70bb",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "leaf_payload": "leaf-1",
+      "proof": [
+        {
+          "hash": "2aab823333b5470246d345a62cf96627d221d89b5cbb6ef1056a6db83aae275d",
+          "position": "left"
+        },
+        {
+          "hash": "237ad99888bb13f74a994ec7c0d3edc44eba5003f59d7261c446eb3cd6f1a608",
+          "position": "right"
+        },
+        {
+          "hash": "854c6c0ddf20f9d0424266f50510f731d125085b77b6dc01cf10636d288e70bb",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "leaf_payload": "leaf-2",
+      "proof": [
+        {
+          "hash": "2cfe46cac8e4d4211b001656fa46bed3a806ddab750fc9764b1187ded7c9a40e",
+          "position": "right"
+        },
+        {
+          "hash": "5e5e5c572a92935e075b0adf52801d78e4a08968396a9faa4a8a39b08b2034eb",
+          "position": "left"
+        },
+        {
+          "hash": "854c6c0ddf20f9d0424266f50510f731d125085b77b6dc01cf10636d288e70bb",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "leaf_payload": "leaf-3",
+      "proof": [
+        {
+          "hash": "d064507c5567e73ef8edbcf04b1afe0a80c63d6e378566425d4253d68bb82616",
+          "position": "left"
+        },
+        {
+          "hash": "5e5e5c572a92935e075b0adf52801d78e4a08968396a9faa4a8a39b08b2034eb",
+          "position": "left"
+        },
+        {
+          "hash": "854c6c0ddf20f9d0424266f50510f731d125085b77b6dc01cf10636d288e70bb",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "leaf_payload": "leaf-4",
+      "proof": [
+        {
+          "hash": "8f1ed101886530d7d774c6b9b3089a14ec63f348400675740d889056610c977e",
+          "position": "left"
+        }
+      ]
+    }
+  ],
+  "leaf_hashes": {
+    "leaf-0": "2aab823333b5470246d345a62cf96627d221d89b5cbb6ef1056a6db83aae275d",
+    "leaf-1": "2c726d68051f5af857be58363ef21a0680863e43d0f050eab5a9e7b419d9bc66",
+    "leaf-2": "d064507c5567e73ef8edbcf04b1afe0a80c63d6e378566425d4253d68bb82616",
+    "leaf-3": "2cfe46cac8e4d4211b001656fa46bed3a806ddab750fc9764b1187ded7c9a40e",
+    "leaf-4": "854c6c0ddf20f9d0424266f50510f731d125085b77b6dc01cf10636d288e70bb",
+    "leaf-5": "734a5b55765a8edc7588eb597fc00da19c4a412482008709fc0d657d025672cc",
+    "leaf-6": "d6024da16ce737114c431971271c0ecbd1127525118703c257855eb283880452",
+    "leaf-7": "b071c3fe3bc6b196d41bca80e3adfce373fa1a18d6154fcbe4280cfae4fc6f0c"
+  },
+  "leaf_payloads": [
+    "leaf-0",
+    "leaf-1",
+    "leaf-2",
+    "leaf-3",
+    "leaf-4",
+    "leaf-5",
+    "leaf-6",
+    "leaf-7"
+  ],
+  "malleability_check": {
+    "_comment": "CVE-2012-2459. Equal roots here would mean duplicate-last was used.",
+    "abc_root": "d1d0c19c79eb3512cc76a4cde2e926f3dc1091aec4f3b787b44c804f0c954dfb",
+    "abcc_root": "164919a856b579f8a5d09e79d31df1fd09e74430ea14bc45274d4217f4de920b"
+  },
+  "roots_by_leaf_count": {
+    "0": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "1": "2aab823333b5470246d345a62cf96627d221d89b5cbb6ef1056a6db83aae275d",
+    "2": "5e5e5c572a92935e075b0adf52801d78e4a08968396a9faa4a8a39b08b2034eb",
+    "3": "d1d0c19c79eb3512cc76a4cde2e926f3dc1091aec4f3b787b44c804f0c954dfb",
+    "4": "8f1ed101886530d7d774c6b9b3089a14ec63f348400675740d889056610c977e",
+    "5": "4ad7ae1f4d5f5124d3b8fc50f974b02d18c882b46175dc2dfc11532d03035cdc",
+    "6": "2aabea48a4ca44694327e692d4116c866da094cbfb5d8e362b64375113e7c13c",
+    "7": "883faf81aa5b5c3576ad26d5834b5753ee94e9d5d615dd1def8f9d34ff26fa69",
+    "8": "db7ee0d1372d941deada71a3ffa44a45135e681c7d47a16586812d662f44ea55"
+  }
+}

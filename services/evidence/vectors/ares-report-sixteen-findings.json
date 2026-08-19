@@ -1,0 +1,374 @@
+{
+  "target": {
+    "name": "solana-vuln-rust_train_416f9ffa1f83",
+    "repository_url": null,
+    "commit_hash": "3f5f14b3091e59021b770018cabf9d5f66cdf9d9",
+    "program_id": null,
+    "source_path": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+    "idl_path": null
+  },
+  "findings": [
+    {
+      "id": "ARES-HYP-1",
+      "title": "`LegacyAccounts` carries no type discriminator",
+      "description": "If struct 'LegacyAccounts' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "LegacyAccounts",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_1_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-2",
+      "title": "`ParticipationStateV2` carries no type discriminator",
+      "description": "If struct 'ParticipationStateV2' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "ParticipationStateV2",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_2_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-3",
+      "title": "`RedeemPrintingV2BidArgs` carries no type discriminator",
+      "description": "If struct 'RedeemPrintingV2BidArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "RedeemPrintingV2BidArgs",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_3_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-4",
+      "title": "`SetStoreIndexArgs` carries no type discriminator",
+      "description": "If struct 'SetStoreIndexArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "SetStoreIndexArgs",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_4_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-5",
+      "title": "`AmountRange` carries no type discriminator",
+      "description": "If struct 'AmountRange' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "AmountRange",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_5_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-6",
+      "title": "`CommonWinningIndexReturn` carries no type discriminator",
+      "description": "If struct 'CommonWinningIndexReturn' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "CommonWinningIndexReturn",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_6_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-7",
+      "title": "`PrintingV2CalculationCheckReturn` carries no type discriminator",
+      "description": "If struct 'PrintingV2CalculationCheckReturn' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "PrintingV2CalculationCheckReturn",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_7_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-8",
+      "title": "`AmountCumulativeReturn` carries no type discriminator",
+      "description": "If struct 'AmountCumulativeReturn' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "AmountCumulativeReturn",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_8_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-9",
+      "title": "`CommonWinningIndexChecks` carries no type discriminator",
+      "description": "If struct 'CommonWinningIndexChecks' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "CommonWinningIndexChecks",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_9_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-10",
+      "title": "`ParticipationStateV1` carries no type discriminator",
+      "description": "If struct 'ParticipationStateV1' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "ParticipationStateV1",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_10_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-11",
+      "title": "`PrintingV2CalculationChecks` carries no type discriminator",
+      "description": "If struct 'PrintingV2CalculationChecks' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "PrintingV2CalculationChecks",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_11_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-12",
+      "title": "`V2Accounts` carries no type discriminator",
+      "description": "If struct 'V2Accounts' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "V2Accounts",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_12_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-13",
+      "title": "`CommonRedeemFinishArgs` carries no type discriminator",
+      "description": "If struct 'CommonRedeemFinishArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "CommonRedeemFinishArgs",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_13_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-14",
+      "title": "`SupplyLogicCheckArgs` carries no type discriminator",
+      "description": "If struct 'SupplyLogicCheckArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "SupplyLogicCheckArgs",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_14_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-15",
+      "title": "`CommonCheckArgs` carries no type discriminator",
+      "description": "If struct 'CommonCheckArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "CommonCheckArgs",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_15_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    },
+    {
+      "id": "ARES-HYP-16",
+      "title": "`CommonRedeemCheckArgs` carries no type discriminator",
+      "description": "If struct 'CommonRedeemCheckArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+      "severity": "Medium",
+      "category": "type-cosplay",
+      "location": {
+        "file": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83/",
+        "line_start": null,
+        "line_end": null,
+        "column_start": null,
+        "column_end": null,
+        "function": "CommonRedeemCheckArgs",
+        "commit": null
+      },
+      "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_hyp_16_test.rs",
+      "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+      "references": [],
+      "confidence": 0.72,
+      "validation": null
+    }
+  ],
+  "suppressed_findings": [],
+  "metadata": {
+    "generated_at": "2026-08-18T07:09:37.966788700Z",
+    "ares_version": "0.1.0",
+    "scan_duration_secs": 0,
+    "agent_pipeline": [
+      "Mapper",
+      "HypothesisGenerator",
+      "Triager"
+    ],
+    "tools_used": []
+  },
+  "summary": {
+    "total_findings": 16,
+    "critical_count": 0,
+    "high_count": 0,
+    "medium_count": 16,
+    "low_count": 0,
+    "informational_count": 0,
+    "false_positives_suppressed": 0,
+    "poc_generated": 16,
+    "tests_passed": 0,
+    "tests_failed": 0,
+    "total_economic_impact_lamports": 1120000000,
+    "max_single_exploit_lamports": 70000000
+  }
+}

@@ -1,0 +1,867 @@
+{
+  "algorithm": {
+    "commitment_prefix": "02",
+    "domain": "ares.evidence.v1",
+    "hash": "sha256",
+    "leaf_encoding": "ares.evidence.leaf/1",
+    "leaf_prefix": "00",
+    "node_prefix": "01",
+    "target_binding_prefix": "03",
+    "tree": "rfc6962"
+  },
+  "anchor": {
+    "commitment": "2f99e108b02c59704571a64f8fa14d4e65838a391f991f786b3275dd6dad0a5f",
+    "commitment_field_order": [
+      "commitment_prefix",
+      "domain",
+      "leaf_count_u32be",
+      "merkle_root",
+      "report_sha256",
+      "target_binding"
+    ],
+    "target_binding": "977bb34a4eb4c0176a9bf12dfce3011fa9d6f0f1194d46661ef999ac56161814",
+    "target_binding_field_order": [
+      "target_binding_prefix",
+      "domain",
+      "target_name",
+      "commit_hash",
+      "ares_version",
+      "operator_program_id",
+      "report_kind"
+    ]
+  },
+  "engine": {
+    "agent_pipeline": [
+      "Mapper",
+      "HypothesisGenerator",
+      "Triager"
+    ],
+    "ares_version": "0.1.0",
+    "tools_used": []
+  },
+  "leaves": [
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'LegacyAccounts' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "LegacyAccounts",
+        "id": "ARES-HYP-1",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`LegacyAccounts` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-1",
+      "index": 0,
+      "kind": "finding",
+      "leaf_hash": "7c5a6610ee1634736d22cc0f095d4c058d348def2b6fa8ef666e8d9fd950312a",
+      "proof": [
+        {
+          "hash": "4fd6811ce1071703c054fbd701cbee1920b111749a7f243f0582ae3112d3fe35",
+          "position": "right"
+        },
+        {
+          "hash": "82a2fcdc6dc40c8ed3cf486741e799d99dc41cf48b807f0d7b5098048b9f4fcc",
+          "position": "right"
+        },
+        {
+          "hash": "5ca58652f0c430fad800244de5b515d1ab47d9bbff330b18f4235de55ed6e358",
+          "position": "right"
+        },
+        {
+          "hash": "7585260cdb580c177a924f504204dc518af6361ae3afd46274581c0262942db1",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'ParticipationStateV2' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "ParticipationStateV2",
+        "id": "ARES-HYP-2",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`ParticipationStateV2` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-2",
+      "index": 1,
+      "kind": "finding",
+      "leaf_hash": "4fd6811ce1071703c054fbd701cbee1920b111749a7f243f0582ae3112d3fe35",
+      "proof": [
+        {
+          "hash": "7c5a6610ee1634736d22cc0f095d4c058d348def2b6fa8ef666e8d9fd950312a",
+          "position": "left"
+        },
+        {
+          "hash": "82a2fcdc6dc40c8ed3cf486741e799d99dc41cf48b807f0d7b5098048b9f4fcc",
+          "position": "right"
+        },
+        {
+          "hash": "5ca58652f0c430fad800244de5b515d1ab47d9bbff330b18f4235de55ed6e358",
+          "position": "right"
+        },
+        {
+          "hash": "7585260cdb580c177a924f504204dc518af6361ae3afd46274581c0262942db1",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'RedeemPrintingV2BidArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "RedeemPrintingV2BidArgs",
+        "id": "ARES-HYP-3",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`RedeemPrintingV2BidArgs` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-3",
+      "index": 2,
+      "kind": "finding",
+      "leaf_hash": "2cfcf344314fa4408c241f2a0b6c74b8d280f8706520207daaed4a14a0bfe36d",
+      "proof": [
+        {
+          "hash": "ec5cb6204c64a0842e3ea183386a519093b6fe35ab48a6ff44f0b57e98cf64fb",
+          "position": "right"
+        },
+        {
+          "hash": "b09d9d24ab99947477db2e8f5b1fd8ebb49c9456178ace1006812b919e6d04fe",
+          "position": "left"
+        },
+        {
+          "hash": "5ca58652f0c430fad800244de5b515d1ab47d9bbff330b18f4235de55ed6e358",
+          "position": "right"
+        },
+        {
+          "hash": "7585260cdb580c177a924f504204dc518af6361ae3afd46274581c0262942db1",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'SetStoreIndexArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "SetStoreIndexArgs",
+        "id": "ARES-HYP-4",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`SetStoreIndexArgs` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-4",
+      "index": 3,
+      "kind": "finding",
+      "leaf_hash": "ec5cb6204c64a0842e3ea183386a519093b6fe35ab48a6ff44f0b57e98cf64fb",
+      "proof": [
+        {
+          "hash": "2cfcf344314fa4408c241f2a0b6c74b8d280f8706520207daaed4a14a0bfe36d",
+          "position": "left"
+        },
+        {
+          "hash": "b09d9d24ab99947477db2e8f5b1fd8ebb49c9456178ace1006812b919e6d04fe",
+          "position": "left"
+        },
+        {
+          "hash": "5ca58652f0c430fad800244de5b515d1ab47d9bbff330b18f4235de55ed6e358",
+          "position": "right"
+        },
+        {
+          "hash": "7585260cdb580c177a924f504204dc518af6361ae3afd46274581c0262942db1",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'AmountRange' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "AmountRange",
+        "id": "ARES-HYP-5",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`AmountRange` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-5",
+      "index": 4,
+      "kind": "finding",
+      "leaf_hash": "3a3b1d52dfc5f3bc4db4f72677d70263aa731f420ac1d0cb595411d8371224bb",
+      "proof": [
+        {
+          "hash": "8d5f8a92ef87a98eff38874837e81879205e0575939b8257958391684723c9c0",
+          "position": "right"
+        },
+        {
+          "hash": "7effe55361a61ec9d07d5ae5f1bcb54522e980997d7b4c152c1dd3c705a8ce31",
+          "position": "right"
+        },
+        {
+          "hash": "56f534c215dd81a599ddff09fb38560ebbcd25ee1e8cfc2af61f48857acd8b51",
+          "position": "left"
+        },
+        {
+          "hash": "7585260cdb580c177a924f504204dc518af6361ae3afd46274581c0262942db1",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'CommonWinningIndexReturn' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "CommonWinningIndexReturn",
+        "id": "ARES-HYP-6",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`CommonWinningIndexReturn` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-6",
+      "index": 5,
+      "kind": "finding",
+      "leaf_hash": "8d5f8a92ef87a98eff38874837e81879205e0575939b8257958391684723c9c0",
+      "proof": [
+        {
+          "hash": "3a3b1d52dfc5f3bc4db4f72677d70263aa731f420ac1d0cb595411d8371224bb",
+          "position": "left"
+        },
+        {
+          "hash": "7effe55361a61ec9d07d5ae5f1bcb54522e980997d7b4c152c1dd3c705a8ce31",
+          "position": "right"
+        },
+        {
+          "hash": "56f534c215dd81a599ddff09fb38560ebbcd25ee1e8cfc2af61f48857acd8b51",
+          "position": "left"
+        },
+        {
+          "hash": "7585260cdb580c177a924f504204dc518af6361ae3afd46274581c0262942db1",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'PrintingV2CalculationCheckReturn' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "PrintingV2CalculationCheckReturn",
+        "id": "ARES-HYP-7",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`PrintingV2CalculationCheckReturn` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-7",
+      "index": 6,
+      "kind": "finding",
+      "leaf_hash": "7cb2d6c7266af25315f68d97023b62d94b37dc0153c547285b14bd685333609e",
+      "proof": [
+        {
+          "hash": "4909eae81da4c21b6477991327cf32b0c8ab6d1285f70712a489a883da47dfd5",
+          "position": "right"
+        },
+        {
+          "hash": "288020cc7ad11a010eeaf6f5b9922006211bff4022204b505a629a35c633e76d",
+          "position": "left"
+        },
+        {
+          "hash": "56f534c215dd81a599ddff09fb38560ebbcd25ee1e8cfc2af61f48857acd8b51",
+          "position": "left"
+        },
+        {
+          "hash": "7585260cdb580c177a924f504204dc518af6361ae3afd46274581c0262942db1",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'AmountCumulativeReturn' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "AmountCumulativeReturn",
+        "id": "ARES-HYP-8",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`AmountCumulativeReturn` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-8",
+      "index": 7,
+      "kind": "finding",
+      "leaf_hash": "4909eae81da4c21b6477991327cf32b0c8ab6d1285f70712a489a883da47dfd5",
+      "proof": [
+        {
+          "hash": "7cb2d6c7266af25315f68d97023b62d94b37dc0153c547285b14bd685333609e",
+          "position": "left"
+        },
+        {
+          "hash": "288020cc7ad11a010eeaf6f5b9922006211bff4022204b505a629a35c633e76d",
+          "position": "left"
+        },
+        {
+          "hash": "56f534c215dd81a599ddff09fb38560ebbcd25ee1e8cfc2af61f48857acd8b51",
+          "position": "left"
+        },
+        {
+          "hash": "7585260cdb580c177a924f504204dc518af6361ae3afd46274581c0262942db1",
+          "position": "right"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'CommonWinningIndexChecks' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "CommonWinningIndexChecks",
+        "id": "ARES-HYP-9",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`CommonWinningIndexChecks` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-9",
+      "index": 8,
+      "kind": "finding",
+      "leaf_hash": "8d30e7dc66043e3f2e1df757d3d5a568474571cf497cada4f22e5c65387c7151",
+      "proof": [
+        {
+          "hash": "bd50b4d1ee6a7e5f4ccf31fa8b1aed4487ba60a42538af22fbdd785f27cdcdca",
+          "position": "right"
+        },
+        {
+          "hash": "ab32fcc2e57cec61588c19a70a1c2260f48d7d0cc968c2ec6d970775c25deb7c",
+          "position": "right"
+        },
+        {
+          "hash": "690d4de8fa5fbf86f88e57b488d37309cd6e3d54b27615b095bba57871da0e28",
+          "position": "right"
+        },
+        {
+          "hash": "a34e9c981a962fdeb8e212eb1df92eedda4ade753e26655da55788e75d942067",
+          "position": "left"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'ParticipationStateV1' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "ParticipationStateV1",
+        "id": "ARES-HYP-10",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`ParticipationStateV1` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-10",
+      "index": 9,
+      "kind": "finding",
+      "leaf_hash": "bd50b4d1ee6a7e5f4ccf31fa8b1aed4487ba60a42538af22fbdd785f27cdcdca",
+      "proof": [
+        {
+          "hash": "8d30e7dc66043e3f2e1df757d3d5a568474571cf497cada4f22e5c65387c7151",
+          "position": "left"
+        },
+        {
+          "hash": "ab32fcc2e57cec61588c19a70a1c2260f48d7d0cc968c2ec6d970775c25deb7c",
+          "position": "right"
+        },
+        {
+          "hash": "690d4de8fa5fbf86f88e57b488d37309cd6e3d54b27615b095bba57871da0e28",
+          "position": "right"
+        },
+        {
+          "hash": "a34e9c981a962fdeb8e212eb1df92eedda4ade753e26655da55788e75d942067",
+          "position": "left"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'PrintingV2CalculationChecks' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "PrintingV2CalculationChecks",
+        "id": "ARES-HYP-11",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`PrintingV2CalculationChecks` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-11",
+      "index": 10,
+      "kind": "finding",
+      "leaf_hash": "0aa4991089647a80e935e6d8ada5904253a94e607ba72983466c4374e463fe75",
+      "proof": [
+        {
+          "hash": "b0ccf5c5f766b161c9b2befc4bdaed0811f34b075fac87d8a30dd05796582ec9",
+          "position": "right"
+        },
+        {
+          "hash": "44f6703a3c4932981051f3bd4318a744bdd12ef86b75057d54c0dc118ebecd3e",
+          "position": "left"
+        },
+        {
+          "hash": "690d4de8fa5fbf86f88e57b488d37309cd6e3d54b27615b095bba57871da0e28",
+          "position": "right"
+        },
+        {
+          "hash": "a34e9c981a962fdeb8e212eb1df92eedda4ade753e26655da55788e75d942067",
+          "position": "left"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'V2Accounts' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "V2Accounts",
+        "id": "ARES-HYP-12",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`V2Accounts` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-12",
+      "index": 11,
+      "kind": "finding",
+      "leaf_hash": "b0ccf5c5f766b161c9b2befc4bdaed0811f34b075fac87d8a30dd05796582ec9",
+      "proof": [
+        {
+          "hash": "0aa4991089647a80e935e6d8ada5904253a94e607ba72983466c4374e463fe75",
+          "position": "left"
+        },
+        {
+          "hash": "44f6703a3c4932981051f3bd4318a744bdd12ef86b75057d54c0dc118ebecd3e",
+          "position": "left"
+        },
+        {
+          "hash": "690d4de8fa5fbf86f88e57b488d37309cd6e3d54b27615b095bba57871da0e28",
+          "position": "right"
+        },
+        {
+          "hash": "a34e9c981a962fdeb8e212eb1df92eedda4ade753e26655da55788e75d942067",
+          "position": "left"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'CommonRedeemFinishArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "CommonRedeemFinishArgs",
+        "id": "ARES-HYP-13",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`CommonRedeemFinishArgs` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-13",
+      "index": 12,
+      "kind": "finding",
+      "leaf_hash": "1c362be93937c1155921f22fc562f680332ddbb08a91f80a976a044ec3ea7764",
+      "proof": [
+        {
+          "hash": "771b6f52adc45a1d2360e59708c841267fa7382af910ab54c412d23efff06632",
+          "position": "right"
+        },
+        {
+          "hash": "0023991e64cecd35c894ab29d7fb53b9ea38c005dd7ab7cc73feafa40462c8e8",
+          "position": "right"
+        },
+        {
+          "hash": "1699a575a3ecd344f56c41b76bcbc3f8c48117d568c237dcbb684f8de08e7009",
+          "position": "left"
+        },
+        {
+          "hash": "a34e9c981a962fdeb8e212eb1df92eedda4ade753e26655da55788e75d942067",
+          "position": "left"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'SupplyLogicCheckArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "SupplyLogicCheckArgs",
+        "id": "ARES-HYP-14",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`SupplyLogicCheckArgs` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-14",
+      "index": 13,
+      "kind": "finding",
+      "leaf_hash": "771b6f52adc45a1d2360e59708c841267fa7382af910ab54c412d23efff06632",
+      "proof": [
+        {
+          "hash": "1c362be93937c1155921f22fc562f680332ddbb08a91f80a976a044ec3ea7764",
+          "position": "left"
+        },
+        {
+          "hash": "0023991e64cecd35c894ab29d7fb53b9ea38c005dd7ab7cc73feafa40462c8e8",
+          "position": "right"
+        },
+        {
+          "hash": "1699a575a3ecd344f56c41b76bcbc3f8c48117d568c237dcbb684f8de08e7009",
+          "position": "left"
+        },
+        {
+          "hash": "a34e9c981a962fdeb8e212eb1df92eedda4ade753e26655da55788e75d942067",
+          "position": "left"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'CommonCheckArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "CommonCheckArgs",
+        "id": "ARES-HYP-15",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`CommonCheckArgs` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-15",
+      "index": 14,
+      "kind": "finding",
+      "leaf_hash": "48240877c1fdf59e5996fa78b6bd3108fda0561afc6d5006980418aea375f6dd",
+      "proof": [
+        {
+          "hash": "c411d8d44bbd6d0698628b07ec9a976d89fcd8ef1fa7e602c9a6783d04ce9024",
+          "position": "right"
+        },
+        {
+          "hash": "2099a54fcbc2683fa3181678ae7c12b07e811c32373e10bd98f10b046af6051a",
+          "position": "left"
+        },
+        {
+          "hash": "1699a575a3ecd344f56c41b76bcbc3f8c48117d568c237dcbb684f8de08e7009",
+          "position": "left"
+        },
+        {
+          "hash": "a34e9c981a962fdeb8e212eb1df92eedda4ade753e26655da55788e75d942067",
+          "position": "left"
+        }
+      ]
+    },
+    {
+      "fields": {
+        "category": "type-cosplay",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.72",
+        "description": "If struct 'CommonRedeemCheckArgs' is used as account data, it has neither Anchor's `#[account]` attribute nor a leading discriminator field, so nothing distinguishes its bytes from any other account of the same size. An attacker can substitute a different account and have it deserialize cleanly.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": ".",
+        "function": "CommonRedeemCheckArgs",
+        "id": "ARES-HYP-16",
+        "kind": "finding",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Mark the struct `#[account]` so Anchor writes and checks an 8-byte discriminator, or add a leading type field (`key: Key`) and assert it before trusting the rest.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": null,
+        "suppression_reason": null,
+        "title": "`CommonRedeemCheckArgs` carries no type discriminator",
+        "validation": "none"
+      },
+      "finding_id": "ARES-HYP-16",
+      "index": 15,
+      "kind": "finding",
+      "leaf_hash": "c411d8d44bbd6d0698628b07ec9a976d89fcd8ef1fa7e602c9a6783d04ce9024",
+      "proof": [
+        {
+          "hash": "48240877c1fdf59e5996fa78b6bd3108fda0561afc6d5006980418aea375f6dd",
+          "position": "left"
+        },
+        {
+          "hash": "2099a54fcbc2683fa3181678ae7c12b07e811c32373e10bd98f10b046af6051a",
+          "position": "left"
+        },
+        {
+          "hash": "1699a575a3ecd344f56c41b76bcbc3f8c48117d568c237dcbb684f8de08e7009",
+          "position": "left"
+        },
+        {
+          "hash": "a34e9c981a962fdeb8e212eb1df92eedda4ade753e26655da55788e75d942067",
+          "position": "left"
+        }
+      ]
+    }
+  ],
+  "operator_assertions": {
+    "cluster": null,
+    "note": "Operator-supplied, not derived from the report. The engine records no program_id (scan.rs:104), so there is no verified-build link between the audited source and any deployed bytecode.",
+    "solana_program_id": null
+  },
+  "schema": "ares.evidence.bundle/1",
+  "source": {
+    "report_bytes": 18872,
+    "report_ends_with_newline": false,
+    "report_filename": "ares-report-sixteen-findings.json",
+    "report_kind": "scan",
+    "report_sha256": "ab275ecd718a197e9a044f1c003d14f58c8c6cee9608e444e421567cc12b3e10"
+  },
+  "summary_agrees": true,
+  "summary_from_leaves": {
+    "critical_count": 0,
+    "false_positives_suppressed": 0,
+    "high_count": 0,
+    "informational_count": 0,
+    "low_count": 0,
+    "medium_count": 16,
+    "poc_generated": 16,
+    "total_findings": 16
+  },
+  "summary_in_report": {
+    "critical_count": "0",
+    "false_positives_suppressed": "0",
+    "high_count": "0",
+    "informational_count": "0",
+    "low_count": "0",
+    "max_single_exploit_lamports": "70000000",
+    "medium_count": "16",
+    "poc_generated": "16",
+    "tests_failed": "0",
+    "tests_passed": "0",
+    "total_economic_impact_lamports": "1120000000",
+    "total_findings": "16"
+  },
+  "target": {
+    "commit_hash": "3f5f14b3091e59021b770018cabf9d5f66cdf9d9",
+    "name": "solana-vuln-rust_train_416f9ffa1f83",
+    "program_id_in_report": null,
+    "repository_url": null,
+    "source_path_normalized": "eval/data/staging/solana-vuln-rust_train_416f9ffa1f83",
+    "source_path_raw_sha256": "5e1e8ddc0d968f7f3638d2e8e740c3ca068304cc16caa002ab9e73371b834d5d"
+  },
+  "tree": {
+    "leaf_count": 16,
+    "merkle_root": "158e11c0b35e2f39f0dad1b17cca075c0c151587dae6ef7a433f3b7195b5501d"
+  },
+  "volatile": {
+    "generated_at": "2026-08-18T07:09:37.966788700Z",
+    "note": "Wall-clock values from the scan. Hashed into no leaf, so the merkle_root is stable across re-runs. Covered only by report_sha256. `confirm` does not refresh generated_at, so on a confirmed report this is still the SCAN time -- nothing records when the confirmation pass ran.",
+    "scan_duration_secs": "0"
+  }
+}

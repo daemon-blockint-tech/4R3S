@@ -1,0 +1,130 @@
+{
+  "algorithm": {
+    "commitment_prefix": "02",
+    "domain": "ares.evidence.v1",
+    "hash": "sha256",
+    "leaf_encoding": "ares.evidence.leaf/1",
+    "leaf_prefix": "00",
+    "node_prefix": "01",
+    "target_binding_prefix": "03",
+    "tree": "rfc6962"
+  },
+  "anchor": {
+    "commitment": "45d5b96861cdf485d42db3961a738574b5277c69d0048258b2b97dcdd5bd9357",
+    "commitment_field_order": [
+      "commitment_prefix",
+      "domain",
+      "leaf_count_u32be",
+      "merkle_root",
+      "report_sha256",
+      "target_binding"
+    ],
+    "target_binding": "346f045f5c027ed058009f6d05e4114361b6b5711d698dc8dfdd554767800f5a",
+    "target_binding_field_order": [
+      "target_binding_prefix",
+      "domain",
+      "target_name",
+      "commit_hash",
+      "ares_version",
+      "operator_program_id",
+      "report_kind"
+    ]
+  },
+  "engine": {
+    "agent_pipeline": [
+      "Mapper",
+      "HypothesisGenerator",
+      "Triager"
+    ],
+    "ares_version": "0.1.0",
+    "tools_used": []
+  },
+  "leaves": [
+    {
+      "fields": {
+        "category": "ownership-check",
+        "column_end": null,
+        "column_start": null,
+        "commit": null,
+        "confidence": "0.55",
+        "description": "`LogMessage` has an authority-like field `authority`, but no field's `has_one` constraint references it. Without `has_one = authority` on the account it authorizes, Anchor never confirms this signer actually owns/matches the account being acted on.",
+        "encoding": "ares.evidence.leaf/1",
+        "file": "src/lib.rs",
+        "function": null,
+        "id": "ARES-AST-1",
+        "kind": "suppressed",
+        "line_end": null,
+        "line_start": null,
+        "path_scope": "relative",
+        "poc_present": "present",
+        "recommendation": "Review the flagged Anchor/Solitaire account constraint or taint-tracked sink.",
+        "references": [],
+        "severity": "Medium",
+        "suppressed_by": "triager",
+        "suppression_reason": "Confidence below threshold",
+        "title": "anchor-constraint-gap: src/lib.rs",
+        "validation": "none"
+      },
+      "finding_id": "ARES-AST-1",
+      "index": 0,
+      "kind": "suppressed",
+      "leaf_hash": "594d074fefbe5f1b7249e0816a1fd011ff201c1fc595854804f6c132d7373e87",
+      "proof": []
+    }
+  ],
+  "operator_assertions": {
+    "cluster": null,
+    "note": "Operator-supplied, not derived from the report. The engine records no program_id (scan.rs:104), so there is no verified-build link between the audited source and any deployed bytecode.",
+    "solana_program_id": null
+  },
+  "schema": "ares.evidence.bundle/1",
+  "source": {
+    "report_bytes": 2109,
+    "report_ends_with_newline": false,
+    "report_filename": "ares-report-suppressed-only.json",
+    "report_kind": "scan",
+    "report_sha256": "514913f9d0f3d863855ab000622d54135b0122c6b20b1b25c18d5de9f3ad2418"
+  },
+  "summary_agrees": true,
+  "summary_from_leaves": {
+    "critical_count": 0,
+    "false_positives_suppressed": 1,
+    "high_count": 0,
+    "informational_count": 0,
+    "low_count": 0,
+    "medium_count": 0,
+    "poc_generated": 0,
+    "total_findings": 0
+  },
+  "summary_in_report": {
+    "critical_count": "0",
+    "false_positives_suppressed": "1",
+    "high_count": "0",
+    "informational_count": "0",
+    "low_count": "0",
+    "max_single_exploit_lamports": "0",
+    "medium_count": "0",
+    "poc_generated": "0",
+    "tests_failed": "0",
+    "tests_passed": "0",
+    "total_economic_impact_lamports": "0",
+    "total_findings": "0"
+  },
+  "target": {
+    "commit_hash": "3f5f14b3091e59021b770018cabf9d5f66cdf9d9",
+    "name": "sealevel-attacks_0-signer-authorization",
+    "program_id_in_report": null,
+    "repository_url": null,
+    "source_path_normalized": "eval/data/staging/sealevel-attacks_0-signer-authorization",
+    "source_path_raw_sha256": "21889fab0e38d8afb39758ee828df2f2837b7f2753de87c9f91c350796353141"
+  },
+  "tree": {
+    "leaf_count": 1,
+    "merkle_root": "594d074fefbe5f1b7249e0816a1fd011ff201c1fc595854804f6c132d7373e87"
+  },
+  "volatile": {
+    "generated_at": "2026-08-18T07:09:27.787415200Z",
+    "note": "Wall-clock values from the scan. Hashed into no leaf, so the merkle_root is stable across re-runs. Covered only by report_sha256. `confirm` does not refresh generated_at, so on a confirmed report this is still the SCAN time -- nothing records when the confirmation pass ran.",
+    "scan_duration_secs": "0"
+  }
+}
