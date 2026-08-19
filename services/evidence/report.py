@@ -42,10 +42,22 @@ _TARGET_KEYS = frozenset(
     {"name", "repository_url", "commit_hash", "program_id", "source_path", "idl_path"}
 )
 
-#: ReportMetadata, lib.rs:271-278
+#: ReportMetadata, lib.rs:271-286. `confirmed_at` carries #[serde(default)] and
+#: is Option<DateTime<Utc>>, the same pattern Finding.validation uses -- a report
+#: written before `ares confirm` started setting it omits the key entirely, and
+#: every scan report (confirmed or not) now carries it as `null` or a string. It
+#: is optional here for that reason and no other; see _METADATA_REQUIRED.
 _METADATA_KEYS = frozenset(
-    {"generated_at", "ares_version", "scan_duration_secs", "agent_pipeline", "tools_used"}
+    {
+        "generated_at",
+        "confirmed_at",
+        "ares_version",
+        "scan_duration_secs",
+        "agent_pipeline",
+        "tools_used",
+    }
 )
+_METADATA_REQUIRED = _METADATA_KEYS - {"confirmed_at"}
 
 #: ReportSummary, lib.rs:281-297 -- twelve fields, not the five that `confirm`
 #: recomputes. See the `summary_agrees` note in bundle.py.
@@ -335,8 +347,15 @@ def load_report(path: str | Path) -> Report:
         _check_opt_str(f"report.target.{field}", target[field])
     _check_str("report.target.source_path", target["source_path"])
 
-    metadata = _check_keys("report.metadata", data["metadata"], _METADATA_KEYS)
+    metadata = _check_keys(
+        "report.metadata", data["metadata"], _METADATA_KEYS, required=_METADATA_REQUIRED
+    )
     _check_str("report.metadata.generated_at", metadata["generated_at"])
+    # Absent (a report written before this field existed), JSON null (a scan
+    # that has never been confirmed), and a timestamp string (a confirmed
+    # report) are the three legitimate shapes -- .get() treats the first two
+    # identically, matching Option<DateTime<Utc>>'s own None.
+    _check_opt_str("report.metadata.confirmed_at", metadata.get("confirmed_at"))
     _check_str("report.metadata.ares_version", metadata["ares_version"])
     validate_uint_token("report.metadata.scan_duration_secs", metadata["scan_duration_secs"])
     for field in ("agent_pipeline", "tools_used"):

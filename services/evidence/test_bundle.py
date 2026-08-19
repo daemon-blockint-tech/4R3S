@@ -316,6 +316,44 @@ class TestHeaderContents:
         assert doc["volatile"]["generated_at"] == rep.data["metadata"]["generated_at"]
         assert "no leaf" in doc["volatile"]["note"]
 
+    def test_confirmed_at_is_null_when_the_report_never_carried_it(self, tmp_path):
+        """Both committed vectors predate ReportMetadata.confirmed_at entirely --
+        this is the realistic case for every report on disk before ares-core's
+        confirmed_at fix (commit a34c1e8), not a contrived one."""
+        rep = load_report(SMALL)
+        assert "confirmed_at" not in rep.data["metadata"]
+        assert bundle.build_bundle(rep)["volatile"]["confirmed_at"] is None
+
+    def test_confirmed_at_surfaces_when_the_report_carries_it(self, tmp_path):
+        report_path = _staged(tmp_path, SMALL)
+        _mutate(
+            report_path,
+            lambda d: d["metadata"].__setitem__("confirmed_at", "2026-08-19T12:00:00Z"),
+        )
+        doc = bundle.build_bundle(load_report(report_path))
+        assert doc["volatile"]["confirmed_at"] == "2026-08-19T12:00:00Z"
+
+    def test_confirmed_at_leaves_the_root_unchanged_but_moves_the_commitment(self, tmp_path):
+        """The same shape as generated_at, and for the same reason.
+
+        Setting confirmed_at is a real byte-level edit to the report, so
+        report_sha256 -- and therefore the commitment, which is built from it --
+        both change, exactly as they should for any report edit. What must NOT
+        change is the merkle_root: it excludes the whole volatile block, so
+        confirm running (and therefore setting this field) does not by itself
+        require a fresh Merkle tree over unchanged findings.
+        """
+        a = _staged(tmp_path / "a", SMALL)
+        b = _staged(tmp_path / "b", SMALL)
+        _mutate(
+            b, lambda d: d["metadata"].__setitem__("confirmed_at", "2026-08-19T12:00:00Z")
+        )
+        doc_a = bundle.build_bundle(load_report(a))
+        doc_b = bundle.build_bundle(load_report(b))
+        assert doc_a["tree"]["merkle_root"] == doc_b["tree"]["merkle_root"]
+        assert doc_a["source"]["report_sha256"] != doc_b["source"]["report_sha256"]
+        assert doc_a["anchor"]["commitment"] != doc_b["anchor"]["commitment"]
+
     def test_the_bundle_publishes_fields_but_never_the_preimage(self):
         """A stored preimage could hash correctly while the readable fields lied."""
         doc = bundle.build_bundle(load_report(SMALL))

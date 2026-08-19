@@ -123,8 +123,9 @@
     "merkle_root": "594d074fefbe5f1b7249e0816a1fd011ff201c1fc595854804f6c132d7373e87"
   },
   "volatile": {
+    "confirmed_at": null,
     "generated_at": "2026-08-18T07:09:27.787415200Z",
-    "note": "Wall-clock values from the scan. Hashed into no leaf, so the merkle_root is stable across re-runs. Covered only by report_sha256. `confirm` does not refresh generated_at, so on a confirmed report this is still the SCAN time -- nothing records when the confirmation pass ran.",
+    "note": "Wall-clock values. Hashed into no leaf, so the merkle_root is stable across re-runs; covered only by report_sha256. generated_at is stamped once, at scan time, and confirm never refreshes it. confirmed_at is null when no confirmation time is known -- either this report has not been confirmed, or it was confirmed by an ares build older than this field.",
     "scan_duration_secs": "0"
   }
 }

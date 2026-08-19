@@ -181,11 +181,57 @@ class TestTheSchemaIsClosed:
         with pytest.raises(ReportError, match="unknown value"):
             load_report(_write(tmp_path, data))
 
-    def test_all_three_known_suppressors_are_accepted(self, tmp_path):
+    def test_all_four_known_suppressors_are_accepted(self, tmp_path):
+        """Iterates report._SUPPRESSORS itself, so this stays correct if a fifth
+        write site is ever added -- it is the count in the docstring and the
+        test name that would need updating, not this loop."""
         for suppressor in sorted(report._SUPPRESSORS):
             data = _load_raw(SMALL)
             data["suppressed_findings"][0]["suppressed_by"] = suppressor
             load_report(_write(tmp_path, data, f"ares-report-{suppressor}.json"))
+
+    def test_an_unknown_metadata_key_raises(self, tmp_path):
+        data = _load_raw(SMALL)
+        data["metadata"]["extra_field"] = "x"
+        with pytest.raises(ReportError, match="unknown key"):
+            load_report(_write(tmp_path, data))
+
+    def test_a_missing_confirmed_at_key_is_accepted(self, tmp_path):
+        """A report from an ares build predating ReportMetadata.confirmed_at.
+
+        Neither committed vector has this key at all -- both were written before
+        the field existed -- so this is the realistic case, not a contrived one.
+        """
+        data = _load_raw(SMALL)
+        assert "confirmed_at" not in data["metadata"]
+        rep = load_report(_write(tmp_path, data))
+        assert "confirmed_at" not in rep.data["metadata"]
+
+    def test_a_null_confirmed_at_is_accepted(self, tmp_path):
+        """Every report scan.rs writes going forward carries this explicitly,
+        because Option<T> serializes None as JSON null, not as an absent key --
+        #[serde(default)] only changes DEserialization of an absent key."""
+        data = _load_raw(SMALL)
+        data["metadata"]["confirmed_at"] = None
+        rep = load_report(_write(tmp_path, data))
+        assert rep.data["metadata"]["confirmed_at"] is None
+
+    def test_a_string_confirmed_at_is_accepted(self, tmp_path):
+        data = _load_raw(SMALL)
+        data["metadata"]["confirmed_at"] = "2026-08-19T12:00:00Z"
+        rep = load_report(_write(tmp_path, data))
+        assert rep.data["metadata"]["confirmed_at"] == "2026-08-19T12:00:00Z"
+
+    def test_a_non_string_confirmed_at_raises(self, tmp_path):
+        """A bare JSON number would not exercise this: report.py's parse_int=str
+        turns any integer literal into a string token before this check ever
+        runs (that is the whole point of validate_number_token elsewhere), so a
+        boolean is what actually reaches this check as a non-string Python
+        value."""
+        data = _load_raw(SMALL)
+        data["metadata"]["confirmed_at"] = True
+        with pytest.raises(ReportError, match="must be a string"):
+            load_report(_write(tmp_path, data))
 
 
 class TestParserHardening:

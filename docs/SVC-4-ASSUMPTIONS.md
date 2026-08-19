@@ -106,21 +106,35 @@ both a Python and a Rust half that belong together.
 
 ## Bugs and gaps this work found in existing code
 
-None of these were the task, and none were fixed here.
+Neither was the task. Both were fixed on a separate branch,
+`fix/confirm-timestamp-and-suppressor-comment`, then merged into this one —
+this branch was never supposed to touch `core/`, so mixing the fixes directly
+into the SVC-4 commits would have muddied that story for review. The merge
+commit is `ce1a8ab`.
 
-1. **`ares-core/src/lib.rs:234` documents `suppressed_by` as `"local_judge" or
+1. **`ares-core/src/lib.rs:234` documented `suppressed_by` as `"local_judge" or
    "llm_judge"`. There are four write sites.** `triager` (`scan.rs:439`) and
-   `semantic_validator` (`validator.rs:72`, `:92`) are missing from that comment.
-   Found because the closed schema rejected four real reports in the local
-   corpus. A permissive loader would have hashed an unvalidated string into
-   leaves instead. Both design agents that read the code before implementation
-   reported the two-value set, because they trusted the comment.
-2. **`confirm` never records when it ran.** The only `Utc::now()` in `confirm.rs`
-   is at `:446`, inside `#[cfg(test)] mod tests`. Production `confirm`
-   deserialises, mutates per-finding fields plus five summary counters, and
-   re-serialises — `metadata` is untouched. So a `.confirmed.json` carries the
-   *scan's* `generated_at`, and nothing anywhere records the confirmation pass's
-   time.
+   `semantic_validator` (`validator.rs:72`, `:92`) were missing from that
+   comment. Found because the closed schema rejected four real reports in the
+   local corpus. A permissive loader would have hashed an unvalidated string
+   into leaves instead. Both design agents that read the code before
+   implementation reported the two-value set, because they trusted the comment.
+   **Fixed in `4c6c80c`** (comment only, no behavioral change).
+   `report.py`'s `_SUPPRESSORS` still enumerates all four explicitly rather than
+   trusting the comment or this history.
+2. **`confirm` never recorded when it ran.** The only `Utc::now()` in
+   `confirm.rs` was at `:446`, inside `#[cfg(test)] mod tests`. Production
+   `confirm` deserialised, mutated per-finding fields plus five summary
+   counters, and re-serialised — `metadata` was untouched. So a
+   `.confirmed.json` carried the *scan's* `generated_at`, and nothing anywhere
+   recorded the confirmation pass's own time.
+   **Fixed in `a34c1e8`**: `ReportMetadata.confirmed_at: Option<DateTime<Utc>>`,
+   `#[serde(default)]` so an older report still deserialises. `confirm.rs` sets
+   it to `Some(Utc::now())` right after recomputing severity counts.
+   `report.py`'s schema and `bundle.py`'s `volatile` block were updated to match
+   (see "What changed after the merge" below) — otherwise every future
+   `.confirmed.json` would fail this service's closed-schema validation with an
+   unknown-key error the moment someone ran the fixed `ares confirm`.
 3. **`confirm` leaves the summary partially stale by construction.**
    `confirm.rs:319-339` recomputes five of `ReportSummary`'s twelve fields. The
    bundle publishes both the report's copy and a recount from the leaves, plus
@@ -130,6 +144,69 @@ None of these were the task, and none were fixed here.
    in the local corpus. Normalising only the `PathBuf`-typed fields is not enough.
 5. **`target.program_id` and `repository_url` are hardcoded `None`**
    (`scan.rs:102`, `:104`). See the limitation below.
+
+## What changed after the merge
+
+Two more things surfaced while wiring `confirmed_at` through, one expected and
+one not.
+
+**Expected**: `report.py`'s `_METADATA_KEYS` gained `confirmed_at`, split into a
+`_METADATA_REQUIRED` subset the same way `_FINDING_REQUIRED` already excludes
+`validation` — the closed schema would otherwise reject every future
+`.confirmed.json` outright. `bundle.py`'s `volatile` block now surfaces it,
+`null` when absent or not yet confirmed. It is **not** hashed into any leaf or
+the commitment, by the same logic as `generated_at`: confirming a report is not
+supposed to require re-anchoring, so a fresh `confirmed_at` value must not move
+the root. `test_confirmed_at_leaves_the_root_unchanged_but_moves_the_commitment`
+pins both halves — the root is unaffected, but `report_sha256` (and therefore
+the commitment, which is built from it) genuinely differs, exactly as it does
+for any other byte-level edit to the report.
+
+Two of my own draft tests got this backwards and had to be corrected: one wrote
+a bare JSON integer to probe `_check_opt_str`'s type rejection, not noticing
+`parse_int=str` turns any integer literal into a string token first — a boolean
+was needed to actually reach a non-string Python value. The other asserted the
+**commitment** stays equal across a `confirmed_at` change; it does not, and
+can't — the commitment is deterministically derived from `report_sha256`, so if
+the bytes differ, the commitment differs too, unconditionally. Both were wrong
+premises in the test, not the implementation, caught by simply running them.
+
+**Not expected: this branch's own vector fixtures were corrupted on disk.**
+While merging and testing, `test_vectors.py`'s manifest-integrity suite started
+failing on all seven committed vector files — first with 9 failures, not
+because anything was wrong with the *code*, but because this repository has
+`core.autocrlf=true` and **no `.gitattributes` anywhere**, so an ordinary
+Windows `git checkout` silently rewrites every `\n` in a tracked text file to
+`\r\n` in the working tree. `git status`/`git diff` reported nothing, because
+git's own comparison machinery normalises line endings before comparing —
+the corruption was real on disk but invisible to git itself.
+
+Fixed in three parts:
+1. Restored the correct bytes via `git cat-file -p HEAD:<path>` (which bypasses
+   the checkout smudge filter) for all seven files under `vectors/`.
+2. Found a second, independent bug this uncovered: `merkle_vectors.json` and
+   `pda_vectors.json` were originally generated via shell stdout redirection
+   rather than `Path.write_bytes()`, which introduced CRLF into them **before**
+   they were ever committed. Git's own commit-time clean filter silently
+   normalised that back to LF on the way in, so the committed blobs were always
+   correct — but the byte counts and SHA-256 digests I recorded in
+   `manifest.json` had been measured on the pre-commit, CRLF-tainted files, and
+   were wrong by exactly the CRLF count (134 and 47 bytes). Corrected against
+   the actual committed blobs.
+3. Added `services/evidence/.gitattributes` marking `vectors/*.json -text`, so
+   git never touches these bytes in either direction, on any platform, again.
+   Verified end-to-end: deliberately re-corrupted a vector file with CRLF,
+   confirmed `git diff` now reports a real 134-line change (before the
+   `.gitattributes` fix it reported nothing), then confirmed `git checkout --`
+   restores the exact original bytes.
+
+**This is not unique to this task.** `services/cve/snapshot/advisories.json` —
+the file `services/cve/advisories.py:98-110` recomputes a SHA-256 digest
+against — was found to have the identical corruption on this same machine at
+the same time, and running `services/cve/test_snapshot_integrity.py` directly
+confirmed 9 real failures from it. That is a pre-existing, repo-wide exposure
+this task did not fix, since `services/cve/` is outside `services/evidence/`
+and outside this task's scope. Flagged to the user rather than fixed silently.
 
 ## The most significant limitation, stated plainly
 
@@ -232,14 +309,25 @@ docstrings say what is true rather than what would have been tidier.
 
 ## Verified before handing off
 
-- `python -m pytest -q` in `services/evidence` → **434 passed**.
+- `python -m pytest -q` in `services/evidence` → **442 passed** (434 from the
+  original two commits, +8 for `confirmed_at` after the merge).
 - `cargo fmt --all -- --check` in `onchain/spec` → clean.
 - `cargo clippy --all-targets --locked -- -D warnings` in `onchain/spec` → clean.
 - `cargo test --locked` in `onchain/spec` → **40 passed**.
 - `npx vitest run scripts/evidence-pda-vectors.test.ts` → **14 passed**.
-- `node scripts/check-import-boundary.mjs` → passed, 548 files scanned.
-- `cd core && cargo test --workspace` → unchanged by this task; `core/` has no
-  edits at all.
+- `node scripts/check-import-boundary.mjs` → passed, 561 files scanned (up from
+  548 after the `.gitattributes` addition).
+- **`core/` is no longer untouched** — corrected from an earlier draft of this
+  doc. `fix/confirm-timestamp-and-suppressor-comment` (commits `4c6c80c`,
+  `a34c1e8`) was merged in at `ce1a8ab` specifically so this service could
+  accept and surface `confirmed_at`. `cd core && cargo test --workspace` was run
+  in full, non-truncated form on that fix branch before the merge: **221 tests**
+  across all eight crates (ares-core 19, ares-v3 62 lib + 6 integration,
+  ares-report 4, ares-mapper 116, ares-policy 3, ares-orchestrator 2,
+  ares-trident 9), plus `cargo fmt --all -- --check` and
+  `cargo clippy --workspace --all-features -- -D warnings` both clean. The merge
+  itself introduced no conflicts (previewed with `git merge-tree` before
+  merging) because the two branches touch entirely disjoint files.
 - Mutation harness: all five mutations caught (17 / 134 / 95 / 108 / 29 failures),
   all restoring to green.
 - Published corpus figures re-derived directly, not taken from a summary: 636
@@ -248,3 +336,7 @@ docstrings say what is true rather than what would have been tidier.
   findings, 178 reports producing no leaves at all (194 have `findings == []`, but
   suppressed findings are leaves too — the distinction is easy to conflate and the
   first draft of the README did).
+- A CRLF corruption of every vector fixture, found after the merge and fixed;
+  see "What changed after the merge" above. Verified end-to-end: deliberately
+  re-corrupted a file, confirmed `git diff` now detects it (it silently did not
+  before `.gitattributes`), then confirmed `git checkout --` restores it exactly.

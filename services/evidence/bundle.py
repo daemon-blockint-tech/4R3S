@@ -262,13 +262,23 @@ def build_bundle(rep: Report, *, operator_program_id: str | None = None, cluster
         },
         "volatile": {
             "generated_at": metadata["generated_at"],
+            # ReportMetadata.confirmed_at, added after `confirm` shipped without
+            # any record of when it ran (ares-core/src/lib.rs). `.get()`
+            # deliberately collapses two source shapes into one null here: a
+            # report whose confirmed_at is JSON null (never confirmed by a build
+            # carrying this field) and one where the key is absent entirely
+            # (produced by an ares build that predates the field). Both mean the
+            # same thing to a reader of this bundle -- "no confirmation time is
+            # known" -- so the bundle does not try to preserve the difference.
+            "confirmed_at": metadata.get("confirmed_at"),
             "scan_duration_secs": metadata["scan_duration_secs"],
             "note": (
-                "Wall-clock values from the scan. Hashed into no leaf, so the "
-                "merkle_root is stable across re-runs. Covered only by "
-                "report_sha256. `confirm` does not refresh generated_at, so on a "
-                "confirmed report this is still the SCAN time -- nothing records "
-                "when the confirmation pass ran."
+                "Wall-clock values. Hashed into no leaf, so the merkle_root is "
+                "stable across re-runs; covered only by report_sha256. "
+                "generated_at is stamped once, at scan time, and confirm never "
+                "refreshes it. confirmed_at is null when no confirmation time is "
+                "known -- either this report has not been confirmed, or it was "
+                "confirmed by an ares build older than this field."
             ),
         },
         "operator_assertions": {

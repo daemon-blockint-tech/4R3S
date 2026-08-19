@@ -183,16 +183,24 @@ covers.**
   `test_vectors.py` regenerates the bundles and compares byte-for-byte, with the
   roots and commitments pinned as hex literals so a change that alters a root
   cannot pass by refreshing the fixture.
-- **A fourth suppressor was found by writing this.**
-  `ares-core/src/lib.rs:234` documents `suppressed_by` as `"local_judge" or
+- **A fourth suppressor was found by writing this, and fixed upstream.**
+  `ares-core/src/lib.rs:234` documented `suppressed_by` as `"local_judge" or
   "llm_judge"`. There are four write sites — `triager` (`scan.rs:439`) and
-  `semantic_validator` (`validator.rs:72,:92`) are missing from that comment. The
-  closed schema surfaced `semantic_validator` by rejecting four real reports in
-  the local corpus. A permissive loader would have hashed an unvalidated string
-  into leaves instead.
-- **`confirm` does not refresh `generated_at`.** The only `Utc::now()` in
-  `confirm.rs` is inside `#[cfg(test)]`, so a `.confirmed.json` carries the
-  *scan's* timestamp and nothing anywhere records when the confirmation pass ran.
+  `semantic_validator` (`validator.rs:72,:92`) were missing from that comment.
+  The closed schema surfaced `semantic_validator` by rejecting four real reports
+  in the local corpus, and a permissive loader would have hashed an unvalidated
+  string into leaves instead. The comment is now corrected
+  (`4c6c80c`); `report.py`'s `_SUPPRESSORS` still enumerates all four itself
+  rather than trusting either the comment or this history.
+- **`confirm` used to never record when it ran, and now does.** Before
+  `a34c1e8`, the only `Utc::now()` in `confirm.rs` was inside `#[cfg(test)]`, so
+  a `.confirmed.json` carried the *scan's* timestamp and nothing anywhere
+  recorded the confirmation pass's own time. `ReportMetadata.confirmed_at` now
+  carries it, `#[serde(default)]` so a report from an older `ares` build still
+  parses. `volatile.confirmed_at` in the bundle surfaces it: a timestamp when
+  known, `null` when this report has never been confirmed by a build that sets
+  it (which includes both "never confirmed" and "confirmed by an older build" —
+  the bundle does not try to tell those two apart).
 - Cross-language agreement is mechanical, not asserted: `vectors/merkle_vectors.json`
   is checked by the Python suite, by the Rust spec crate
   (`onchain/spec/tests/golden_vectors.rs`), and by
