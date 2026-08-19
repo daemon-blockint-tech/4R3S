@@ -1030,7 +1030,7 @@ export const BUILTIN_TOOLS: CustomTool[] = [
           // Check if payload is reflected
           const reflected = body.includes(payload);
           const encoded = body.includes(encodeURIComponent(payload)) ||
-                         body.includes(payload.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+            body.includes(payload.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
 
           results.push({ payload, name, reflected, encoded });
 
@@ -1044,7 +1044,7 @@ export const BUILTIN_TOOLS: CustomTool[] = [
 
       const output = results.map(r => {
         const status = r.reflected ? '⚠️ REFLECTED (potentially vulnerable)' :
-                       r.encoded ? '✓ Encoded/Filtered' : '✓ Not reflected';
+          r.encoded ? '✓ Encoded/Filtered' : '✓ Not reflected';
         return `[${r.name}] ${status}`;
       }).join('\n');
 
@@ -1139,7 +1139,7 @@ export const BUILTIN_TOOLS: CustomTool[] = [
 
           // Check for content differences indicating injection
           if (!vulnerable && (bodyLower.includes('welcome') || bodyLower.includes('admin') || bodyLower.includes('logged in'))
-              && type === 'boolean' && payload.includes('OR')) {
+            && type === 'boolean' && payload.includes('OR')) {
             vulnerable = true;
             indicator = 'Authentication bypass indicators detected';
           }
@@ -1314,8 +1314,8 @@ export const BUILTIN_TOOLS: CustomTool[] = [
       const validCredentials: string[] = [];
 
       // Get a baseline failed login response
-      let baselineLength = 0;
-      let baselineStatus = 0;
+      let baselineLength!: number;
+      let baselineStatus!: number;
       try {
         const baselineBody = new URLSearchParams();
         baselineBody.set(usernameField, username);
@@ -2269,7 +2269,7 @@ ${issues.length ? `Issues:\n${issues.join('\n')}` : '✓ No obvious issues'}`,
           }
 
           // Consume response body to prevent connection leaks
-          await response.text().catch(() => {});
+          await response.text().catch(() => { });
         } catch {
           results.push({ method, status: 0, allowed: false });
         }
@@ -2371,7 +2371,7 @@ ${issues.length ? `Issues:\n${issues.join('\n')}` : '✓ No obvious issues'}`,
           }
 
           // Consume response body
-          await response.text().catch(() => {});
+          await response.text().catch(() => { });
         } catch {
           results.push({ origin: test.origin, name: test.name, acao: null, acac: null, vulnerable: false, issue: 'Request failed' });
         }
@@ -2553,7 +2553,7 @@ ${issues.length ? `Issues:\n${issues.join('\n')}` : '✓ No obvious issues'}`,
           }
 
           // Consume response body
-          await response.text().catch(() => {});
+          await response.text().catch(() => { });
         } catch {
           results.push({ payload, name, redirected: false, location: '(error)' });
         }
@@ -2664,8 +2664,8 @@ ${issues.length ? `Issues:\n${issues.join('\n')}` : '✓ No obvious issues'}`,
 
           // Check for error messages that confirm LFI attempt but filtered
           if (bodyLower.includes('no such file') || bodyLower.includes('failed to open') ||
-              bodyLower.includes('include(') || bodyLower.includes('require(') ||
-              bodyLower.includes('file_get_contents')) {
+            bodyLower.includes('include(') || bodyLower.includes('require(') ||
+            bodyLower.includes('file_get_contents')) {
             indicator = 'File operation error message disclosed (path traversal partially works)';
           }
 

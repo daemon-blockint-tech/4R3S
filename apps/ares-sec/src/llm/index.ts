@@ -245,10 +245,10 @@ class OpenRouterAdapter implements LLMProviderAdapter {
       model: data.model || this.config.model,
       usage: data.usage
         ? {
-            promptTokens: data.usage.prompt_tokens,
-            completionTokens: data.usage.completion_tokens,
-            totalTokens: data.usage.total_tokens,
-          }
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        }
         : undefined,
       finishReason: data.choices[0]?.finish_reason,
     };
@@ -490,10 +490,10 @@ class AnthropicAdapter implements LLMProviderAdapter {
       model: data.model || this.config.model,
       usage: data.usage
         ? {
-            promptTokens: data.usage.input_tokens,
-            completionTokens: data.usage.output_tokens,
-            totalTokens: data.usage.input_tokens + data.usage.output_tokens,
-          }
+          promptTokens: data.usage.input_tokens,
+          completionTokens: data.usage.output_tokens,
+          totalTokens: data.usage.input_tokens + data.usage.output_tokens,
+        }
         : undefined,
       finishReason: data.stop_reason,
     };
@@ -585,10 +585,10 @@ class OpenAIAdapter implements LLMProviderAdapter {
     const rawToolCalls = data.choices[0]?.message?.tool_calls;
     const toolCalls: LLMToolCall[] | undefined = rawToolCalls?.length
       ? rawToolCalls.map(tc => ({
-          id: tc.id,
-          name: tc.function.name,
-          arguments: JSON.parse(tc.function.arguments || '{}'),
-        }))
+        id: tc.id,
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments || '{}'),
+      }))
       : undefined;
 
     return {
@@ -597,10 +597,10 @@ class OpenAIAdapter implements LLMProviderAdapter {
       model: data.model || this.config.model,
       usage: data.usage
         ? {
-            promptTokens: data.usage.prompt_tokens,
-            completionTokens: data.usage.completion_tokens,
-            totalTokens: data.usage.total_tokens,
-          }
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        }
         : undefined,
       finishReason: data.choices[0]?.finish_reason,
     };
@@ -796,11 +796,11 @@ class LocalAdapter implements LLMProviderAdapter {
 
       const usage = openaiWire
         ? (data.usage
-            ? { promptTokens: data.usage.prompt_tokens, completionTokens: data.usage.completion_tokens, totalTokens: data.usage.total_tokens }
-            : undefined)
+          ? { promptTokens: data.usage.prompt_tokens, completionTokens: data.usage.completion_tokens, totalTokens: data.usage.total_tokens }
+          : undefined)
         : (data.eval_count
-            ? { promptTokens: data.prompt_eval_count || 0, completionTokens: data.eval_count || 0, totalTokens: (data.prompt_eval_count || 0) + (data.eval_count || 0) }
-            : undefined);
+          ? { promptTokens: data.prompt_eval_count || 0, completionTokens: data.eval_count || 0, totalTokens: (data.prompt_eval_count || 0) + (data.eval_count || 0) }
+          : undefined);
 
       return {
         content,
@@ -812,7 +812,8 @@ class LocalAdapter implements LLMProviderAdapter {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes('fetch')) {
         throw new Error(
-          'Could not connect to local LLM. Start Ollama (`ollama serve`), or point ARES_LOCAL_BASE_URL at your OpenAI-compatible server (LM Studio / vLLM / llama.cpp).'
+          'Could not connect to local LLM. Start Ollama (`ollama serve`), or point ARES_LOCAL_BASE_URL at your OpenAI-compatible server (LM Studio / vLLM / llama.cpp).',
+          { cause: error }
         );
       }
       throw error;
@@ -1329,7 +1330,8 @@ export class LLMBackbone extends EventEmitter<LLMEvents> {
     }
 
     this.emit('request:error', { error: lastError as Error, messages });
-    throw lastError ?? new Error(`All ${ladder.length} model(s) in the fallback ladder failed: ${trail.join(' > ')}`);
+
+    throw lastError ?? new Error(`All ${ladder.length} model(s) in the fallback ladder failed: ${trail.join(' > ')}`, { cause: lastError });
   }
 
   /**

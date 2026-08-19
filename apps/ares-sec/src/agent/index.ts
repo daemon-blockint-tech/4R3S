@@ -126,7 +126,7 @@ export class AgentLoop extends EventEmitter<AgentEvents> {
     const steps: AgentStep[] = [];
     const allFindings: ToolFinding[] = [];
     let tokensUsed = 0;
-    let hitLimit = false;
+
     // anti-stall: dedup identical tool calls + detect runs of no-new-findings (ported from the hunter)
     const seenCalls = new Map<string, string>();
     let noProgress = 0;
@@ -257,7 +257,7 @@ export class AgentLoop extends EventEmitter<AgentEvents> {
 
         // Check token budget
         if (tokensUsed >= this.options.maxTokens) {
-          hitLimit = true;
+
           break;
         }
       } catch (error) {
@@ -273,7 +273,7 @@ export class AgentLoop extends EventEmitter<AgentEvents> {
     }
 
     // Hit iteration or token limit — ask LLM for a final summary
-    hitLimit = true;
+
     messages.push({
       role: 'user',
       content: 'You have reached the maximum number of steps. Please provide a final summary of everything you discovered, including all findings and recommendations.',
@@ -300,7 +300,7 @@ export class AgentLoop extends EventEmitter<AgentEvents> {
       iterations: this.options.maxIterations,
       tokensUsed,
       durationMs: Date.now() - startTime,
-      hitLimit,
+      hitLimit: true,
     };
 
     this.emit('agent:complete', result);
