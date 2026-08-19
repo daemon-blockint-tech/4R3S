@@ -227,11 +227,15 @@ def commitment(
     """The 32 bytes an anchor actually records.
 
     Why a commitment and not the bare root: RFC 6962's empty tree has one
-    constant root for every target on earth, and 194 of the 636 reports in the
-    local corpus have zero findings. Anchoring the bare empty root would publish
-    "nothing found" in a form anyone could replay against any program. Folding in
-    the report digest and the target binding keeps even the empty case unique per
-    (target, commit, artifact bytes).
+    constant root for every target on earth, and 178 of the 636 reports in the
+    local corpus produce no leaves at all. Anchoring the bare empty root would
+    publish "nothing found" in a form anyone could replay against any program.
+    Folding in the report digest and the target binding keeps even the empty case
+    unique per (target, commit, artifact bytes).
+
+    (194 reports have `findings == []`; the smaller 178 is the number with no
+    leaves, because suppressed findings are leaves too. The distinction matters
+    here and is easy to conflate.)
 
     `leaf_count` is included so that no residual shape ambiguity can change what
     was committed, independently of the tree construction.

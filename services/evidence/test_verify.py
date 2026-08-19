@@ -295,7 +295,7 @@ class TestAdvisories:
         return p
 
     def test_an_empty_report_verifies_but_says_it_proves_no_scan_ran(self, tmp_path):
-        """194 of 636 local reports are empty, and `ares scan /nonexistent` also
+        """178 of 636 local reports produce no leaves, and `ares scan /nonexistent` also
         exits 0 with a well-formed empty report. The outcome must not read as a
         clean bill of health."""
         report_path = self._empty(tmp_path)

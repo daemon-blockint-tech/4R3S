@@ -276,7 +276,7 @@ class TestTheEmptyCase:
     def test_two_different_targets_with_zero_findings_share_a_root_but_not_a_commitment(self, tmp_path):
         """Why the commitment exists at all.
 
-        194 of the 636 reports in the local corpus have zero findings, and the
+        178 of the 636 reports in the local corpus produce no leaves at all, and the
         bare empty root is the same 32 bytes for every target on earth --
         anchoring it would publish "nothing found" in a form anyone could replay
         against any program.

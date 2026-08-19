@@ -1,0 +1,46 @@
+# cargo-deny policy for the evidence-registry-spec crate.
+#
+# Mirrors core/deny.toml deliberately, rather than being written afresh: the
+# stronger guarantee for this crate is the lockfile-subset invariant enforced by
+# tests/lockfile_subset.rs, which requires every resolved dependency to already
+# appear in core/Cargo.lock. That means core's own `cargo deny` and `cargo audit`
+# have already cleared everything here. This file is the belt to that braces --
+# it makes the policy explicit and locally checkable rather than only implied by
+# a test in another directory.
+#
+# GOLDEN RULE 1: the allow-list bans strong copyleft by omission. GPL and AGPL
+# are not listed, so they are rejected. LGPL and other permissive licences would
+# have to be added explicitly, with a justification.
+#
+# Kept identical to core/deny.toml's allow-list on purpose: if the two diverge,
+# the subset invariant could hold while this crate still admitted a licence core
+# would refuse.
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "0BSD",
+    "MPL-2.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# This crate has zero runtime dependencies, so a duplicate version can only come
+# from the dev-dependency tree. Surfaced as a warning, matching core/deny.toml.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+# A git dependency would be invisible to the subset invariant's version
+# comparison and unreviewable by core's gates. Rejected outright.
+unknown-git = "deny"

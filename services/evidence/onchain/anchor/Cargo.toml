@@ -1,0 +1,32 @@
+[workspace]
+# WORKSPACE B -- never built by CI, and not buildable on the machine this was
+# written on. There is no `solana` CLI, no `anchor` CLI and no `cargo build-sbf`
+# here, so this tree has never been compiled at all.
+#
+# It is a separate workspace from ../spec deliberately. If `spec` were a member
+# here, `cargo test -p evidence-registry-spec` would still have to RESOLVE the
+# anchor-lang -> solana-program graph, which needs the registry index and is
+# exposed to toolchain drift under a floating `stable`. Splitting them means the
+# CI job resolves a manifest with zero dependencies and is immune to Anchor and
+# Solana churn by construction.
+#
+# There is NO Cargo.lock committed for this workspace, and that is not an
+# oversight: generating one requires network access to resolve a dependency tree
+# nothing here can build or verify. The first person to install the toolchain
+# generates it, and at that point it needs its own deny.toml -- expect it to fail
+# core/deny.toml as written, since the Solana tree historically pulls `ring`
+# (not SPDX-clean at confidence-threshold 0.9) and can pull git dependencies,
+# which `unknown-git = "deny"` rejects outright. Do NOT pre-emptively widen
+# core/deny.toml for a tree that is not built.
+members = ["programs/*"]
+resolver = "2"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1

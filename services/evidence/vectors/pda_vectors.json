@@ -1,0 +1,47 @@
+{
+  "_comment": "PDA derivation vectors for the evidence_registry program. Produced by services/evidence/anchor_payload.py (pure-stdlib sha256 + a hand-rolled ed25519 on-curve test) and cross-checked by scripts/evidence-pda-vectors.test.ts against @solana/web3.js PublicKey.findProgramAddressSync -- an implementation nobody in this repo wrote. That cross-check is what makes the hand-rolled curve arithmetic acceptable.",
+  "cases": [
+    {
+      "authority_base58": "6juishLqL8jqxZTsF7xhSyJr6URJomgn6zV7vYY6zjE8",
+      "commitment_hex": "69fdd6276a37f5e42af7f0405a21703b605543d088242983ac425fa848b38906",
+      "expected_bump": 253,
+      "expected_pda_base58": "2hy83yVJuGtV8nSyrCopdTemBqheZH1gFFSZEVMEsJVs",
+      "label": "all-ones",
+      "program_id_base58": "E4phCF8s45FZV6qsQ7R55kiP3oEbM5inymekEazVErXW"
+    },
+    {
+      "authority_base58": "YdgQcLcRzogspt13RS9M1QBqDsNkx7MeDWR5RfDGKKZ",
+      "commitment_hex": "566a44a3b3bcd2b692af3477a4bd1d05ae1872acf81ee1d4284c2e8e2c5cc374",
+      "expected_bump": 255,
+      "expected_pda_base58": "3YpRhPaTMTP2rSsRbYbssmcVQZ4oWaKt7y31ZDNSLYZo",
+      "label": "all-twos",
+      "program_id_base58": "E6iqvhH3PwZRYx2i41DboB5cCAX9hHEdduenVvr4YEJV"
+    },
+    {
+      "authority_base58": "8hqXWUqMYevJG9NbSzd6wz8no92bJeHKH2WzPg6wiyKX",
+      "commitment_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected_bump": 255,
+      "expected_pda_base58": "HDLWBfhBirbu3poD43z2HEYmMqKHAcqvTKUVKxh761G6",
+      "label": "zero-commitment",
+      "program_id_base58": "2wDdYpsQqcf9mDDd6NPsyVVpzVENKDzKW41HQwMSbtpA"
+    },
+    {
+      "authority_base58": "EyMvpcAzhwu6anEuteAwst31sNyGHcmfJ4qzJbHvVJej",
+      "commitment_hex": "1941ef8213b285be7f22c77a7f57b18d5c026cb07ccbe2a64fff6ea70b55f698",
+      "expected_bump": 255,
+      "expected_pda_base58": "5GbjanxFNcHszABrZY9o3BJJ7GdFdXj75q8G7YrMVZtp",
+      "label": "high-bytes",
+      "program_id_base58": "4WwkhpHn6FXDjajSHs3gtr1YxhaTLvLqcxcxkjwq9KPj"
+    },
+    {
+      "authority_base58": "47adXXaa2aaJfaZqmKf5j6yck9oqVS1NhSrUCeMkVYMi",
+      "commitment_hex": "6fd36d2c41f98d7bc11f6bee657b371926675be33ff4c3729f1dd331ad176571",
+      "expected_bump": 255,
+      "expected_pda_base58": "9gCwn4ZFK9jCsM3X8R5VYQa3ySSSt7bsP2AMkKNxwfkD",
+      "label": "another",
+      "program_id_base58": "G1o98Dci7PMxX2bPRRtds5o3VdQft8ckQZGSTMVKHz3k"
+    }
+  ],
+  "pda_marker": "ProgramDerivedAddress",
+  "seed_prefix_utf8": "ares-evidence-v1"
+}
