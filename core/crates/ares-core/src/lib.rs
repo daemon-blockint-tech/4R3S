@@ -231,7 +231,12 @@ impl fmt::Display for ValidationOutcome {
 pub struct SuppressedFinding {
     pub finding: Finding,
     pub reason: String,
-    pub suppressed_by: String, // "local_judge" or "llm_judge"
+    // Four write sites, not two: "semantic_validator" (validator.rs),
+    // "llm_judge" and "triager" (commands/scan.rs), "local_judge"
+    // (ares-mapper/src/local_judge.rs). This is a bare String, not an enum, so
+    // this comment is the only place the full vocabulary is written down --
+    // keep it in sync with the write sites if a new suppressor is added.
+    pub suppressed_by: String,
 }
 
 /// Code location reference.
