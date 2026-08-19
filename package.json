@@ -27,15 +27,15 @@
     "export:vuln-catalog": "tsx src/scripts/export-vuln-catalog.ts"
   },
   "dependencies": {
-    "@langchain/core": "^1.2.4",
-    "@langchain/langgraph": "^1.4.9",
+    "@langchain/core": "^1.2.8",
+    "@langchain/langgraph": "^1.4.10",
     "@langchain/langgraph-checkpoint": "^1.0.0",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
     "@langchain/langgraph-cua": "^1.0.2",
-    "@langchain/openai": "^1.5.5",
-    "@langchain/openrouter": "^0.4.6",
+    "@langchain/openai": "^1.5.8",
+    "@langchain/openrouter": "^0.4.8",
     "@solana/web3.js": "^1.98.4",
-    "@supabase/supabase-js": "^2.112.2",
+    "@supabase/supabase-js": "^2.112.3",
     "bs58": "^6.0.0",
     "dotenv": "^17.4.2",
     "neo4j-driver": "^6.2.0",
@@ -50,9 +50,9 @@
     "@types/uuid": "^11.0.0",
     "eslint": "^10.8.1",
     "license-checker-rseidelsohn": "^5.0.1",
-    "tsx": "^4.23.11",
+    "tsx": "^4.23.12",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.66.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
   },
   "overrides": {
