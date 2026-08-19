@@ -200,7 +200,12 @@ export function AdmiralPage() {
                   }
                 }}
               />
-              <Button onClick={send} disabled={converse.isPending} className="shrink-0 self-end">
+              <Button
+                onClick={send}
+                disabled={converse.isPending}
+                className="shrink-0 self-end"
+                aria-label="Send message"
+              >
                 <Send className="size-4" />
               </Button>
             </div>
