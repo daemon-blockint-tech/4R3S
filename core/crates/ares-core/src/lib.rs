@@ -276,6 +276,15 @@ pub struct ProgramTarget {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReportMetadata {
     pub generated_at: chrono::DateTime<chrono::Utc>,
+    /// When `ares confirm` last fork-ran this report's PoCs, if it ever has.
+    /// `generated_at` above is set once, at `scan` time, and `confirm` does not
+    /// touch it -- so before this field existed, a `.confirmed.json` carried
+    /// only the original scan's timestamp and nothing recorded when the
+    /// confirmation pass itself ran. `#[serde(default)]` so a report written
+    /// before this field existed still deserializes, the same convention
+    /// `Finding.validation` already uses.
+    #[serde(default)]
+    pub confirmed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub ares_version: String,
     pub scan_duration_secs: u64,
     pub agent_pipeline: Vec<String>,

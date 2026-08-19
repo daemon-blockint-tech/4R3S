@@ -499,6 +499,7 @@ pub async fn execute(
         suppressed_findings,
         metadata: ReportMetadata {
             generated_at: Utc::now(),
+            confirmed_at: None,
             ares_version: env!("CARGO_PKG_VERSION").to_string(),
             scan_duration_secs: elapsed_secs,
             // Provenance, and it has to be literally true: the fuzzer is listed
