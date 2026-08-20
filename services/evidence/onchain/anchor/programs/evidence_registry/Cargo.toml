@@ -1,0 +1,38 @@
+[package]
+name = "evidence-registry"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Anchors an ARES evidence Merkle root on Solana. Never compiled; see ../../README.md."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "evidence_registry"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+# `init-if-needed` is deliberately absent. Anchor gates `init_if_needed` behind
+# that feature precisely because it is an overwrite footgun, and this program's
+# whole value depends on a re-anchor being rejected rather than silently
+# replacing an existing record. tests/program_source_conformance.rs asserts the
+# string never appears in the source either.
+
+[dependencies]
+# Pinned to an EXACT version, not a caret range. The account discriminator
+# preimage this program's layout assumes -- sha256("account:RecordV1")[..8] -- is
+# Anchor-version dependent, and no `syn` parse can verify a macro expansion. Until
+# `anchor test` has actually run, that assumption is only as stable as the pin.
+anchor-lang = "=0.31.1"
+
+# The shared byte-level specification: seeds, layout offsets, commitment
+# preimage, discriminator. A path dependency into another workspace's root crate,
+# which is supported and standard. Having one definition is what stops the
+# program and the off-chain bundler drifting apart while neither can be compiled
+# against the other.
+evidence-registry-spec = { path = "../../../spec" }

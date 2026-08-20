@@ -1,0 +1,18 @@
+# This repo has core.autocrlf=true and no .gitattributes at the root, so a
+# plain `git checkout` on Windows silently rewrites every LF in a tracked text
+# file to CRLF in the working tree -- and `git status`/`git diff` report no
+# change, because git's comparison normalizes line endings before comparing.
+#
+# That is fatal to this directory specifically: the whole point of
+# vectors/*.json is byte-exact reproducibility -- committed SHA-256 digests,
+# `ends_with_newline` assertions, and byte-for-byte bundle regeneration checks.
+# It actually happened here on 2026-08-19, after an ordinary branch-switch-and-
+# merge sequence, and vectors/manifest.json's "CRLF corruption" note has the
+# full story, including that services/cve/snapshot/ has the identical exposure
+# and was not fixed (out of scope for this task).
+#
+# `-text` disables line-ending translation in BOTH directions, on every
+# platform, for every file below -- not `text eol=lf`, which would still run
+# git's normalization machinery and just aim it at LF; `-text` means git never
+# touches these bytes at all, which is what "byte-exact" actually requires.
+vectors/*.json -text
