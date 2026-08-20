@@ -1,5 +1,24 @@
 export { cn } from "./utils";
 
+export {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "./components/accordion";
+export {
+  AlertDialog,
+  AlertDialogPortal,
+  AlertDialogOverlay,
+  AlertDialogTrigger,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "./components/alert-dialog";
 export { Alert, AlertTitle, AlertDescription } from "./components/alert";
 export { Avatar, AvatarImage, AvatarFallback } from "./components/avatar";
 export { Badge, badgeVariants } from "./components/badge";
@@ -26,8 +45,27 @@ export {
   DialogTitle,
   DialogTrigger,
 } from "./components/dialog";
+export {
+  Drawer,
+  DrawerPortal,
+  DrawerOverlay,
+  DrawerTrigger,
+  DrawerClose,
+  DrawerContent,
+  DrawerHeader,
+  DrawerFooter,
+  DrawerTitle,
+  DrawerDescription,
+} from "./components/drawer";
 export { Input } from "./components/input";
 export { Label } from "./components/label";
+export {
+  Progress,
+  ProgressTrack,
+  ProgressIndicator,
+  ProgressLabel,
+  ProgressValue,
+} from "./components/progress";
 export { RadioGroup, RadioGroupItem } from "./components/radio-group";
 export { ScrollArea, ScrollBar } from "./components/scroll-area";
 export {
