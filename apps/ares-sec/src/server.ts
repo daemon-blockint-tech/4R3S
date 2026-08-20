@@ -39,6 +39,18 @@ dotenv.config();
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Normalize an Express route parameter to a single string.
+ *
+ * `@types/express-serve-static-core` v5 types `ParamsDictionary[key]` as `string | string[]`
+ * (Express 5 can surface a repeated param as an array). None of this server's routes declare
+ * repeated params, so every `:param` is a single string at runtime; this collapses the static
+ * type back to `string` at the read site. An array (never expected here) yields its first element.
+ */
+function pathParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
+}
+
 // =============================================================================
 // PAYLOAD DATABASES (Shared with MCP server)
 // =============================================================================
@@ -4817,7 +4829,7 @@ app.post('/api/approvals/request', (req: Request, res: Response) => {
 });
 
 app.post('/api/approvals/:id/approve', (req: Request, res: Response) => {
-  const approval = approvalRequests.get(req.params.id);
+  const approval = approvalRequests.get(pathParam(req.params.id));
   if (!approval) {
     res.status(404).json({ error: 'Approval request not found' });
     return;
@@ -4833,7 +4845,7 @@ app.post('/api/approvals/:id/approve', (req: Request, res: Response) => {
 });
 
 app.post('/api/approvals/:id/reject', (req: Request, res: Response) => {
-  const approval = approvalRequests.get(req.params.id);
+  const approval = approvalRequests.get(pathParam(req.params.id));
   if (!approval) {
     res.status(404).json({ error: 'Approval request not found' });
     return;
@@ -4855,7 +4867,7 @@ app.get('/api/resource-packs', (req: Request, res: Response) => {
 });
 
 app.get('/api/resource-packs/:id', (req: Request, res: Response) => {
-  const resource = RESOURCE_PACKS.find(pack => pack.id === req.params.id);
+  const resource = RESOURCE_PACKS.find(pack => pack.id === pathParam(req.params.id));
   if (!resource) {
     res.status(404).json({ error: 'Resource pack not found' });
     return;
@@ -4869,7 +4881,7 @@ app.get('/api/agent-prompt-packs', (req: Request, res: Response) => {
 });
 
 app.get('/api/agent-prompt-packs/:id', (req: Request, res: Response) => {
-  const promptPack = AGENT_PROMPT_PACKS.find(pack => pack.id === req.params.id);
+  const promptPack = AGENT_PROMPT_PACKS.find(pack => pack.id === pathParam(req.params.id));
   if (!promptPack) {
     res.status(404).json({ error: 'Agent prompt pack not found' });
     return;
@@ -4883,7 +4895,7 @@ app.get('/api/operator-runbooks', (req: Request, res: Response) => {
 });
 
 app.get('/api/operator-runbooks/:family', (req: Request, res: Response) => {
-  const family = normalizeMissionFamily(req.params.family, 'reporting_remediation');
+  const family = normalizeMissionFamily(pathParam(req.params.family), 'reporting_remediation');
   const runbook = runbookForFamily(family);
   if (!runbook) {
     res.status(404).json({ error: 'Operator runbook not found', family, available: OPERATOR_RUNBOOKS.map(item => item.family) });
@@ -4906,7 +4918,7 @@ app.get('/api/forefront-radar', (req: Request, res: Response) => {
 });
 
 app.get('/api/forefront-radar/:id', (req: Request, res: Response) => {
-  const lane = FOREFRONT_PRESSURE_LANES.find(item => item.id === req.params.id);
+  const lane = FOREFRONT_PRESSURE_LANES.find(item => item.id === pathParam(req.params.id));
   if (!lane) {
     res.status(404).json({ error: 'Forefront pressure lane not found', available: FOREFRONT_PRESSURE_LANES.map(item => item.id) });
     return;
@@ -4922,7 +4934,7 @@ app.post('/api/resource-packs/search', (req: Request, res: Response) => {
 });
 
 app.get('/api/agent-context/:family', (req: Request, res: Response) => {
-  const family = req.params.family;
+  const family = pathParam(req.params.family);
   res.json({
     family,
     workflowPresets: workflowPresetsForFamily(family),
@@ -4990,7 +5002,7 @@ app.post('/api/mission-gate', (req: Request, res: Response) => {
 });
 
 app.get('/api/mission-bundles/:missionId', async (req: Request, res: Response) => {
-  const draft = missionDrafts.get(req.params.missionId);
+  const draft = missionDrafts.get(pathParam(req.params.missionId));
   if (!draft) {
     res.status(404).json({ error: 'Mission draft not found' });
     return;
@@ -5040,7 +5052,7 @@ app.post('/api/hypotheses', (req: Request, res: Response) => {
 });
 
 app.patch('/api/hypotheses/:id', (req: Request, res: Response) => {
-  const existing = hypothesisLedger.get(req.params.id);
+  const existing = hypothesisLedger.get(pathParam(req.params.id));
   if (!existing) {
     res.status(404).json({ error: 'Hypothesis not found' });
     return;
@@ -5077,7 +5089,7 @@ app.patch('/api/hypotheses/:id', (req: Request, res: Response) => {
 });
 
 app.post('/api/hypotheses/:id/promote', (req: Request, res: Response) => {
-  const hypothesis = hypothesisLedger.get(req.params.id);
+  const hypothesis = hypothesisLedger.get(pathParam(req.params.id));
   if (!hypothesis) {
     res.status(404).json({ error: 'Hypothesis not found' });
     return;
@@ -5209,7 +5221,7 @@ app.post('/api/work-orders', (req: Request, res: Response) => {
  * points at the SAME handler and is the clearer name for what this actually does.
  */
 function handleHypothesisDecompose(req: Request, res: Response): void {
-  const hypothesis = hypothesisLedger.get(req.params.id);
+  const hypothesis = hypothesisLedger.get(pathParam(req.params.id));
   if (!hypothesis) {
     res.status(404).json({ error: 'Hypothesis not found' });
     return;
@@ -5235,7 +5247,7 @@ app.post('/api/hypotheses/:id/decompose', (req: Request, res: Response) => handl
 app.post('/api/hypotheses/:id/work-orders', (req: Request, res: Response) => handleHypothesisDecompose(req, res));
 
 app.patch('/api/work-orders/:id', (req: Request, res: Response) => {
-  const existing = workOrderLedger.get(req.params.id);
+  const existing = workOrderLedger.get(pathParam(req.params.id));
   if (!existing) {
     res.status(404).json({ error: 'Work order not found' });
     return;
@@ -5262,7 +5274,7 @@ app.patch('/api/work-orders/:id', (req: Request, res: Response) => {
 });
 
 app.post('/api/work-orders/:id/complete', (req: Request, res: Response) => {
-  const existing = workOrderLedger.get(req.params.id);
+  const existing = workOrderLedger.get(pathParam(req.params.id));
   if (!existing) {
     res.status(404).json({ error: 'Work order not found' });
     return;
@@ -5454,7 +5466,7 @@ app.post('/api/findings', (req: Request, res: Response) => {
 });
 
 app.patch('/api/findings/:id', (req: Request, res: Response) => {
-  const existing = findingsLedger.get(req.params.id);
+  const existing = findingsLedger.get(pathParam(req.params.id));
   if (!existing) {
     res.status(404).json({ error: 'Finding not found' });
     return;
@@ -5481,7 +5493,7 @@ app.patch('/api/findings/:id', (req: Request, res: Response) => {
 });
 
 app.post('/api/findings/:id/retest', (req: Request, res: Response) => {
-  const finding = findingsLedger.get(req.params.id);
+  const finding = findingsLedger.get(pathParam(req.params.id));
   if (!finding) {
     res.status(404).json({ error: 'Finding not found' });
     return;
@@ -5524,7 +5536,7 @@ app.get('/api/retests', (req: Request, res: Response) => {
 });
 
 app.patch('/api/retests/:id', (req: Request, res: Response) => {
-  const existing = retestLedger.get(req.params.id);
+  const existing = retestLedger.get(pathParam(req.params.id));
   if (!existing) {
     res.status(404).json({ error: 'Retest not found' });
     return;
@@ -5577,7 +5589,7 @@ app.get('/api/mission-drafts', (_req: Request, res: Response) => {
 });
 
 app.get('/api/mission-drafts/:id', (req: Request, res: Response) => {
-  const draft = missionDrafts.get(req.params.id);
+  const draft = missionDrafts.get(pathParam(req.params.id));
   if (!draft) {
     res.status(404).json({ error: 'Mission draft not found' });
     return;
@@ -5586,7 +5598,7 @@ app.get('/api/mission-drafts/:id', (req: Request, res: Response) => {
 });
 
 app.patch('/api/mission-drafts/:id', (req: Request, res: Response) => {
-  const existing = missionDrafts.get(req.params.id);
+  const existing = missionDrafts.get(pathParam(req.params.id));
   if (!existing) {
     res.status(404).json({ error: 'Mission draft not found' });
     return;
@@ -5609,7 +5621,7 @@ app.patch('/api/mission-drafts/:id', (req: Request, res: Response) => {
 });
 
 app.delete('/api/mission-drafts/:id', (req: Request, res: Response) => {
-  const deleted = missionDrafts.delete(req.params.id);
+  const deleted = missionDrafts.delete(pathParam(req.params.id));
   res.json({ success: deleted });
 });
 
@@ -5637,12 +5649,12 @@ app.post('/api/route-preview', (req: Request, res: Response) => {
 });
 
 app.get('/api/routes/:routeId/scorecards', (req: Request, res: Response) => {
-  const scorecard = ROUTE_SCORECARDS[req.params.routeId];
+  const scorecard = ROUTE_SCORECARDS[pathParam(req.params.routeId)];
   if (!scorecard) {
     res.status(404).json({ error: 'Route scorecard not found', available: Object.keys(ROUTE_SCORECARDS) });
     return;
   }
-  res.json({ routeId: req.params.routeId, scorecard });
+  res.json({ routeId: pathParam(req.params.routeId), scorecard });
 });
 
 app.post('/api/improvement/proposals', (req: Request, res: Response) => {
@@ -5774,7 +5786,7 @@ app.post('/api/memory/proposals', (req: Request, res: Response) => {
 });
 
 app.post('/api/memory/proposals/:id/accept', (req: Request, res: Response) => {
-  const proposal = memoryProposals.get(req.params.id);
+  const proposal = memoryProposals.get(pathParam(req.params.id));
   if (!proposal) {
     res.status(404).json({ error: 'Memory proposal not found' });
     return;
@@ -5831,7 +5843,7 @@ app.post('/api/memory/proposals/:id/accept', (req: Request, res: Response) => {
 });
 
 app.post('/api/memory/proposals/:id/reject', (req: Request, res: Response) => {
-  const proposal = memoryProposals.get(req.params.id);
+  const proposal = memoryProposals.get(pathParam(req.params.id));
   if (!proposal) {
     res.status(404).json({ error: 'Memory proposal not found' });
     return;
@@ -6378,7 +6390,7 @@ app.post('/api/operators/:id/task', async (req: Request, res: Response): Promise
     return;
   }
 
-  const operator = cmd.cell.getOperator(req.params.id);
+  const operator = cmd.cell.getOperator(pathParam(req.params.id));
   if (!operator) {
     res.status(404).json({ error: 'Operator not found' });
     return;
@@ -7334,7 +7346,7 @@ app.post('/api/bounty/submit', async (req: Request, res: Response) => {
 
 app.get('/api/bounty/programs/:platform', async (req: Request, res: Response) => {
   try {
-    const platform = req.params.platform as BountyPlatform;
+    const platform = pathParam(req.params.platform) as BountyPlatform;
     const query = (req.query.q as string) || '';
     const creds = loadBountyCredentials(process.cwd());
     const platformCreds: BountyCredentials = creds[platform] || { platform };
@@ -7465,7 +7477,7 @@ app.get('/api/docs', (_req: Request, res: Response): void => {
 
 // GET /api/docs/:slug — raw markdown for one doc
 app.get('/api/docs/:slug', (req: Request, res: Response): void => {
-  const slug = req.params.slug;
+  const slug = pathParam(req.params.slug);
   if (!slug || !/^[A-Za-z0-9_-]+$/.test(slug)) {
     res.status(400).json({ error: 'Invalid doc id' });
     return;
@@ -7589,7 +7601,7 @@ app.post('/api/obsidivm/bench', (req: Request, res: Response): void => {
 });
 
 app.get('/api/obsidivm/bench/:id', (req: Request, res: Response): void => {
-  const job = rangeJobs.get(req.params.id);
+  const job = rangeJobs.get(pathParam(req.params.id));
   if (!job || job.kind !== 'obsidivm-bench') {
     res.status(404).json({ error: 'Bench job not found' });
     return;
@@ -7681,7 +7693,7 @@ app.post('/api/ctf/run', (req: Request, res: Response): void => {
 });
 
 app.get('/api/ctf/run/:id', (req: Request, res: Response): void => {
-  const job = rangeJobs.get(req.params.id);
+  const job = rangeJobs.get(pathParam(req.params.id));
   if (!job || job.kind !== 'ctf-run') {
     res.status(404).json({ error: 'CTF run job not found' });
     return;
