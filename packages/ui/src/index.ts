@@ -57,6 +57,23 @@ export {
   DrawerTitle,
   DrawerDescription,
 } from "./components/drawer";
+export {
+  DropdownMenu,
+  DropdownMenuPortal,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+} from "./components/dropdown-menu";
 export { Input } from "./components/input";
 export { Label } from "./components/label";
 export {
@@ -68,6 +85,16 @@ export {
 } from "./components/progress";
 export { RadioGroup, RadioGroupItem } from "./components/radio-group";
 export { ScrollArea, ScrollBar } from "./components/scroll-area";
+export {
+  Sheet,
+  SheetTrigger,
+  SheetClose,
+  SheetContent,
+  SheetHeader,
+  SheetFooter,
+  SheetTitle,
+  SheetDescription,
+} from "./components/sheet";
 export {
   Select,
   SelectContent,
@@ -84,6 +111,16 @@ export { Separator } from "./components/separator";
 export { Skeleton } from "./components/skeleton";
 export { Toaster } from "./components/sonner";
 export { Switch } from "./components/switch";
+export {
+  Table,
+  TableHeader,
+  TableBody,
+  TableFooter,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableCaption,
+} from "./components/table";
 export {
   Tabs,
   TabsList,
