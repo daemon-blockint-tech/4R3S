@@ -119,11 +119,6 @@ jobs:
       # trees have to be installed here or the gate refuses to report a pass.
       # apps/auditor-web is the deployed dashboard and the reason this matters:
       # its 700+ production packages were outside the gate's reach entirely.
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: 10
-
       - name: Install app dependencies (license gate scope)
         run: |
           # --legacy-peer-deps is required, and only here.
@@ -140,7 +135,7 @@ jobs:
           # normally and will keep failing until the versions are reconciled,
           # which is the right place for that to surface.
           npm ci --prefix apps/ares-sec --legacy-peer-deps
-          pnpm install --dir apps/auditor-web --frozen-lockfile --ignore-scripts
+          npm ci --prefix apps/auditor-web --ignore-scripts
 
       - name: License check (npm)
         run: node scripts/check-licenses.mjs
