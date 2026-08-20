@@ -11,18 +11,11 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { PageHeader, severityClass } from '@/components/common'
 import { cn } from '@/lib/utils'
 
 const EXAMPLES = ['github.com/expressjs/express', 'lodash', '10.0.0.5']
 const DEFAULT_OPERATORS = ['recon', 'scanner', 'analyst']
-
-const SEVERITY: Record<string, string> = {
-  critical: 'bg-destructive/15 text-destructive border-destructive/30',
-  high: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
-  medium: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-  low: 'bg-primary/15 text-primary border-primary/30',
-  info: 'bg-muted text-muted-foreground border-border',
-}
 
 interface OperatorPrompt {
   archetype: string
@@ -119,6 +112,10 @@ export function WarRoomPage() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
+      <PageHeader
+        title="War Room"
+        description="Launch and monitor a live security hunt against a target you own or have written permission to test."
+      />
       <Card className="border-primary/25 bg-gradient-to-br from-primary/5 to-transparent">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg font-semibold text-primary">
@@ -338,7 +335,7 @@ export function WarRoomPage() {
                         variant="outline"
                         className={cn(
                           'shrink-0 font-mono text-[10px] capitalize',
-                          SEVERITY[f.severity] ?? SEVERITY.info,
+                          severityClass(f.severity),
                         )}
                       >
                         {f.severity}
