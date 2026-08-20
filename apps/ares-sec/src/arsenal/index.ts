@@ -1322,9 +1322,10 @@ export const BUILTIN_TOOLS: CustomTool[] = [
       const results: { password: string; status: number; success: boolean; indicator: string }[] = [];
       const validCredentials: string[] = [];
 
-      // Get a baseline failed login response
-      let baselineLength = 0;
-      let baselineStatus = 0;
+      // Get a baseline failed login response. Definite-assignment asserted: the only path
+      // to the read sites below is through a successful try; the catch returns early.
+      let baselineLength!: number;
+      let baselineStatus!: number;
       try {
         const baselineBody = new URLSearchParams();
         baselineBody.set(usernameField, username);

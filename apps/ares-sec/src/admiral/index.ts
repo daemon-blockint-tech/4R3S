@@ -213,7 +213,7 @@ export class Admiral {
       [{ role: 'system' as const, content: SUGGEST_SYSTEM_PROMPT }, { role: 'user' as const, content: user }],
       { maxTokens: 2000, temperature: 0.3 },
     );
-    let parsed: any = {};
+    let parsed: any;
     try { parsed = extractJson(res.content || ''); } catch { parsed = { summary: (res.content || '').slice(0, 400), suggestions: [] }; }
     const raw = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
     let rejected = 0;

@@ -1,0 +1,12 @@
+# Pin LF line endings for this app's tree.
+#
+# The source-introspection tests under src/__tests__/*-static.test.ts read
+# server.ts / config/index.ts / scripts/setup-api.sh and match multi-line
+# section markers with `\n`. On a Windows checkout with core.autocrlf=true the
+# working copy is CRLF, so those matches fail LOCALLY even though the code is
+# correct — they pass on the Linux CI runner, which checks out LF. Forcing
+# eol=lf makes every checkout match what the tests (and CI) expect.
+#
+# `text=auto` still auto-detects binaries (ARES.png, *.pdf, etc.) and leaves
+# them untouched; only text files are normalized to LF.
+* text=auto eol=lf
