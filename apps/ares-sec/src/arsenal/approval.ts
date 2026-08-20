@@ -22,8 +22,10 @@
  * BUILT-IN probes (sqli_scan, password_spray, …) ship UNGATED for backward-compatibility — their
  * safety boundary is the always-on egress SCOPE gate (an out-of-scope target is refused regardless of
  * approval). An operator can extend this gate to cover the spicy built-ins too by launching with
- * ARES_GATE_BUILTINS=1, which stamps them with a riskTier. So the fail-safe above applies to every
- * tool that is gated; it does not, by itself, make the ungated built-ins inert.
+ * ARES_GATE_BUILTINS=1, which stamps them with a riskTier (SPICY_BUILTIN_TIERS in
+ * arsenal/index.ts — SEC-3 added the RCE/file-disclosure-class probes lfi_test=intrusive and
+ * ssti_test=dangerous alongside the pre-existing credential/injection probes). So the fail-safe
+ * above applies to every tool that is gated; it does not, by itself, make the ungated built-ins inert.
  *
  * This module is PURE — no engine/server imports, no I/O. The host injects the approver + warning
  * sink via the policy, so it is fully unit-testable with fakes. Sits behind Arsenal.execute(),

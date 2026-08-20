@@ -244,6 +244,7 @@ import {
   BUILTIN_TOOLS,
   EXTERNAL_TOOLS,
   stampSpicyBuiltin,
+  SPICY_BUILTIN_TIERS,
   hostFromTargetValue,
   scopeViolation,
   runSubprocess,
@@ -360,6 +361,11 @@ export class AresCommand extends EventEmitter<CommandEvents> {
    * phase-sequenced queue (the single-agent-equivalent baseline). Default OFF until it's proven.
    */
   private readonly coordinationEnabled = /^(1|true|on)$/i.test(process.env.ARES_SWARM_COORD ?? '');
+  /**
+   * SEC-3: opt OUT of the default fail-closed-for-public egress scope (see syncArsenalScope below).
+   * Set ARES_SCOPE_OPEN=1 to run the engine fully unscoped (rare — deliberate unscoped lab/library use).
+   */
+  private readonly scopeOpen = /^(1|true|on)$/i.test(process.env.ARES_SCOPE_OPEN ?? '');
   /** Findings that already spawned a follow-up (dedup — a finding chases exactly once). */
   private readonly spawnedFollowups = new Set<string>();
   /** Per-run cap on follow-up tasks so the refinement loop can never explode. */
@@ -388,8 +394,11 @@ export class AresCommand extends EventEmitter<CommandEvents> {
     // Register built-in tools and external CLI wrappers. The built-in intrusive/credential probes
     // (sqli_scan, password_spray, …) are the pre-existing honest baseline and stay UNGATED by default —
     // zero regression: the headline benchmark and every prior run keep firing them freely. Opt in with
-    // ARES_GATE_BUILTINS=1 to stamp the spicy ones with a riskTier so the same approval gate that
-    // fences the specialist arsenal (metasploit/hydra) also fences them.
+    // ARES_GATE_BUILTINS=1 to stamp the spicy ones (SPICY_BUILTIN_TIERS, incl. SEC-3's lfi_test/
+    // ssti_test) with a riskTier so the same approval gate that fences the specialist arsenal
+    // (metasploit/hydra) also fences them. Pair it with ARES_APPROVED_TOOLS=<comma list> to
+    // pre-authorize specific tools for an unattended run — otherwise every gated call fail-safe
+    // DENIES (see the startup warning below).
     const gateBuiltins = /^(1|true|yes|on)$/i.test(process.env.ARES_GATE_BUILTINS ?? '');
     this.arsenal.registerMany(gateBuiltins ? BUILTIN_TOOLS.map(stampSpicyBuiltin) : BUILTIN_TOOLS);
     this.arsenal.registerMany(EXTERNAL_TOOLS);
@@ -418,6 +427,26 @@ export class AresCommand extends EventEmitter<CommandEvents> {
       onDecision: (record) => this.emit('approval:decision', record),
     });
     this.arsenal.setApprovalController(this.approval);
+
+    // SEC-3: boot the egress scope gate fail-closed-for-public. syncArsenalScope() with zero
+    // targets registered yields { allowedHosts: [], allowLoopback: true, allowPrivate: true } —
+    // loopback/RFC-1918 lab targets stay open, but a networked tool can no longer reach an
+    // arbitrary public host before a target is authorized (previously: scope stayed null, i.e.
+    // fully open, until the first target:added). Set ARES_SCOPE_OPEN=1 to keep the old
+    // fully-unscoped behavior (rare — deliberate unscoped lab/library use).
+    this.syncArsenalScope();
+
+    // SEC-3: surface it loudly if the built-in gate is armed (ARES_GATE_BUILTINS=1 above) but
+    // nothing can ever approve a gated call — every gated tool will silently fail-safe DENY.
+    // Tool list is derived from SPICY_BUILTIN_TIERS so it never drifts as that map grows.
+    if (gateBuiltins && preApprovedTools.length === 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `⚠️  ARES_GATE_BUILTINS is on but ARES_APPROVED_TOOLS is empty and no interactive approver ` +
+        `is wired — every gated built-in (${Object.keys(SPICY_BUILTIN_TIERS).join(', ')}) will be ` +
+        `denied. Set ARES_APPROVED_TOOLS to a comma list to pre-authorize them.`
+      );
+    }
 
     // Phase-1 (OPT-IN): arm the specialist arsenal. Gated behind ARES_FULL_ARSENAL so the honest
     // bash-only benchmark baseline (built-ins only) stays uncontaminated — a full-power / pack hunt
@@ -540,10 +569,14 @@ export class AresCommand extends EventEmitter<CommandEvents> {
   /**
    * Recompute the arsenal's authorized egress scope from the mission's targets. Operators can only
    * reach the authorized target hosts (+ loopback + lab/private ranges); every other host is refused
-   * at arsenal.execute() before the handler runs. Called whenever a target is added, so a keyless
-   * operator can never point a networked tool at an off-target host.
+   * at arsenal.execute() before the handler runs. Called at construction (SEC-3: boots
+   * fail-closed-for-public with zero targets) and whenever a target is added, so a keyless
+   * operator can never point a networked tool at an off-target host. ARES_SCOPE_OPEN=1 (scopeOpen)
+   * disables this entirely, leaving the arsenal's scope null (fully unscoped — the pre-SEC-3
+   * behavior), for the rare deliberate unscoped lab/library run.
    */
   private syncArsenalScope(): void {
+    if (this.scopeOpen) return; // ARES_SCOPE_OPEN=1 → run fully unscoped (rare)
     const allowedHosts = this.targetEnv.getAllTargets()
       .map((t) => hostFromTargetValue(t.address))
       .filter((h): h is string => !!h);
