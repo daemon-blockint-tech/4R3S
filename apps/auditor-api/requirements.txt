@@ -36,5 +36,13 @@ uvicorn
 # test-only.
 httpx2==2.9.1
 
+# MCP (stdio) server exposing scan/enrich as agent tools -- mcp_server.py.
+# Pinned to the version this was actually built and tested against: 2.0.0
+# restructured the high-level server API from the older FastMCP name/import
+# path (mcp.server.fastmcp.FastMCP) to mcp.server.mcpserver.MCPServer --
+# confirm the import path if this pin is ever bumped, don't assume it's
+# unchanged across a major version.
+mcp==2.0.0
+
 # Tests
 pytest==9.1.1
