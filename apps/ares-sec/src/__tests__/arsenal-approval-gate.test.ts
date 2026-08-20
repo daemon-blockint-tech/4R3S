@@ -115,3 +115,58 @@ describe('opt-in built-in gating (ARES_GATE_BUILTINS) — stampSpicyBuiltin', ()
     expect(t.ran()).toBe(true);
   });
 });
+
+describe('SEC-3 danger taxonomy — RCE-class built-ins classified', () => {
+  it('classifies ssti_test=dangerous and lfi_test=intrusive in SPICY_BUILTIN_TIERS', () => {
+    expect(SPICY_BUILTIN_TIERS['ssti_test']).toBe('dangerous');
+    expect(SPICY_BUILTIN_TIERS['lfi_test']).toBe('intrusive');
+  });
+
+  it('leaves non-destructive probes ungated', () => {
+    expect(SPICY_BUILTIN_TIERS['open_redirect_test']).toBeUndefined();
+    expect(SPICY_BUILTIN_TIERS['dir_bruteforce']).toBeUndefined();
+  });
+
+  it('DEFAULT POSTURE: shared BUILTIN_TOOLS defs stay untiered for the RCE-class probes', () => {
+    for (const n of ['ssti_test', 'lfi_test']) {
+      const def = BUILTIN_TOOLS.find((t) => t.name === n);
+      expect(def, `${n} must exist as a built-in`).toBeDefined(); // pin existence so the next assert can't pass vacuously
+      expect(def?.riskTier, `${n} shared def stays ungated`).toBeUndefined();
+    }
+  });
+
+  it('stamped ssti_test is fail-safe DENIED unattended (dangerous ⇒ gated)', async () => {
+    const t = probe('ssti_test', 'dangerous');
+    const ars = new Arsenal();
+    ars.register(t);
+    ars.setApprovalController(new ApprovalController()); // no approver, no allowlist
+    const res = await ars.execute('ssti_test', ctx({ url: 'https://target.example.com/render' }));
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/APPROVAL REQUIRED/);
+    expect(t.ran()).toBe(false); // gate ran before the handler
+  });
+
+  it('a pre-approved ssti_test fires the loud spicy warning (dangerous is spicy)', async () => {
+    const onWarning = vi.fn();
+    const t = probe('ssti_test', 'dangerous');
+    const ars = new Arsenal();
+    ars.register(t);
+    ars.setApprovalController(new ApprovalController({ preApprovedTools: ['ssti_test'], onWarning }));
+    const res = await ars.execute('ssti_test', ctx({ url: 'https://target.example.com/render' }));
+    expect(res.success).toBe(true);
+    expect(onWarning).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pre-approved lfi_test runs but does NOT warn (intrusive is gated-not-spicy)', async () => {
+    const onWarning = vi.fn();
+    const t = probe('lfi_test', 'intrusive');
+    const ars = new Arsenal();
+    ars.register(t);
+    const controller = new ApprovalController({ preApprovedTools: ['lfi_test'], onWarning });
+    ars.setApprovalController(controller);
+    const res = await ars.execute('lfi_test', ctx({ url: 'https://target.example.com/file' }));
+    expect(res.success).toBe(true);
+    expect(onWarning).not.toHaveBeenCalled();
+    expect(controller.getAudit()[0]?.outcome).toBe('allowed-preapproved');
+  });
+});
