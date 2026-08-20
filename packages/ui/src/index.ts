@@ -1,5 +1,7 @@
 export { cn } from "./utils";
 
+export { Alert, AlertTitle, AlertDescription } from "./components/alert";
+export { Avatar, AvatarImage, AvatarFallback } from "./components/avatar";
 export { Badge, badgeVariants } from "./components/badge";
 export { Button, buttonVariants } from "./components/button";
 export {
@@ -11,6 +13,7 @@ export {
   CardDescription,
   CardContent,
 } from "./components/card";
+export { Checkbox } from "./components/checkbox";
 export {
   Dialog,
   DialogClose,
@@ -24,6 +27,8 @@ export {
   DialogTrigger,
 } from "./components/dialog";
 export { Input } from "./components/input";
+export { Label } from "./components/label";
+export { RadioGroup, RadioGroupItem } from "./components/radio-group";
 export { ScrollArea, ScrollBar } from "./components/scroll-area";
 export {
   Select,
@@ -38,7 +43,9 @@ export {
   SelectValue,
 } from "./components/select";
 export { Separator } from "./components/separator";
+export { Skeleton } from "./components/skeleton";
 export { Toaster } from "./components/sonner";
+export { Switch } from "./components/switch";
 export {
   Tabs,
   TabsList,
