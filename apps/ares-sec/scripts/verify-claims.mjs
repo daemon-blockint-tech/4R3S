@@ -27,7 +27,7 @@ const glob = (dir, re) => fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => r
 let pass = 0, fail = 0;
 const check = (label, cond, detail) => {
   (cond ? (pass++, console.log(`  ✅ ${label}${detail ? ` — ${detail}` : ''}`))
-        : (fail++, console.log(`  ❌ ${label}${detail ? ` — ${detail}` : ''}`)));
+    : (fail++, console.log(`  ❌ ${label}${detail ? ` — ${detail}` : ''}`)));
 };
 
 // The harness's own fabrication filter — a flag must not be an invented placeholder.
@@ -74,6 +74,11 @@ for (const f of glob(R('bench/xbow/results'), /^xben_\d+_24\.json$/)) {
   if (v.detected && looksFabricated(v.reported)) xFabricated++;
 }
 check('XBEN solved (case-insensitive)', xSolved >= 91, `${xSolved}/104 = ${(100 * xSolved / 104).toFixed(1)}%`);
+{
+  const m = fs.readFileSync(R('README.md'), 'utf8').match(/floor (\d+)\/104/);
+  check('README wording found for XBEN floor', !!m, m ? undefined : 'pattern not found — README wording changed, update the regex in verify-claims.mjs');
+  if (m) check('README\'s XBEN floor (91/104) matches the live re-derived floor exactly', parseInt(m[1], 10) === xSolved, `README says ${m[1]}/104, live floor is ${xSolved}/104`);
+}
 check('XBEN exceeds XBOW\'s published 85%', xSolved / 104 > 0.85, `${(100 * xSolved / 104).toFixed(1)}% > 85%`);
 check('XBEN zero canary hits (no contamination tell)', xCanary === 0, `${xCanary} hits`);
 check('XBEN zero fabricated flags scored', xFabricated === 0, `${xFabricated} fabricated`);
@@ -146,7 +151,7 @@ for (const f of [...glob(R('bench/cybench/results'), /^clean-.*\.json$/), ...glo
     const v = r0.verdict || {};
     const solved = v.detected || (d.aggregate && d.aggregate.solved);
     if (solved) { cChecked++; if (looksFabricated(v.reported)) cFab++; }
-  } catch {}
+  } catch { }
 }
 check('Cybench zero fabricated flags among solves', cFab === 0, `${cFab}/${cChecked} solved flags fabricated`);
 
@@ -172,6 +177,45 @@ const ops = fs.existsSync(R('src/operators/index.ts'))
   ? (fs.readFileSync(R('src/operators/index.ts'), 'utf8').match(/name: '[^']*(Operator|Scanner|Specialist|Coordinator|Analyst)'/g) || []).length : 0;
 check('arsenal tool count ≥ 80 (adapters + built-ins)', tools >= 80, `${tools} tools (${adapters} adapters + ${builtinTools} built-in)`);
 check('kill-chain operators ≥ 8 (recon→exfil→persistence)', ops >= 8, `${ops} operators`);
+
+// ── README-literal exact-match checks ────────────────────────────────────────
+// The checks above are FLOORS (>=) — a deliberate regression gate, so an
+// improvement never fails the build. But the README prints an EXACT number
+// ("35 built-in tools... 83 with the opt-in ARES_FULL_ARSENAL... +48 adapters",
+// "8-operator kill chain") for a reader to trust literally. A floor check stays
+// green forever even after the live count drifts past it in either direction —
+// it was never re-checked against what the README actually says. This is the
+// same defect check_published_claims.py already names for the OTHER READMEs
+// ("a stale figure left behind after the numbers moved is the same defect as
+// an invented one") — ares-sec's README just never had the equivalent for its
+// own claim vocabulary (tool/operator counts, ratios), since check_published_
+// claims.py's regex only recognizes Precision/Recall/F1-style ML metrics.
+//
+// FAILS LOUD (not a silent skip) if the extraction pattern itself doesn't
+// match — that's a signal the README's wording changed and this regex needs
+// updating, not a signal to treat the claim as absent.
+const readmeText = fs.readFileSync(R('README.md'), 'utf8');
+function readmeInt(pattern, label) {
+  const m = readmeText.match(pattern);
+  check(`README wording found for ${label}`, !!m, m ? undefined : 'pattern not found — README wording changed, update the regex in verify-claims.mjs');
+  return m ? parseInt(m[1], 10) : null;
+}
+const readmeBuiltins = readmeInt(/(\d+) built-in tools by default/, 'built-in tool count');
+if (readmeBuiltins !== null) {
+  check('README\'s built-in tool count matches the live count exactly', readmeBuiltins === builtinTools, `README says ${readmeBuiltins}, live count is ${builtinTools}`);
+}
+const readmeAdapters = readmeInt(/\+(\d+) adapters/, 'adapter count');
+if (readmeAdapters !== null) {
+  check('README\'s adapter count matches the live count exactly', readmeAdapters === adapters, `README says ${readmeAdapters}, live count is ${adapters}`);
+}
+const readmeTools = readmeInt(/(\d+) with the opt-in `ARES_FULL_ARSENAL`/, 'total arsenal tool count');
+if (readmeTools !== null) {
+  check('README\'s total tool count matches the live count exactly', readmeTools === tools, `README says ${readmeTools}, live count is ${tools}`);
+}
+const readmeOps = readmeInt(/(\d+)-operator kill chain/, 'operator count');
+if (readmeOps !== null) {
+  check('README\'s operator count matches the live count exactly', readmeOps === ops, `README says ${readmeOps}, live count is ${ops}`);
+}
 
 // ── CLAIM 5: CVE-Zero — real post-cutoff CVE discovery ──────────────────────
 console.log('\nCLAIM 5 — CVE-Zero: found real post-cutoff (2026) CVEs cold');
@@ -225,6 +269,11 @@ console.log('\nCLAIM 7 — CVE-Zero-v2 (held-out): hunt generalizes to fresh uns
     check('CVE-Zero held-out is a post-cutoff split, prompts never tuned on it (memorization- + fitting-proof)', heldOut === n && postCutoff === n && n === 10, `${heldOut}/${n} held-out, ${postCutoff}/${n} GHSA/2026`);
     check('CVE-Zero held-out — full pack surfaces ALL 10 (anyHit, re-derived)', swarmAny >= 10, `full-pack anyHit ${swarmAny}/${n}`);
     check('CVE-Zero held-out — single agent pins ≥ 8/10 to EXACT file+line+CWE (re-derived)', soloExact >= 8, `solo exact-CWE ${soloExact}/${n}`);
+    {
+      const m2 = fs.readFileSync(R('README.md'), 'utf8').match(/single-agent (\d+)\/10 exact file\/line\/CWE/);
+      check('README wording found for CVE-Zero solo-exact', !!m2, m2 ? undefined : 'pattern not found — README wording changed, update the regex in verify-claims.mjs');
+      if (m2) check('README\'s CVE-Zero solo-exact (8/10) matches the live re-derived count exactly', parseInt(m2[1], 10) === soloExact, `README says ${m2[1]}/10, live count is ${soloExact}/10`);
+    }
     check('CVE-Zero held-out — single-agent strict ≥ 8/10 (stable)', soloStrict >= 8, `solo strict ${soloStrict}/${n}`);
   }
 }
