@@ -1,0 +1,633 @@
+{
+  "key": [
+    "target_id",
+    "category"
+  ],
+  "filters": {
+    "min_confidence": null,
+    "drop_status": [
+      "false-positive"
+    ],
+    "include_speculative": false
+  },
+  "overall": {
+    "support": 170,
+    "predicted": 119,
+    "tp": 92,
+    "fp": 27,
+    "fn": 78,
+    "precision": 0.773109243697479,
+    "recall": 0.5411764705882353,
+    "f1": 0.6366782006920415
+  },
+  "slices": {
+    "category": {
+      "missing-owner-check": {
+        "support": 62,
+        "predicted": 46,
+        "tp": 34,
+        "fp": 12,
+        "fn": 28,
+        "precision": 0.7391304347826086,
+        "recall": 0.5483870967741935,
+        "f1": 0.6296296296296297
+      },
+      "integer-overflow-underflow": {
+        "support": 48,
+        "predicted": 26,
+        "tp": 24,
+        "fp": 2,
+        "fn": 24,
+        "precision": 0.9230769230769231,
+        "recall": 0.5,
+        "f1": 0.6486486486486487
+      },
+      "type-cosplay": {
+        "support": 33,
+        "predicted": 32,
+        "tp": 29,
+        "fp": 3,
+        "fn": 4,
+        "precision": 0.90625,
+        "recall": 0.8787878787878788,
+        "f1": 0.8923076923076922
+      },
+      "arbitrary-cpi": {
+        "support": 13,
+        "predicted": 8,
+        "tp": 5,
+        "fp": 3,
+        "fn": 8,
+        "precision": 0.625,
+        "recall": 0.38461538461538464,
+        "f1": 0.4761904761904762
+      },
+      "account-data-matching": {
+        "support": 2,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "non-canonical-bump": {
+        "support": 2,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "sysvar-spoofing": {
+        "support": 2,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "missing-signer-check": {
+        "support": 2,
+        "predicted": 7,
+        "tp": 0,
+        "fp": 7,
+        "fn": 2,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "account-close-revival": {
+        "support": 1,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "account-reinitialization": {
+        "support": 1,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "duplicate-mutable-account": {
+        "support": 1,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "oracle-price-manipulation": {
+        "support": 1,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "precision-loss": {
+        "support": 1,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "pda-seed-collision": {
+        "support": 1,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    },
+    "severity": {
+      "high": {
+        "support": 151,
+        "predicted": 87,
+        "tp": 87,
+        "fp": 0,
+        "fn": 64,
+        "precision": 1.0,
+        "recall": 0.5761589403973509,
+        "f1": 0.7310924369747899
+      },
+      "critical": {
+        "support": 14,
+        "predicted": 5,
+        "tp": 5,
+        "fp": 0,
+        "fn": 9,
+        "precision": 1.0,
+        "recall": 0.35714285714285715,
+        "f1": 0.5263157894736842
+      },
+      "medium": {
+        "support": 5,
+        "predicted": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 5,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "unlabeled": {
+        "support": 0,
+        "predicted": 27,
+        "tp": 0,
+        "fp": 27,
+        "fn": 0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      }
+    }
+  },
+  "misses": [
+    {
+      "target_id": "incident-repros:cashio-2022",
+      "category": "account-data-matching"
+    },
+    {
+      "target_id": "incident-repros:mango-2022",
+      "category": "oracle-price-manipulation"
+    },
+    {
+      "target_id": "incident-repros:wormhole-2022",
+      "category": "sysvar-spoofing"
+    },
+    {
+      "target_id": "neodyme-workshop:level1",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "neodyme-workshop:level2",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "neodyme-workshop:level4",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "sealevel-attacks:0-signer-authorization",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "sealevel-attacks:1-account-data-matching",
+      "category": "account-data-matching"
+    },
+    {
+      "target_id": "sealevel-attacks:10-sysvar-address-checking",
+      "category": "sysvar-spoofing"
+    },
+    {
+      "target_id": "sealevel-attacks:2-owner-checks",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "sealevel-attacks:4-initialization",
+      "category": "account-reinitialization"
+    },
+    {
+      "target_id": "sealevel-attacks:5-arbitrary-cpi",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "sealevel-attacks:6-duplicate-mutable-accounts",
+      "category": "duplicate-mutable-account"
+    },
+    {
+      "target_id": "sealevel-attacks:7-bump-seed-canonicalization",
+      "category": "non-canonical-bump"
+    },
+    {
+      "target_id": "sealevel-attacks:8-pda-sharing",
+      "category": "pda-seed-collision"
+    },
+    {
+      "target_id": "sealevel-attacks:9-closing-accounts",
+      "category": "account-close-revival"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:06df4eb9d991",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:0af00de1ac2e",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:0b67b044ac66",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:0c88e66e6838",
+      "category": "precision-loss"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:0eba2097d24e",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:132c420bee60",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:1aafc1aa0aa3",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:2156df31648e",
+      "category": "type-cosplay"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:2c28c7495352",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:30e80d81e64b",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:326f1798c8c5",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:344abc8d4912",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:35f5f8e608da",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:37137c47ae2b",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:37b321507a45",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:38425fa32500",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:39396a392c5b",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:4acdc674d931",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:5272f003f361",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:5272f003f361",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:5557feb06736",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:583bd2c50880",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:5e35150cedf1",
+      "category": "type-cosplay"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:720dfc994aeb",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:720dfc994aeb",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:729a1dff576f",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:729a1dff576f",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:77d63efbfa77",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:7919718a0b1d",
+      "category": "type-cosplay"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:806808dadec0",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:84010a4ab2e5",
+      "category": "non-canonical-bump"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:87649ea9e3b2",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:8d244ba79dfb",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:8fe495500815",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:9114c22d0286",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:95a4f7d6b890",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:9beac7435177",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:9cd1a2161835",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:9e815f1dbd61",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:9e815f1dbd61",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:9f7a4eae495c",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:a293e4b32e5e",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:a8e59817d866",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:ade221046600",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:aee705b19180",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:b09efa0be4ad",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:b972f89d83b8",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:bee309744532",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:bee309744532",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:d20aa6eddae9",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:d4b210793002",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:d7596be1269d",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:ddd10b960c77",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:ddd10b960c77",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:e2a00f0bc312",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:eabbbe838b52",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:eb0c9b0e0c8f",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:f2e4860eb884",
+      "category": "type-cosplay"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:f76414795b35",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:f8866570b894",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:fac2a9501cf3",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:ffb58007e9d9",
+      "category": "integer-overflow-underflow"
+    }
+  ],
+  "false_positives": [
+    {
+      "target_id": "incident-repros:mango-2022",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "incident-repros:wormhole-2022",
+      "category": "integer-overflow-underflow"
+    },
+    {
+      "target_id": "neodyme-workshop:level1",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "neodyme-workshop:level1",
+      "category": "type-cosplay"
+    },
+    {
+      "target_id": "neodyme-workshop:level2",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "neodyme-workshop:level2",
+      "category": "type-cosplay"
+    },
+    {
+      "target_id": "neodyme-workshop:level3",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "neodyme-workshop:level4",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "sealevel-attacks:1-account-data-matching",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "sealevel-attacks:4-initialization",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "sealevel-attacks:4-initialization",
+      "category": "type-cosplay"
+    },
+    {
+      "target_id": "sealevel-attacks:8-pda-sharing",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "sealevel-attacks:9-closing-accounts",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:04113a779705",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:12647055197c",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:2f20d2dbf057",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:3bfde7207537",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:4b5b963455db",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:5193b2d0224e",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:648db1b0bd16",
+      "category": "missing-owner-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:648db1b0bd16",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:6bae2130540f",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:6db5934a380c",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:e83d0a9d7518",
+      "category": "arbitrary-cpi"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:e83d0a9d7518",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:f9ab74f362d7",
+      "category": "missing-signer-check"
+    },
+    {
+      "target_id": "solana-vuln-rust:train:ffb58007e9d9",
+      "category": "missing-owner-check"
+    }
+  ]
+}
