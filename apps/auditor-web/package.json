@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.29",
+    "@ares/ui": "file:../../packages/ui",
     "@git-diff-view/file": "^0.1.7",
     "@git-diff-view/react": "^0.1.7",
     "@monaco-editor/react": "^4.7.0",
