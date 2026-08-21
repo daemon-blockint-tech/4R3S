@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-const configSource = readFileSync(join(process.cwd(), 'src/config/index.ts'), 'utf8');
-const setupScript = readFileSync(join(process.cwd(), 'scripts/setup-api.sh'), 'utf8');
+// Normalize CRLF→LF on read: the multi-line source markers below (e.g.
+// '\n  /**\n   * Get all settings') are anchored with '\n', so a CRLF working
+// copy would break the block extraction even though the source is correct. CI
+// checks out LF, but a Windows checkout can be CRLF regardless of the tree's
+// .gitattributes eol=lf, so this keeps the (EOL-agnostic) assertions portable.
+const configSource = readFileSync(join(process.cwd(), 'src/config/index.ts'), 'utf8').replace(/\r\n/g, '\n');
+const setupScript = readFileSync(join(process.cwd(), 'scripts/setup-api.sh'), 'utf8').replace(/\r\n/g, '\n');
 
 function sourceBlock(startMarker: string, endMarker: string): string {
   const start = configSource.indexOf(startMarker);
