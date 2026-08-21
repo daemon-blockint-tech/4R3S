@@ -4,11 +4,11 @@
   "private": true,
   "description": "ARES Auditor dashboard — UI shell from vercel-labs/coding-agent-template (Apache-2.0)",
   "license": "Apache-2.0",
-  "packageManager": "pnpm@10.10.0",
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --turbopack",
     "start": "next start",
+    "postinstall": "node scripts/copy-ares-ui.js",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.29",
+    "@ares/ui": "file:../../packages/ui",
     "@git-diff-view/file": "^0.1.7",
     "@git-diff-view/react": "^0.1.7",
     "@monaco-editor/react": "^4.7.0",

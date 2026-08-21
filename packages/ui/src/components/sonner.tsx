@@ -1,3 +1,5 @@
+"use client"
+
 import type { CSSProperties } from "react"
 import {
   CircleCheckIcon,
@@ -6,19 +8,23 @@ import {
   OctagonXIcon,
   TriangleAlertIcon,
 } from "lucide-react"
-import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
-// Uses next-themes' useTheme hook — a real, already-installed dependency in
-// War Room despite the package name suggesting Next.js specifically; its
-// core hook works standalone in any React app. Not something introduced by
-// this extraction, carried over as-is from the original component.
-const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
-
+// Deliberately theme-agnostic — UI-2 found the two real consumers use
+// genuinely different theme systems: auditor-web (Next.js) has its own
+// custom, SSR-aware theme provider (not next-themes), while War Room
+// (Vite, dark-default design) has no dynamic theme switching at all.
+// Rather than hardcode either app's specific hook here, this accepts a
+// plain `theme` value — each app supplies it however it determines theme
+// for itself. Defaults to "dark" to match War Room's own existing usage
+// unchanged (it never passed a theme prop before this change either).
+const Toaster = ({
+  theme = "dark",
+  ...props
+}: ToasterProps) => {
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={theme}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,

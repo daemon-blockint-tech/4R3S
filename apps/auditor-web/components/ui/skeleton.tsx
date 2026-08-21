@@ -1,13 +1,3 @@
-import { cn } from "@/lib/utils"
-
-function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="skeleton"
-      className={cn("animate-pulse rounded-md bg-accent", className)}
-      {...props}
-    />
-  )
-}
-
-export { Skeleton }
+// Re-export shim — the real implementation now lives in @ares/ui (UI-2).
+// Verified byte-identical except the import path for cn.
+export { Skeleton } from "@ares/ui"

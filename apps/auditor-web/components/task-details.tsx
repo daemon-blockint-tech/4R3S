@@ -1483,6 +1483,7 @@ export function TaskDetails({ task, maxSandboxDuration = 300 }: TaskDetailsProps
                           size="sm"
                           disabled={isClosingPR || isMergingPR}
                           className="h-7 md:h-8 px-1.5 rounded-l-none"
+                          aria-label="More PR actions"
                         >
                           <ChevronDown className="h-3.5 w-3.5 md:h-4 md:w-4" />
                         </Button>
@@ -1996,6 +1997,7 @@ export function TaskDetails({ task, maxSandboxDuration = 300 }: TaskDetailsProps
                           size="sm"
                           className="h-6 w-6 p-0 flex-shrink-0"
                           disabled={isRestartingDevServer || isStoppingSandbox || isStartingSandbox}
+                          aria-label="More options"
                         >
                           <MoreVertical className="h-3.5 w-3.5" />
                         </Button>
@@ -2267,6 +2269,7 @@ export function TaskDetails({ task, maxSandboxDuration = 300 }: TaskDetailsProps
                           size="sm"
                           className="h-6 w-6 p-0 flex-shrink-0"
                           disabled={isRestartingDevServer || isStoppingSandbox || isStartingSandbox}
+                          aria-label="More options"
                         >
                           <MoreVertical className="h-3.5 w-3.5" />
                         </Button>
