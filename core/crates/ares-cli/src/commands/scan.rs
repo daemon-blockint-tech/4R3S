@@ -285,7 +285,12 @@ pub async fn execute(
         for target_name in fuzz_targets {
             info!("Fuzzing target: {}", target_name);
             let fuzz_result = trident
-                .fuzz_run(&target_name, config.max_fuzz_iterations, max_duration)
+                .fuzz_run(
+                    &target_name,
+                    config.max_fuzz_iterations,
+                    max_duration,
+                    false,
+                )
                 .await?;
 
             if !fuzz_result.success {

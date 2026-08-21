@@ -15,6 +15,18 @@ pub async fn execute(
         "Target: {:?} | Iterations: {} | Deterministic: {}",
         path, iterations, deterministic
     );
+    if deterministic {
+        // Be honest about what this mode can and cannot do. Trident wraps
+        // honggfuzz, which has no fixed-RNG-seed flag, so this is single-threaded
+        // (honggfuzz -n 1) and bounded — reproducible campaign shape, not a
+        // bit-identical replay. Exact crash replay is a separate Trident command.
+        info!(
+            "Deterministic mode: single-threaded (honggfuzz -n 1), bounded to {} iterations. \
+             Note: Trident/honggfuzz has no fixed RNG seed, so runs are not bit-identical; \
+             use 'trident fuzz run-debug <target> <crash_file>' to replay a specific crash.",
+            iterations
+        );
+    }
 
     let trident = TridentTool::new(None)?;
     let trident = trident.with_working_dir(path.to_path_buf());
@@ -47,7 +59,9 @@ pub async fn execute(
             "Running fuzz target: {} ({} iterations)",
             target, iterations
         );
-        let result = trident.fuzz_run(&target, iterations, 3600).await?;
+        let result = trident
+            .fuzz_run(&target, iterations, 3600, deterministic)
+            .await?;
 
         if result.success {
             info!(
