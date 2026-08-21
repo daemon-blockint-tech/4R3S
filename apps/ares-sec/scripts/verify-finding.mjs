@@ -576,7 +576,7 @@ async function main() {
 
 export { checkAnchors, classObligation, locateRepo, manualUrls, POC_RANK,
          checkPocArtifact, checkRefutation, checkRefutationAdjudication, checkNoveltyAttestation, checkHeadStillVulnerable,
-         checkDominatingGuard, enclosingFunctionRange, checkSeverityEvidence };
+         checkDominatingGuard, enclosingFunctionRange, checkSeverityEvidence, checkOSV };
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) main();

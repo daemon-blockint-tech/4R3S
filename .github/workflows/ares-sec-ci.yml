@@ -34,6 +34,10 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      # SEC-4: the coordinated-disclosure pipeline (OSV + live PoC + refuter),
+      # drafts-only. This self-test is hermetic — no network, no toolchain, no
+      # LLM key — so it runs green in CI where those are all absent.
+      - run: npm run test:disclose:pipeline
       - run: npm run doctor
       # Honesty gates: prove the headline numbers re-derive and that no
       # challenge-fitting has crept in. Public contributors / CI can verify.
