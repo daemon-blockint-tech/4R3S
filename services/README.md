@@ -9,4 +9,4 @@ Status, per service:
 | `cve` | Built — offline RustSec advisory matching. See `services/cve/README.md`. |
 | `risk` | Built — OWASP Risk Rating Methodology scoring + vuln-catalog calibration. See `services/risk/README.md`. |
 | `family` | Built — winnowing-based clone clustering + fork flag propagation. See `services/family/README.md`. |
-| `evidence` | Skeleton. |
+| `evidence` | Off-chain half built — Merkle evidence bundling + verifier. The `evidence_registry` Anchor program is **source + host-target spec tests only: never compiled to SBF, never deployed, no cluster anchor exists.** See `services/evidence/README.md`. |

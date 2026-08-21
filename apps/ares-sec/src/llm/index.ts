@@ -812,7 +812,8 @@ class LocalAdapter implements LLMProviderAdapter {
     } catch (error) {
       if (error instanceof TypeError && error.message.includes('fetch')) {
         throw new Error(
-          'Could not connect to local LLM. Start Ollama (`ollama serve`), or point ARES_LOCAL_BASE_URL at your OpenAI-compatible server (LM Studio / vLLM / llama.cpp).'
+          'Could not connect to local LLM. Start Ollama (`ollama serve`), or point ARES_LOCAL_BASE_URL at your OpenAI-compatible server (LM Studio / vLLM / llama.cpp).',
+          { cause: error }
         );
       }
       throw error;

@@ -1,0 +1,63 @@
+{
+  "target": {
+    "name": "sealevel-attacks_0-signer-authorization",
+    "repository_url": null,
+    "commit_hash": "3f5f14b3091e59021b770018cabf9d5f66cdf9d9",
+    "program_id": null,
+    "source_path": "eval/data/staging/sealevel-attacks_0-signer-authorization/",
+    "idl_path": null
+  },
+  "findings": [],
+  "suppressed_findings": [
+    {
+      "finding": {
+        "id": "ARES-AST-1",
+        "title": "anchor-constraint-gap: eval/data/staging/sealevel-attacks_0-signer-authorization/src\\lib.rs",
+        "description": "`LogMessage` has an authority-like field `authority`, but no field's `has_one` constraint references it. Without `has_one = authority` on the account it authorizes, Anchor never confirms this signer actually owns/matches the account being acted on.",
+        "severity": "Medium",
+        "category": "ownership-check",
+        "location": {
+          "file": "eval/data/staging/sealevel-attacks_0-signer-authorization/src\\lib.rs",
+          "line_start": null,
+          "line_end": null,
+          "column_start": null,
+          "column_end": null,
+          "function": null,
+          "commit": null
+        },
+        "proof_of_concept": "eval/data/reports-astscan\\poc\\ares_ast_1_test.rs",
+        "recommendation": "Review the flagged Anchor/Solitaire account constraint or taint-tracked sink.",
+        "references": [],
+        "confidence": 0.55,
+        "validation": null
+      },
+      "reason": "Confidence below threshold",
+      "suppressed_by": "triager"
+    }
+  ],
+  "metadata": {
+    "generated_at": "2026-08-18T07:09:27.787415200Z",
+    "ares_version": "0.1.0",
+    "scan_duration_secs": 0,
+    "agent_pipeline": [
+      "Mapper",
+      "HypothesisGenerator",
+      "Triager"
+    ],
+    "tools_used": []
+  },
+  "summary": {
+    "total_findings": 0,
+    "critical_count": 0,
+    "high_count": 0,
+    "medium_count": 0,
+    "low_count": 0,
+    "informational_count": 0,
+    "false_positives_suppressed": 1,
+    "poc_generated": 0,
+    "tests_passed": 0,
+    "tests_failed": 0,
+    "total_economic_impact_lamports": 0,
+    "max_single_exploit_lamports": 0
+  }
+}

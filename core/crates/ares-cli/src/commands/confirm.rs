@@ -2,6 +2,7 @@ use crate::commands::validate::{run_poc, PocVerdict};
 use ares_core::{
     AresConfig, AresError, AresResult, AuditReport, Finding, Severity, ValidationOutcome,
 };
+use chrono::Utc;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -93,6 +94,11 @@ pub async fn execute(
     }
 
     recompute_severity_counts(&mut report);
+    // The one piece of provenance this pass has to add itself: until now
+    // nothing recorded when a confirmation pass ran at all. `generated_at` is
+    // set once, at `scan` time, and stays untouched here -- so a `.confirmed.json`
+    // used to carry only the original scan's timestamp.
+    report.metadata.confirmed_at = Some(Utc::now());
 
     let confirmed_count = count_outcome(&report, ValidationOutcome::Confirmed);
     let refuted_count = count_outcome(&report, ValidationOutcome::Refuted);
@@ -412,7 +418,6 @@ fn find_program_so(project_root: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use ares_core::{CodeLocation, ProgramTarget, ReportMetadata, ReportSummary};
-    use chrono::Utc;
 
     fn sample_finding(id: &str, severity: Severity, confidence: f64) -> Finding {
         Finding {
@@ -444,6 +449,7 @@ mod tests {
             suppressed_findings: vec![],
             metadata: ReportMetadata {
                 generated_at: Utc::now(),
+                confirmed_at: None,
                 ares_version: "0.1.0".to_string(),
                 scan_duration_secs: 1,
                 agent_pipeline: vec![],

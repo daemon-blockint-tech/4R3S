@@ -1,0 +1,23 @@
+# services/evidence has NO runtime dependencies, and that is a deliberate
+# property rather than an accident of scope.
+#
+# Everything this service does at runtime is in the standard library:
+#   hashlib      sha256, the same primitive Solana exposes as the sol_sha256
+#                syscall and the one core/ already uses (sha2 0.11) for the
+#                Anchor discriminator
+#   json         with parse_float=str, which is what keeps a Merkle root from
+#                depending on how an interpreter spells a float
+#   unicodedata  NFC normalisation, so a filename written on macOS (NFD) and
+#                the same file on Windows/Linux (NFC) hash identically
+#
+# Adding a dependency here would put a non-determinism surface -- and a
+# supply-chain surface -- into a service whose entire value is that a third
+# party can re-derive its output from committed source. A Merkle library in
+# particular would be the wrong trade: the tree is ~40 lines, its exact shape is
+# security-relevant (RFC 6962 vs the malleable Bitcoin construction), and a
+# dependency would hide that choice instead of stating it.
+#
+# Same absence-is-justified convention as services/cve, services/risk and
+# services/family.
+
+pytest==9.1.1

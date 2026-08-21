@@ -1,0 +1,46 @@
+[workspace]
+# An EMPTY workspace table, deliberately. This makes the crate its own workspace
+# root, so it never tries to join core/'s workspace and never needs an `exclude`
+# entry in core/Cargo.toml. That file changed five times in the last three weeks
+# and three required status checks run cargo over that tree on every Rust PR;
+# staying out of it entirely is worth more than the convenience of being a member.
+
+[package]
+name = "evidence-registry-spec"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["ARES Team"]
+license = "MIT"
+description = "Byte-level specification shared by the evidence_registry Solana program and the off-chain bundler in services/evidence."
+publish = false
+
+# NO [dependencies]. Not "few" -- none.
+#
+# This is the load-bearing property of the whole on-chain half. The Anchor
+# program under ../anchor/ cannot be built here: there is no solana CLI, no
+# anchor CLI and no cargo build-sbf on this machine or in CI. If this crate
+# shared a workspace with that one, `cargo test` would still have to RESOLVE the
+# anchor-lang -> solana-program graph, which needs the registry index and is
+# exposed to toolchain drift under a floating `stable`.
+#
+# With zero dependencies, this crate's tests are immune to Anchor and Solana
+# toolchain churn by construction. It holds the constants and the pure functions;
+# the program is a thin wrapper that calls into it, and the syscall does the
+# hashing on chain while sha2 does it here.
+
+[dev-dependencies]
+# Every version below is pinned to exactly what core/Cargo.lock already resolves,
+# so this crate's lockfile stays a strict SUBSET of core's. That invariant is
+# what closes the gating hole: cargo-deny in ci.yml is pinned to
+# `manifest-path: core/Cargo.toml` and cargo-audit runs only in core/, so a crate
+# outside that tree is otherwise ungated. A subset cannot introduce anything
+# those two have not already cleared. tests/lockfile_subset.rs enforces it.
+#
+# Corollary: do NOT add a .github/dependabot.yml entry for this manifest. A bump
+# here would break the subset invariant until core bumped too, producing
+# permanently-red PRs.
+sha2 = "0.11.0"
+serde_json = "1.0.151"
+syn = { version = "3.0.3", features = ["full", "visit"] }
+quote = "1.0.47"

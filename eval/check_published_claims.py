@@ -15,9 +15,24 @@ measured", and that becomes true the moment a README is edited and merged.
 `4R3S` ships two products (CLAUDE.md #1), so one root README was never the whole
 surface: a figure in `apps/ares-sec/README.md` shipped unguarded. Every README a
 product publishes from is checked here, and each is paired with the run that
-could produce its numbers. ares-sec has no eval harness yet — SEC-1 lands its
-source, P3 — so a figure there is unverifiable by construction rather than by
-disagreement, and says so.
+could produce its numbers.
+
+`apps/ares-sec/README.md` stays `scoreable=False` here, but not because ares-sec
+has no harness -- it has one, and as of SEC-5 a more thorough one than this
+script: `npm run verify-claims` (apps/ares-sec/scripts/verify-claims.mjs)
+re-derives ares-sec's headline numbers from its own committed bench/ artifacts,
+gated in its own CI job (ares-sec-ci.yml), and exact-matches them against the
+README's literal printed numbers -- not just the floor-style regression checks
+this repo started with. `scoreable=False` means this SPECIFIC script does not
+verify those claims, because it cannot: the regex vocabulary below only
+recognizes Precision/Recall/F1-style ML metrics, and ares-sec's claims are pass
+rates, ratios, and tool/operator counts against a Node/JSON pipeline this
+script has no access to. A Precision/Recall/F1-shaped figure appearing on that
+README regardless is still correctly rejected below -- see
+`test_ares_sec_cannot_publish_a_figure_while_it_has_no_harness` in
+test_check_published_claims.py -- because this script cannot tell that figure
+apart from one nothing verified, and laundering it against the wrong pipeline's
+score.json would be worse than refusing it.
 
 Checks, per guarded README, in order of what they catch:
 1. The product has no harness that could measure the claim -> fail.
@@ -57,8 +72,11 @@ ROOT = Path(__file__).resolve().parent.parent
 PREDICTIONS = ROOT / "eval" / "predictions" / "ares-latest.csv"
 SCORE = ROOT / "eval" / "data" / "score.json"
 
-# (README path relative to ROOT, can the Auditor eval re-derive its numbers?)
-# False means the product has no harness at all, not that it failed one.
+# (README path relative to ROOT, can THIS script's eval/ pipeline re-derive its
+# numbers?) False does not mean the product has no harness -- see the
+# docstring above re: ares-sec's own separate, already-passing verify-claims
+# gate. It means this script's Precision/Recall/F1 vocabulary and eval/
+# artifacts cannot verify that product's claims, so it must not try to.
 GUARDED_READMES = (
     ("README.md", True),
     ("apps/auditor-api/README.md", True),

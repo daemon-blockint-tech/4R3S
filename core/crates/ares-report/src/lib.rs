@@ -263,6 +263,7 @@ mod tests {
             suppressed_findings: vec![],
             metadata: ReportMetadata {
                 generated_at: Utc::now(),
+                confirmed_at: None,
                 ares_version: "0.1.0".to_string(),
                 scan_duration_secs: 5,
                 agent_pipeline: vec!["regex".to_string(), "ast".to_string()],
@@ -335,6 +336,7 @@ mod xss_tests {
             suppressed_findings: vec![],
             metadata: ReportMetadata {
                 generated_at: chrono::Utc::now(),
+                confirmed_at: None,
                 ares_version: "test".to_string(),
                 scan_duration_secs: 0,
                 agent_pipeline: vec![],

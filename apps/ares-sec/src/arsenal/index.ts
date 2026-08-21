@@ -274,7 +274,10 @@ export class Arsenal extends EventEmitter<ArsenalEvents> {
     // Capability approval + spicy-action warning gate: an intrusive/credential/dangerous tool is inert
     // until it has been approved (interactively "approve once, then free", or via the headless
     // pre-authorization allowlist); the hottest actions also fire a loud, audited, non-blocking
-    // warning. Safe/active tools pass straight through. No controller wired = gating off (backward-compat).
+    // warning. Safe/active tools pass straight through. No controller wired = gating off — a
+    // deliberate library/embedder invariant (bare `new Arsenal()` with no setApprovalController()
+    // call never gates); the shipped engine (AresCommand, src/index.ts) always wires one, so this
+    // branch is only "off" for a caller that opted out of the controller entirely.
     if (this.approval && isGatedRisk(tool.riskTier)) {
       const request: ApprovalRequest = {
         tool: toolName,
@@ -444,6 +447,12 @@ export const SPICY_BUILTIN_TIERS: Readonly<Record<string, RiskTier>> = {
   hash_crack: 'credential',
   sqli_scan: 'intrusive',
   xss_scan: 'intrusive',
+  // SEC-3: local file disclosure (/etc/passwd, /etc/shadow, php://filter) — gated like the other
+  // injection probes above, but not spicy (no loud warning).
+  lfi_test: 'intrusive',
+  // SEC-3: SSTI payloads reach the class-introspection RCE gadget path ({{self.__class__}}…) —
+  // tiered dangerous (like the specialist post-ex arsenal) so an approved run still warns loudly.
+  ssti_test: 'dangerous',
 };
 
 /** Copy of `tool` stamped with a gated riskTier iff it is a spicy built-in that isn't already tiered;
@@ -1313,9 +1322,10 @@ export const BUILTIN_TOOLS: CustomTool[] = [
       const results: { password: string; status: number; success: boolean; indicator: string }[] = [];
       const validCredentials: string[] = [];
 
-      // Get a baseline failed login response
-      let baselineLength = 0;
-      let baselineStatus = 0;
+      // Get a baseline failed login response. Definite-assignment asserted: the only path
+      // to the read sites below is through a successful try; the catch returns early.
+      let baselineLength!: number;
+      let baselineStatus!: number;
       try {
         const baselineBody = new URLSearchParams();
         baselineBody.set(usernameField, username);

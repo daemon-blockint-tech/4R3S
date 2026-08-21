@@ -1,0 +1,127 @@
+name: evidence CI
+
+# Both halves of SVC-4 in one new workflow, rather than a job added to ci.yml.
+#
+# The sibling-service convention is one job per service inside ci.yml
+# (services-cve at :208, services-risk at :236). This deviates for two reasons.
+# First, ci.yml is the most-edited file in the repository -- nineteen commits in
+# three weeks -- and several backlog tasks are live in the same tree, so an
+# additive job there is the change most likely to collide with someone else's
+# work. Second, SVC-4 has a Python half AND a Rust half, so a dedicated workflow
+# keeps them together instead of splitting one task across ci.yml and core-ci.yml.
+#
+# The cost, stated rather than hidden: services/evidence/requirements.txt is NOT
+# covered by the pip-audit step at ci.yml:105-111. That is defensible here --
+# the runtime is stdlib-only, the sole dependency is pytest==9.1.1 which three
+# other requirement files already audit, and services/family/requirements.txt is
+# already absent from that list -- but it is a real gap, not an oversight.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/evidence/**"
+      - "scripts/evidence-pda-vectors.test.ts"
+      - ".github/workflows/evidence-ci.yml"
+  # NO paths filter on pull_request, deliberately. This is the same reasoning
+  # already written into core-ci.yml:20-45: GitHub cannot require a status check
+  # that never reports, so a path-filtered workflow can never be a required
+  # check. These jobs should be required, and the cost of running them
+  # unconditionally is trivial -- the Rust crate has zero dependencies and the
+  # Python suite is stdlib-only.
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: evidence-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  services-evidence:
+    # Same rationale as the services-cve job in ci.yml: without this job,
+    # services/evidence's Python is never executed in CI, so a green run would
+    # mean "not checked", not "correct". The load-bearing suites here are
+    # test_vectors.py, which regenerates the committed bundles and compares them
+    # byte-for-byte against the real report artifacts, and test_determinism.py,
+    # which spawns real subprocesses -- an in-process test cannot catch a
+    # PYTHONHASHSEED-dependent leaf ordering, which is the bug commit dc5c97f had
+    # to fix in services/family.
+    name: services-evidence (python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/evidence/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r services/evidence/requirements.txt
+
+      - name: Test
+        working-directory: services/evidence
+        run: python -m pytest -q
+
+  evidence-spec:
+    # The zero-dependency Rust crate that both the Anchor program and the Python
+    # bundler are checked against. It is split out of the anchor workspace so
+    # this job never has to RESOLVE the anchor-lang -> solana-program graph:
+    # resolution alone needs the registry index and is exposed to toolchain drift
+    # under a floating `stable`. With no dependencies, this is immune to Anchor
+    # and Solana churn by construction.
+    #
+    # This job does NOT build the Anchor program. Nothing in this repository
+    # does. There is no solana CLI, no anchor CLI and no cargo build-sbf here, so
+    # the program has never been compiled. What is checked is the specification
+    # it implements plus a syn parse of its source; see
+    # services/evidence/onchain/README.md for what that does and does not prove.
+    name: evidence-spec (rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/evidence/onchain/spec
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/evidence/onchain/spec
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # --locked matters more here than in most places: tests/lockfile_subset.rs
+      # asserts every resolved dependency already appears in core/Cargo.lock, and
+      # a lockfile silently updated during the run would make that assertion
+      # check something other than what is committed.
+      - name: Test
+        run: cargo test --locked
+
+      # cargo-deny in ci.yml is pinned to `manifest-path: core/Cargo.toml`, so it
+      # cannot see this crate. This runs it against the local manifest. The
+      # stronger guarantee is still the lockfile-subset invariant enforced in
+      # tests/lockfile_subset.rs -- that is what makes core's already-passing
+      # cargo-deny and cargo-audit cover these dependencies too.
+      - name: License check (cargo)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: services/evidence/onchain/spec/Cargo.toml
+          command: check licenses bans sources
