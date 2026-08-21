@@ -92,7 +92,9 @@ enum Commands {
         #[arg(short, long)]
         test: Option<String>,
 
-        /// Run in deterministic mode with fixed seed
+        /// Single-threaded run for reproducibility (honggfuzz -n 1). Not a fixed
+        /// RNG seed — Trident/honggfuzz has none; use `trident fuzz run-debug`
+        /// to replay a specific crash exactly.
         #[arg(long)]
         deterministic: bool,
     },

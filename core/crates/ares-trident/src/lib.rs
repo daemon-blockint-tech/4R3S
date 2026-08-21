@@ -51,22 +51,22 @@ impl TridentTool {
         fuzz_test_name: &str,
         iterations: u64,
         timeout_secs: u64,
+        deterministic: bool,
     ) -> AresResult<FuzzRunResult> {
         info!(
-            "Running Trident fuzz: test={} iterations={} timeout={}s",
-            fuzz_test_name, iterations, timeout_secs
+            "Running Trident fuzz: test={} iterations={} timeout={}s deterministic={}",
+            fuzz_test_name, iterations, timeout_secs, deterministic
         );
 
+        let (args, envs) =
+            build_fuzz_command(fuzz_test_name, iterations, timeout_secs, deterministic);
         let mut cmd = Command::new(&self.trident_path);
-        cmd.current_dir(&self.working_dir)
-            .arg("fuzz")
-            .arg("run")
-            .arg(fuzz_test_name)
-            .arg("--max-iterations")
-            .arg(iterations.to_string())
-            .env("TRIDENT_MAX_DURATION", timeout_secs.to_string())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.current_dir(&self.working_dir);
+        cmd.args(&args);
+        for (k, v) in &envs {
+            cmd.env(k, v);
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         debug!("Executing: {:?}", cmd);
 
@@ -135,7 +135,7 @@ impl TridentTool {
         );
 
         // Phase 1 stub: will be enhanced to auto-generate harness based on pattern
-        let result = self.fuzz_run(harness_name, iterations, 300).await?;
+        let result = self.fuzz_run(harness_name, iterations, 300, false).await?;
 
         Ok(result)
     }
@@ -220,6 +220,48 @@ impl TridentTool {
             .join(format!("test_{}.rs", harness_name));
         harness_path.exists()
     }
+}
+
+/// Build the argv (after the `trident` binary) and the environment overrides for
+/// a `trident fuzz run`. Kept a free, binary-free function on purpose — same
+/// rationale as `parse_fuzz_output`: it can be unit-tested without a `trident`
+/// install, so the assertion about what `--deterministic` actually does is
+/// pinned in CI rather than only observable on a machine that has the toolchain.
+///
+/// Determinism note (POC-4): Trident wraps **honggfuzz**, which has **no
+/// fixed-RNG-seed flag**, so a bit-identical replay is not achievable from the
+/// fuzz-run CLI. The honest, supported determinism lever is single-threaded
+/// execution — honggfuzz `-n 1`, passed via `HFUZZ_RUN_ARGS` (env has the highest
+/// priority for honggfuzz parameters) — which removes thread-scheduling
+/// nondeterminism. We also mirror the iteration bound (`-N`) into the same env so
+/// that forcing it does not drop the caller's `--max-iterations`. To reproduce a
+/// specific crash exactly, use `trident fuzz run-debug <target> <crash_file>`.
+/// When `deterministic` is false the invocation is byte-for-byte what it was
+/// before, so the default path is unchanged.
+fn build_fuzz_command(
+    fuzz_test_name: &str,
+    iterations: u64,
+    timeout_secs: u64,
+    deterministic: bool,
+) -> (Vec<String>, Vec<(String, String)>) {
+    let args = vec![
+        "fuzz".to_string(),
+        "run".to_string(),
+        fuzz_test_name.to_string(),
+        "--max-iterations".to_string(),
+        iterations.to_string(),
+    ];
+    let mut envs = vec![("TRIDENT_MAX_DURATION".to_string(), timeout_secs.to_string())];
+    if deterministic {
+        // Single thread + explicit iteration bound. `-n 1` is honggfuzz's only
+        // run-level determinism lever; `-N` keeps the bound the caller asked for
+        // since HFUZZ_RUN_ARGS overrides honggfuzz's own defaults.
+        envs.push((
+            "HFUZZ_RUN_ARGS".to_string(),
+            format!("-n 1 -N {}", iterations),
+        ));
+    }
+    (args, envs)
 }
 
 /// Structured result from a Trident fuzz run.
@@ -416,7 +458,7 @@ impl TridentTool {
                 target, batch, remaining_iters, remaining_secs
             );
 
-            let result = self.fuzz_run(target, batch, remaining_secs).await?;
+            let result = self.fuzz_run(target, batch, remaining_secs, false).await?;
 
             let batch_had_crashes = !result.crashes.is_empty();
             let batch_had_violations = !result.invariant_violations.is_empty();
@@ -632,5 +674,53 @@ mod fuzz_output_parsing_tests {
         // Would otherwise read as a crash tally of 2.
         assert_eq!(labelled_count("crashes_recovered 2", "crashes"), None);
         assert_eq!(labelled_count("no crashes here", "crashes"), None);
+    }
+
+    // ── POC-4: what `--deterministic` actually does ────────────────────────────
+
+    #[test]
+    fn non_deterministic_run_is_unchanged() {
+        // The default path must be byte-for-byte what it was before POC-4: the
+        // fuzz-run argv plus only TRIDENT_MAX_DURATION, and crucially NO
+        // HFUZZ_RUN_ARGS (so nothing about a normal campaign changes).
+        let (args, envs) = build_fuzz_command("fuzz_0", 10_000, 3600, false);
+        assert_eq!(
+            args,
+            vec!["fuzz", "run", "fuzz_0", "--max-iterations", "10000"]
+        );
+        assert_eq!(
+            envs,
+            vec![("TRIDENT_MAX_DURATION".to_string(), "3600".to_string())]
+        );
+        assert!(
+            !envs.iter().any(|(k, _)| k == "HFUZZ_RUN_ARGS"),
+            "non-deterministic runs must not set HFUZZ_RUN_ARGS"
+        );
+    }
+
+    #[test]
+    fn deterministic_run_pins_a_single_thread_via_hfuzz_run_args() {
+        // Deterministic mode must actually DO something (the bug was that the
+        // flag was inert): force honggfuzz to a single thread and keep the
+        // iteration bound. It must NOT invent a --seed flag honggfuzz rejects.
+        let (args, envs) = build_fuzz_command("fuzz_0", 10_000, 3600, true);
+        // the fuzz-run argv is unchanged — no fabricated seed flag
+        assert_eq!(
+            args,
+            vec!["fuzz", "run", "fuzz_0", "--max-iterations", "10000"]
+        );
+        assert!(
+            !args.iter().any(|a| a.contains("seed")),
+            "must not fabricate a seed flag the fuzzer does not support"
+        );
+        let hfuzz = envs
+            .iter()
+            .find(|(k, _)| k == "HFUZZ_RUN_ARGS")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(
+            hfuzz,
+            Some("-n 1 -N 10000"),
+            "single thread + iteration bound"
+        );
     }
 }
