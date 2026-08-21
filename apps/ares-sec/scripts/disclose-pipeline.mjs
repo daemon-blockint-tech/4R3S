@@ -225,6 +225,12 @@ function stageDisclosure(findingPath, f, outDir, args) {
   const files = ['disclosure-report.md', 'disclosure-email.txt', 'SEND-CHECKLIST.md']
     .map((n) => path.join(outDir, n))
     .filter((p) => fs.existsSync(p));
+  // Guard against a disclosure-gen that exited non-2 (e.g. an uncaught throw →
+  // exit 1, or a spawn failure → status null) WITHOUT writing anything. Without
+  // this, an empty run would be reported as 'written' and the pipeline would
+  // claim DRAFTED / exit 0 with zero drafts.
+  if (files.length === 0)
+    return { status: 'error', reason: `disclosure-gen wrote no files (exit ${r.status}): ${firstLine(r.stderr) || firstLine(r.stdout)}`, outDir, files };
   // exit 3 = drafts written but disclosure-gen's honesty/lint gate wants review.
   return { status: r.status === 3 ? 'written-needs-review' : 'written', outDir, files };
 }
@@ -245,14 +251,20 @@ export function decideVerdict(stages) {
 
   if (stages.refuter?.status === 'skipped') advisories.push(`refuter-skipped: ${stages.refuter.reason}`);
   if (stages.refuter?.status === 'inconclusive') advisories.push('refuter-inconclusive (no killing guard found, but panel not conclusive)');
+  if (stages.refuter?.status === 'error') advisories.push(`refuter-error: ${stages.refuter.reason}`);
   if (stages.osv?.status === 'possible-duplicate') advisories.push(`osv-possible-duplicate: ${(stages.osv.overlaps || []).join(', ')}`);
   if (stages.osv?.status === 'skipped') advisories.push(`osv-skipped: ${stages.osv.reason}`);
   if (stages.osv?.status === 'error') advisories.push(`osv-error: ${stages.osv.reason}`);
   if (['gated', 'skipped', 'n/a', 'not-reproduced', 'bad-input'].includes(stages.poc?.status)) advisories.push(`poc-${stages.poc.status}: ${stages.poc.reason}`);
   if (stages.disclosure?.status === 'written-needs-review') advisories.push('disclosure-review: honesty/lint gate flagged the draft — resolve before sending');
+  if (stages.disclosure?.status === 'error') advisories.push(`disclosure-error: ${stages.disclosure.reason}`);
 
-  if (stages.disclosure?.status === 'bad-input')
-    return { verdict: 'BAD-INPUT', exit: 2, advisories };
+  // Only a finding that produced actual drafts is DRAFTED. A disclosure stage
+  // that rejected the input (bad-input) or wrote nothing (error) is a non-draft
+  // failure — never report exit 0 without files on disk.
+  const d = stages.disclosure?.status;
+  if (d === 'bad-input') return { verdict: 'BAD-INPUT', exit: 2, advisories };
+  if (d !== 'written' && d !== 'written-needs-review') return { verdict: 'ERROR', exit: 2, advisories };
 
   return { verdict: 'DRAFTED', exit: 0, advisories };
 }
@@ -342,7 +354,11 @@ function osvLine(s) {
   return `novel (0 overlaps of ${s.count} advisories)`;
 }
 function logStage(name, s, detail) {
-  const glyph = s.blocks ? '❌' : ['skipped', 'gated', 'n/a', 'error'].includes(s.status) ? '⊘' : '✅';
+  const WARN = ['possible-duplicate', 'not-reproduced', 'bad-input', 'written-needs-review', 'inconclusive'];
+  const glyph = s.blocks ? '❌'
+    : ['skipped', 'gated', 'n/a', 'error'].includes(s.status) ? '⊘'
+    : WARN.includes(s.status) ? '⚠'
+    : '✅';
   console.log(`  ${glyph} ${name.padEnd(11)} ${detail}`);
 }
 

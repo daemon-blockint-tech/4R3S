@@ -94,6 +94,17 @@ console.log('decideVerdict (permissive gate, refuter is the only blocker)');
 
   const bad = decideVerdict({ refuter: { blocks: false }, disclosure: { status: 'bad-input' } });
   ok('disclosure bad-input → BAD-INPUT, exit 2', bad.verdict === 'BAD-INPUT' && bad.exit === 2);
+
+  // a disclosure stage that wrote nothing must NEVER be reported as DRAFTED/exit 0
+  const derr = decideVerdict({ refuter: { blocks: false }, disclosure: { status: 'error', reason: 'wrote no files' } });
+  ok('disclosure wrote nothing → ERROR, exit 2 (not a silent exit-0 with 0 files)', derr.verdict === 'ERROR' && derr.exit === 2);
+
+  // a refuter that ran but produced no verdict is surfaced, but is not a blocker
+  const rerr = decideVerdict({
+    refuter: { status: 'error', blocks: false, reason: 'ran but wrote no report' },
+    disclosure: { status: 'written', files: ['a', 'b', 'c'] },
+  });
+  ok('refuter error → advisory, still DRAFTED (permissive)', rerr.verdict === 'DRAFTED' && rerr.exit === 0 && rerr.advisories.some(a => /refuter-error/.test(a)));
 }
 
 // ── 2. end-to-end: drafts path (fully offline) ──────────────────────────────
