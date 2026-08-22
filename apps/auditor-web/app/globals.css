@@ -3,6 +3,17 @@
 
 @source "../node_modules/streamdown/dist/*.js";
 
+/*
+ * @ares/ui (packages/ui, UI-1) components -- scanned for Tailwind's JIT so
+ * classes like bg-primary/bg-destructive used inside its .tsx source get
+ * generated. Deliberately NOT importing @ares/ui/styles.css: it defines its
+ * own competing @theme block (War Room's dark palette) that would override
+ * every color token below app-wide, not just on new dashboard pages. Its
+ * components use semantic class names (bg-primary, not a hardcoded hex), so
+ * they already pick up this file's own tokens without it.
+ */
+@source "../../../packages/ui/src/**/*.tsx";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
