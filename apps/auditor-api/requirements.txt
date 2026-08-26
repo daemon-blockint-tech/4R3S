@@ -34,7 +34,7 @@ uvicorn
 # published releases; the successor, not a typosquat of httpx). INT2 also
 # uses it from app code (worker.py) to deliver webhooks, so it is no longer
 # test-only.
-httpx2==2.10.0
+httpx2==2.12.0
 
 # MCP (stdio) server exposing scan/enrich as agent tools -- mcp_server.py.
 # Pinned to the version this was actually built and tested against: 2.0.0
