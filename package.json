@@ -27,33 +27,33 @@
     "export:vuln-catalog": "tsx src/scripts/export-vuln-catalog.ts"
   },
   "dependencies": {
-    "@langchain/core": "^1.2.8",
-    "@langchain/langgraph": "^1.4.10",
+    "@langchain/core": "^1.2.9",
+    "@langchain/langgraph": "^1.4.12",
     "@langchain/langgraph-checkpoint": "^1.0.0",
-    "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
     "@langchain/langgraph-cua": "^1.0.2",
-    "@langchain/openai": "^1.5.8",
-    "@langchain/openrouter": "^0.4.8",
+    "@langchain/openai": "^1.5.10",
+    "@langchain/openrouter": "^0.4.10",
     "@solana/web3.js": "^1.98.4",
     "@supabase/supabase-js": "^2.112.3",
     "bs58": "^6.0.0",
     "dotenv": "^17.4.2",
     "neo4j-driver": "^6.2.0",
     "pg": "^8.23.0",
-    "uuid": "^14.0.1",
+    "uuid": "^14.0.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
-    "@types/pg": "^8.21.0",
+    "@types/pg": "^8.23.1",
     "@types/uuid": "^11.0.0",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.0",
     "license-checker-rseidelsohn": "^5.0.1",
     "tsx": "^4.23.12",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.67.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "uuid": "$uuid"
