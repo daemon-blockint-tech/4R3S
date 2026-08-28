@@ -12,4 +12,4 @@ export {
   DrawerFooter,
   DrawerTitle,
   DrawerDescription,
-} from "@ares/ui"
+} from '@ares/ui'

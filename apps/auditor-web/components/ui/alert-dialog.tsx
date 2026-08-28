@@ -14,4 +14,4 @@ export {
   AlertDialogDescription,
   AlertDialogAction,
   AlertDialogCancel,
-} from "@ares/ui"
+} from '@ares/ui'

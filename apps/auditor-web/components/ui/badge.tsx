@@ -10,4 +10,4 @@
 // shared system's look, not preserving the old one — but worth anyone
 // reviewing this being aware every badge in this app will look visibly
 // different, not just differently coded.
-export { Badge, badgeVariants } from "@ares/ui"
+export { Badge, badgeVariants } from '@ares/ui'

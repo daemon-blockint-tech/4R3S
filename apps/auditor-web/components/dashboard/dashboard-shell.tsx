@@ -27,13 +27,7 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 
-export function DashboardShell({
-  user,
-  children,
-}: {
-  user: Session['user'] | null
-  children: React.ReactNode
-}) {
+export function DashboardShell({ user, children }: { user: Session['user'] | null; children: React.ReactNode }) {
   const pathname = usePathname()
 
   return (

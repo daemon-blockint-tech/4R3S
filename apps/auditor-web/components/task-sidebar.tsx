@@ -505,180 +505,24 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-      {/* Tasks Tab Content */}
-      {activeTab === 'tasks' && (
-        <div className="space-y-1">
-          {tasks.length === 0 ? (
-            <Card>
-              <CardContent className="p-3 text-center text-xs text-muted-foreground">
-                No tasks yet. Create your first task!
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              {tasks.slice(0, 10).map((task) => {
-                const isActive = pathname === `/tasks/${task.id}`
-
-                return (
-                  <Link
-                    key={task.id}
-                    href={`/tasks/${task.id}`}
-                    onClick={handleLinkClick}
-                    className={cn('block rounded-lg', isActive && 'ring-1 ring-primary/50 ring-offset-0')}
-                  >
-                    <Card
-                      className={cn(
-                        'cursor-pointer transition-colors hover:bg-accent p-0 rounded-lg',
-                        isActive && 'bg-accent',
-                      )}
-                    >
-                      <CardContent className="px-3 py-2">
-                        <div className="flex gap-2">
-                          {/* Text content */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-1">
-                              <h3
-                                className={cn(
-                                  'text-xs font-medium truncate mb-0.5',
-                                  task.status === 'processing' &&
-                                    'bg-gradient-to-r from-muted-foreground from-20% via-white via-50% to-muted-foreground to-80% bg-clip-text text-transparent bg-[length:300%_100%] animate-[shimmer_1.5s_linear_infinite]',
-                                )}
-                              >
-                                {(() => {
-                                  const displayText = task.title || task.prompt
-                                  return displayText.slice(0, 50) + (displayText.length > 50 ? '...' : '')
-                                })()}
-                              </h3>
-                              {task.status === 'error' && (
-                                <AlertCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
-                              )}
-                              {task.status === 'stopped' && (
-                                <AlertCircle className="h-3 w-3 text-orange-500 flex-shrink-0" />
-                              )}
-                            </div>
-                            {task.repoUrl && (
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-0.5">
-                                {task.prStatus && (
-                                  <div className="relative">
-                                    <PRStatusIcon status={task.prStatus} />
-                                    <PRCheckStatus taskId={task.id} prStatus={task.prStatus} isActive={isActive} />
-                                  </div>
-                                )}
-                                <span className="truncate">
-                                  {(() => {
-                                    try {
-                                      const url = new URL(task.repoUrl)
-                                      const pathParts = url.pathname.split('/').filter(Boolean)
-                                      if (pathParts.length >= 2) {
-                                        return `${pathParts[0]}/${pathParts[1].replace(/\.git$/, '')}`
-                                      } else {
-                                        return 'Unknown repository'
-                                      }
-                                    } catch {
-                                      return 'Invalid repository URL'
-                                    }
-                                  })()}
-                                </span>
-                              </div>
-                            )}
-                            {task.selectedAgent && (
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                {(() => {
-                                  const AgentLogo = getAgentLogo(task.selectedAgent)
-                                  return AgentLogo ? <AgentLogo className="w-3 h-3" /> : null
-                                })()}
-                                {task.selectedModel && (
-                                  <span className="truncate">
-                                    {getHumanFriendlyModelName(task.selectedAgent, task.selectedModel)}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                )
-              })}
-              {tasks.length >= 1 && (
-                <div className="pt-1">
-                  <Link href="/tasks" onClick={handleLinkClick}>
-                    <Button variant="ghost" size="sm" className="w-full justify-start h-7 px-2 text-xs">
-                      View All Tasks
-                    </Button>
-                  </Link>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Repos Tab Content */}
-      {activeTab === 'repos' && (
-        <div className="space-y-2">
-          {/* Search input */}
-          {githubConnection.connected && (repos.length > 0 || repoSearchQuery) && (
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder="Search repos..."
-                value={repoSearchQuery}
-                onChange={(e) => setRepoSearchQuery(e.target.value)}
-                className="h-8 pl-7 pr-7 text-xs"
-              />
-              {repoSearchQuery && (
-                <button
-                  onClick={() => setRepoSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          )}
-
+        {/* Tasks Tab Content */}
+        {activeTab === 'tasks' && (
           <div className="space-y-1">
-            {!githubConnection.connected ? (
+            {tasks.length === 0 ? (
               <Card>
                 <CardContent className="p-3 text-center text-xs text-muted-foreground">
-                  Connect GitHub to view your repositories
-                </CardContent>
-              </Card>
-            ) : (reposLoading && repos.length === 0 && !isSearching) ||
-              (searchLoading && searchResults.length === 0 && isSearching) ? (
-              <Card>
-                <CardContent className="p-3 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  {isSearching ? 'Searching...' : 'Loading repositories...'}
-                </CardContent>
-              </Card>
-            ) : displayedRepos.length === 0 && !isSearching ? (
-              <Card>
-                <CardContent className="p-3 text-center text-xs text-muted-foreground">
-                  No repositories found
-                </CardContent>
-              </Card>
-            ) : displayedRepos.length === 0 && isSearching && !searchLoading ? (
-              <Card>
-                <CardContent className="p-3 text-center text-xs text-muted-foreground">
-                  No repos match &quot;{repoSearchQuery}&quot;
+                  No tasks yet. Create your first task!
                 </CardContent>
               </Card>
             ) : (
               <>
-                {displayedRepos.map((repo) => {
-                  const repoPath = `/repos/${repo.owner}/${repo.name}`
-                  const isActive = pathname === repoPath || pathname.startsWith(repoPath + '/')
-                  const repoKey = `${repo.owner}/${repo.name}`
-                  const taskCount = taskCountByRepo.get(repoKey) || 0
+                {tasks.slice(0, 10).map((task) => {
+                  const isActive = pathname === `/tasks/${task.id}`
 
                   return (
                     <Link
-                      key={repoKey}
-                      href={repoPath}
+                      key={task.id}
+                      href={`/tasks/${task.id}`}
                       onClick={handleLinkClick}
                       className={cn('block rounded-lg', isActive && 'ring-1 ring-primary/50 ring-offset-0')}
                     >
@@ -689,42 +533,198 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
                         )}
                       >
                         <CardContent className="px-3 py-2">
-                          <div className="flex gap-2 items-center">
-                            <GitBranch className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                          <div className="flex gap-2">
+                            {/* Text content */}
                             <div className="flex-1 min-w-0">
-                              <h3 className="text-xs font-medium truncate mb-0.5">
-                                {repo.owner}/{repo.name}
-                              </h3>
-                              {taskCount > 0 && (
-                                <div className="text-xs text-muted-foreground">
-                                  {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
+                              <div className="flex items-center justify-between gap-1">
+                                <h3
+                                  className={cn(
+                                    'text-xs font-medium truncate mb-0.5',
+                                    task.status === 'processing' &&
+                                      'bg-gradient-to-r from-muted-foreground from-20% via-white via-50% to-muted-foreground to-80% bg-clip-text text-transparent bg-[length:300%_100%] animate-[shimmer_1.5s_linear_infinite]',
+                                  )}
+                                >
+                                  {(() => {
+                                    const displayText = task.title || task.prompt
+                                    return displayText.slice(0, 50) + (displayText.length > 50 ? '...' : '')
+                                  })()}
+                                </h3>
+                                {task.status === 'error' && (
+                                  <AlertCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                                )}
+                                {task.status === 'stopped' && (
+                                  <AlertCircle className="h-3 w-3 text-orange-500 flex-shrink-0" />
+                                )}
+                              </div>
+                              {task.repoUrl && (
+                                <div className="flex items-center gap-1 text-xs text-muted-foreground mb-0.5">
+                                  {task.prStatus && (
+                                    <div className="relative">
+                                      <PRStatusIcon status={task.prStatus} />
+                                      <PRCheckStatus taskId={task.id} prStatus={task.prStatus} isActive={isActive} />
+                                    </div>
+                                  )}
+                                  <span className="truncate">
+                                    {(() => {
+                                      try {
+                                        const url = new URL(task.repoUrl)
+                                        const pathParts = url.pathname.split('/').filter(Boolean)
+                                        if (pathParts.length >= 2) {
+                                          return `${pathParts[0]}/${pathParts[1].replace(/\.git$/, '')}`
+                                        } else {
+                                          return 'Unknown repository'
+                                        }
+                                      } catch {
+                                        return 'Invalid repository URL'
+                                      }
+                                    })()}
+                                  </span>
+                                </div>
+                              )}
+                              {task.selectedAgent && (
+                                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                  {(() => {
+                                    const AgentLogo = getAgentLogo(task.selectedAgent)
+                                    return AgentLogo ? <AgentLogo className="w-3 h-3" /> : null
+                                  })()}
+                                  {task.selectedModel && (
+                                    <span className="truncate">
+                                      {getHumanFriendlyModelName(task.selectedAgent, task.selectedModel)}
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </div>
-                            {repo.private && (
-                              <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                                Private
-                              </span>
-                            )}
                           </div>
                         </CardContent>
                       </Card>
                     </Link>
                   )
                 })}
-                {/* Load more trigger */}
-                {displayedHasMore && (
-                  <div ref={loadMoreRef} className="py-2 flex justify-center">
-                    {(isSearching ? searchLoading : reposLoading) && (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
+                {tasks.length >= 1 && (
+                  <div className="pt-1">
+                    <Link href="/tasks" onClick={handleLinkClick}>
+                      <Button variant="ghost" size="sm" className="w-full justify-start h-7 px-2 text-xs">
+                        View All Tasks
+                      </Button>
+                    </Link>
                   </div>
                 )}
               </>
             )}
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Repos Tab Content */}
+        {activeTab === 'repos' && (
+          <div className="space-y-2">
+            {/* Search input */}
+            {githubConnection.connected && (repos.length > 0 || repoSearchQuery) && (
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="Search repos..."
+                  value={repoSearchQuery}
+                  onChange={(e) => setRepoSearchQuery(e.target.value)}
+                  className="h-8 pl-7 pr-7 text-xs"
+                />
+                {repoSearchQuery && (
+                  <button
+                    onClick={() => setRepoSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1">
+              {!githubConnection.connected ? (
+                <Card>
+                  <CardContent className="p-3 text-center text-xs text-muted-foreground">
+                    Connect GitHub to view your repositories
+                  </CardContent>
+                </Card>
+              ) : (reposLoading && repos.length === 0 && !isSearching) ||
+                (searchLoading && searchResults.length === 0 && isSearching) ? (
+                <Card>
+                  <CardContent className="p-3 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {isSearching ? 'Searching...' : 'Loading repositories...'}
+                  </CardContent>
+                </Card>
+              ) : displayedRepos.length === 0 && !isSearching ? (
+                <Card>
+                  <CardContent className="p-3 text-center text-xs text-muted-foreground">
+                    No repositories found
+                  </CardContent>
+                </Card>
+              ) : displayedRepos.length === 0 && isSearching && !searchLoading ? (
+                <Card>
+                  <CardContent className="p-3 text-center text-xs text-muted-foreground">
+                    No repos match &quot;{repoSearchQuery}&quot;
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  {displayedRepos.map((repo) => {
+                    const repoPath = `/repos/${repo.owner}/${repo.name}`
+                    const isActive = pathname === repoPath || pathname.startsWith(repoPath + '/')
+                    const repoKey = `${repo.owner}/${repo.name}`
+                    const taskCount = taskCountByRepo.get(repoKey) || 0
+
+                    return (
+                      <Link
+                        key={repoKey}
+                        href={repoPath}
+                        onClick={handleLinkClick}
+                        className={cn('block rounded-lg', isActive && 'ring-1 ring-primary/50 ring-offset-0')}
+                      >
+                        <Card
+                          className={cn(
+                            'cursor-pointer transition-colors hover:bg-accent p-0 rounded-lg',
+                            isActive && 'bg-accent',
+                          )}
+                        >
+                          <CardContent className="px-3 py-2">
+                            <div className="flex gap-2 items-center">
+                              <GitBranch className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <h3 className="text-xs font-medium truncate mb-0.5">
+                                  {repo.owner}/{repo.name}
+                                </h3>
+                                {taskCount > 0 && (
+                                  <div className="text-xs text-muted-foreground">
+                                    {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
+                                  </div>
+                                )}
+                              </div>
+                              {repo.private && (
+                                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                                  Private
+                                </span>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </Link>
+                    )
+                  })}
+                  {/* Load more trigger */}
+                  {displayedHasMore && (
+                    <div ref={loadMoreRef} className="py-2 flex justify-center">
+                      {(isSearching ? searchLoading : reposLoading) && (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <SidebarNav isSignedIn onLinkClick={handleLinkClick} />

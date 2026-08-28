@@ -34,10 +34,7 @@ export async function runWithRequestContextAsync<T>(context: RequestContext, fn:
 /** Read correlation ID propagated from middleware (Edge cannot use ALS). */
 export function getRequestIdFromHeaders(headers: Headers): string {
   return (
-    headers.get('x-correlation-id') ??
-    headers.get('x-request-id') ??
-    headers.get('x-ares-request-id') ??
-    'req_unknown'
+    headers.get('x-correlation-id') ?? headers.get('x-request-id') ?? headers.get('x-ares-request-id') ?? 'req_unknown'
   )
 }
 

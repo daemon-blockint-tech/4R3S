@@ -98,46 +98,46 @@ async function createTask(request: NextRequest) {
 
       const body = await request.json()
 
-    // Use provided ID or generate a new one
-    const taskId = body.id || generateId(12)
+      // Use provided ID or generate a new one
+      const taskId = body.id || generateId(12)
 
-    // Only these columns may come from the request. Spreading `...body` here was
-    // mass assignment: every column of `tasks` became client-settable except the
-    // four overridden below, and `sandboxId` is one of them. Posting
-    // `{prompt:"x", sandboxId:"<victim's sandbox>"}` created a task owned by the
-    // caller that points at someone else's live sandbox — and the routes that
-    // reconnect to a sandbox authorize on `tasks.userId`, which is legitimately
-    // the caller's. `/terminal` then returned the victim's environment, which
-    // `createSandbox` populates with their GitHub OAuth token and model API keys,
-    // while `save-file` and `delete-file` gave write and delete access to their
-    // source. Server-owned runtime columns — sandboxId, sandboxUrl, previewUrl,
-    // branchName, prUrl, agentSessionId — are written later by `processTask`,
-    // never by the client.
-    const validatedData = insertTaskSchema.parse({
-      prompt: body.prompt,
-      title: body.title,
-      repoUrl: body.repoUrl,
-      selectedAgent: body.selectedAgent,
-      selectedModel: body.selectedModel,
-      installDependencies: body.installDependencies,
-      maxDuration: body.maxDuration,
-      keepAlive: body.keepAlive,
-      enableBrowser: body.enableBrowser,
-      id: taskId,
-      userId: session.user.id,
-      status: 'pending',
-      progress: 0,
-      logs: [],
-    })
-
-    // Insert the task into the database - ensure id is definitely present
-    const [newTask] = await db
-      .insert(tasks)
-      .values({
-        ...validatedData,
-        id: taskId, // Ensure id is always present
+      // Only these columns may come from the request. Spreading `...body` here was
+      // mass assignment: every column of `tasks` became client-settable except the
+      // four overridden below, and `sandboxId` is one of them. Posting
+      // `{prompt:"x", sandboxId:"<victim's sandbox>"}` created a task owned by the
+      // caller that points at someone else's live sandbox — and the routes that
+      // reconnect to a sandbox authorize on `tasks.userId`, which is legitimately
+      // the caller's. `/terminal` then returned the victim's environment, which
+      // `createSandbox` populates with their GitHub OAuth token and model API keys,
+      // while `save-file` and `delete-file` gave write and delete access to their
+      // source. Server-owned runtime columns — sandboxId, sandboxUrl, previewUrl,
+      // branchName, prUrl, agentSessionId — are written later by `processTask`,
+      // never by the client.
+      const validatedData = insertTaskSchema.parse({
+        prompt: body.prompt,
+        title: body.title,
+        repoUrl: body.repoUrl,
+        selectedAgent: body.selectedAgent,
+        selectedModel: body.selectedModel,
+        installDependencies: body.installDependencies,
+        maxDuration: body.maxDuration,
+        keepAlive: body.keepAlive,
+        enableBrowser: body.enableBrowser,
+        id: taskId,
+        userId: session.user.id,
+        status: 'pending',
+        progress: 0,
+        logs: [],
       })
-      .returning()
+
+      // Insert the task into the database - ensure id is definitely present
+      const [newTask] = await db
+        .insert(tasks)
+        .values({
+          ...validatedData,
+          id: taskId, // Ensure id is always present
+        })
+        .returning()
 
       logger.info('Task created', {
         component: 'tasks.lifecycle',
@@ -163,38 +163,38 @@ async function createTask(request: NextRequest) {
             return
           }
 
-        const taskLogger = createTaskLogger(taskId)
-        await taskLogger.info('Generating AI-powered branch name...')
+          const taskLogger = createTaskLogger(taskId)
+          await taskLogger.info('Generating AI-powered branch name...')
 
-        // Extract repository name from URL for context
-        let repoName: string | undefined
-        try {
-          const url = new URL(validatedData.repoUrl || '')
-          const pathParts = url.pathname.split('/')
-          if (pathParts.length >= 3) {
-            repoName = pathParts[pathParts.length - 1].replace(/\.git$/, '')
+          // Extract repository name from URL for context
+          let repoName: string | undefined
+          try {
+            const url = new URL(validatedData.repoUrl || '')
+            const pathParts = url.pathname.split('/')
+            if (pathParts.length >= 3) {
+              repoName = pathParts[pathParts.length - 1].replace(/\.git$/, '')
+            }
+          } catch {
+            // Ignore URL parsing errors
           }
-        } catch {
-          // Ignore URL parsing errors
-        }
 
-        // Generate AI branch name
-        const aiBranchName = await generateBranchName({
-          description: validatedData.prompt,
-          repoName,
-          context: `${validatedData.selectedAgent} agent task`,
-        })
-
-        // Update task with AI-generated branch name
-        await db
-          .update(tasks)
-          .set({
-            branchName: aiBranchName,
-            updatedAt: new Date(),
+          // Generate AI branch name
+          const aiBranchName = await generateBranchName({
+            description: validatedData.prompt,
+            repoName,
+            context: `${validatedData.selectedAgent} agent task`,
           })
-          .where(eq(tasks.id, taskId))
 
-        await taskLogger.success('Generated AI branch name')
+          // Update task with AI-generated branch name
+          await db
+            .update(tasks)
+            .set({
+              branchName: aiBranchName,
+              updatedAt: new Date(),
+            })
+            .where(eq(tasks.id, taskId))
+
+          await taskLogger.success('Generated AI branch name')
         } catch (error) {
           logger.warn('AI branch name generation failed', {
             component: 'tasks.lifecycle',
@@ -253,33 +253,33 @@ async function createTask(request: NextRequest) {
             return
           }
 
-        // Extract repository name from URL for context
-        let repoName: string | undefined
-        try {
-          const url = new URL(validatedData.repoUrl || '')
-          const pathParts = url.pathname.split('/')
-          if (pathParts.length >= 3) {
-            repoName = pathParts[pathParts.length - 1].replace(/\.git$/, '')
+          // Extract repository name from URL for context
+          let repoName: string | undefined
+          try {
+            const url = new URL(validatedData.repoUrl || '')
+            const pathParts = url.pathname.split('/')
+            if (pathParts.length >= 3) {
+              repoName = pathParts[pathParts.length - 1].replace(/\.git$/, '')
+            }
+          } catch {
+            // Ignore URL parsing errors
           }
-        } catch {
-          // Ignore URL parsing errors
-        }
 
-        // Generate AI title
-        const aiTitle = await generateTaskTitle({
-          prompt: validatedData.prompt,
-          repoName,
-          context: `${validatedData.selectedAgent} agent task`,
-        })
-
-        // Update task with AI-generated title
-        await db
-          .update(tasks)
-          .set({
-            title: aiTitle,
-            updatedAt: new Date(),
+          // Generate AI title
+          const aiTitle = await generateTaskTitle({
+            prompt: validatedData.prompt,
+            repoName,
+            context: `${validatedData.selectedAgent} agent task`,
           })
-          .where(eq(tasks.id, taskId))
+
+          // Update task with AI-generated title
+          await db
+            .update(tasks)
+            .set({
+              title: aiTitle,
+              updatedAt: new Date(),
+            })
+            .where(eq(tasks.id, taskId))
         } catch (error) {
           logger.warn('AI title generation failed', {
             component: 'tasks.lifecycle',

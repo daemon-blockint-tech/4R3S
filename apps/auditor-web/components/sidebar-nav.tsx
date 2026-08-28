@@ -36,9 +36,9 @@ export function SidebarNav({ isSignedIn, onLinkClick }: SidebarNavProps) {
               'flex items-center gap-2 rounded-lg px-2 py-2 min-h-9 text-xs font-medium transition-colors',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               isActive
-                // Active state is carried by weight + a border, not background colour alone:
-                // --accent is only ~3% off --background and reads as nothing.
-                ? 'bg-accent text-foreground font-semibold border-l-2 border-primary'
+                ? // Active state is carried by weight + a border, not background colour alone:
+                  // --accent is only ~3% off --background and reads as nothing.
+                  'bg-accent text-foreground font-semibold border-l-2 border-primary'
                 : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground border-l-2 border-transparent',
             )}
           >

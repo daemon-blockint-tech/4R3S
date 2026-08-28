@@ -7,10 +7,6 @@ export default async function ProfilePage() {
   const stars = await getGitHubStars()
 
   return (
-    <ProfilePageClient
-      user={session?.user ?? null}
-      authProvider={session?.authProvider ?? null}
-      initialStars={stars}
-    />
+    <ProfilePageClient user={session?.user ?? null} authProvider={session?.authProvider ?? null} initialStars={stars} />
   )
 }

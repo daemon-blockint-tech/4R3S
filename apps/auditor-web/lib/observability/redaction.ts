@@ -3,8 +3,7 @@ import { createHash } from 'crypto'
 export const REDACTED = '[REDACTED]'
 
 /** Metadata keys whose values must never appear in logs. */
-const SENSITIVE_KEY =
-  /key|token|password|secret|authorization|credential|dsn|cookie|session|email|encryption/i
+const SENSITIVE_KEY = /key|token|password|secret|authorization|credential|dsn|cookie|session|email|encryption/i
 
 /** `scheme://user:secret@host` */
 const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi

@@ -17,4 +17,4 @@ export {
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
-} from "@ares/ui"
+} from '@ares/ui'

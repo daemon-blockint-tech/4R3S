@@ -3,4 +3,4 @@
 // established convention. This closes a real gap found during SEC-2's
 // AdmiralPage review — War Room's raw HTML checkbox there can now use
 // this styled component instead.
-export { Checkbox } from "@ares/ui"
+export { Checkbox } from '@ares/ui'

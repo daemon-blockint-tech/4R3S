@@ -63,10 +63,7 @@ export async function recordTaskUsage(
     })
 }
 
-export async function recordTaskUsageForTask(
-  taskId: string,
-  options?: { startTime?: Date },
-): Promise<void> {
+export async function recordTaskUsageForTask(taskId: string, options?: { startTime?: Date }): Promise<void> {
   try {
     const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1)
     if (!task) return

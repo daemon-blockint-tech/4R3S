@@ -71,7 +71,9 @@ export async function upsertUser(
           username: userData.username,
           updatedAt: now,
         })
-        .where(and(eq(accounts.userId, userId), eq(accounts.provider, 'github'), eq(accounts.externalUserId, externalId)))
+        .where(
+          and(eq(accounts.userId, userId), eq(accounts.provider, 'github'), eq(accounts.externalUserId, externalId)),
+        )
 
       // Refresh display fields on the parent user without changing primary auth provider
       await db

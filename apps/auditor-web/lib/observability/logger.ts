@@ -103,16 +103,15 @@ function emit(level: LogLevel, msg: string, component: LogComponent, meta?: Reco
   const sampled = shouldSample(level, component)
   if (!sampled && level !== 'error') return
 
-  const flattened = meta?.meta && typeof meta.meta === 'object' ? { ...meta, ...(meta.meta as Record<string, unknown>) } : meta
+  const flattened =
+    meta?.meta && typeof meta.meta === 'object' ? { ...meta, ...(meta.meta as Record<string, unknown>) } : meta
   if (flattened?.meta) delete flattened.meta
 
   const resolvedComponent = (flattened?.component as LogComponent | undefined) ?? component
   if (flattened?.component) delete flattened.component
 
   const requestId =
-    (flattened?.correlationId as string | undefined) ??
-    (flattened?.request_id as string | undefined) ??
-    getRequestId()
+    (flattened?.correlationId as string | undefined) ?? (flattened?.request_id as string | undefined) ?? getRequestId()
   if (flattened?.correlationId) delete flattened.correlationId
   if (flattened?.request_id) delete flattened.request_id
 

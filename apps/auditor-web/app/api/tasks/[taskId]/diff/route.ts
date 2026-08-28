@@ -409,14 +409,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
               oldIsBase64 = result.isBase64
               baseRef = 'master'
             } catch (masterError: unknown) {
-              if (
-                !(
-                  masterError &&
-                  typeof masterError === 'object' &&
-                  'status' in masterError &&
-                  masterError.status === 404
-                )
-              ) {
+              if (!(
+                masterError &&
+                typeof masterError === 'object' &&
+                'status' in masterError &&
+                masterError.status === 404
+              )) {
                 throw masterError
               }
               // File doesn't exist in base (could be a new file)

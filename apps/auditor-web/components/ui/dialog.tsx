@@ -13,4 +13,4 @@ export {
   DialogPortal,
   DialogTitle,
   DialogTrigger,
-} from "@ares/ui"
+} from '@ares/ui'

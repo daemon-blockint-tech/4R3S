@@ -12,8 +12,8 @@ export default function DashboardOverviewPage() {
         <h1 className="text-lg font-semibold tracking-tight">Overview</h1>
         <p className="mt-1 max-w-[62ch] text-sm text-muted-foreground">
           Findings, risk, and report summaries will appear here once audit jobs are wired through{' '}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">apps/auditor-api</code>. No
-          placeholder numbers below — that work is tracked separately.
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">apps/auditor-api</code>. No placeholder numbers below —
+          that work is tracked separately.
         </p>
       </div>
       <Card>
