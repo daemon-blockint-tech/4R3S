@@ -35,7 +35,7 @@
     "@langchain/openai": "^1.5.10",
     "@langchain/openrouter": "^0.4.10",
     "@solana/web3.js": "^1.98.4",
-    "@supabase/supabase-js": "^2.112.3",
+    "@supabase/supabase-js": "^2.112.4",
     "bs58": "^6.0.0",
     "dotenv": "^17.4.2",
     "neo4j-driver": "^6.2.0",
@@ -45,14 +45,14 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.3.0",
     "@types/pg": "^8.23.1",
     "@types/uuid": "^11.0.0",
-    "eslint": "^10.9.0",
+    "eslint": "^10.9.1",
     "license-checker-rseidelsohn": "^5.0.1",
     "tsx": "^4.23.12",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.67.0",
+    "typescript-eslint": "^8.68.0",
     "vitest": "^4.1.11"
   },
   "overrides": {
