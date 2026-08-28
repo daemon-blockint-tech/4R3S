@@ -132,10 +132,10 @@
     "@types/figlet": "^1.5.8",
     "@types/gradient-string": "^1.1.5",
     "@types/inquirer": "^9.0.10",
-    "@types/node": "^26.2.0",
-    "eslint": "^10.9.0",
+    "@types/node": "^26.3.0",
+    "eslint": "^10.9.1",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.66.0",
+    "typescript-eslint": "^8.68.0",
     "vitest": "^4.1.11"
   },
   "engines": {
