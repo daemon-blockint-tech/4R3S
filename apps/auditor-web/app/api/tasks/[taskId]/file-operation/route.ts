@@ -80,6 +80,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // concatenation stays confined within safeTargetDir, itself already
     // confined to PROJECT_DIR by resolveSandboxPath above)
     const sourceBasename = safeSourceFile.split('/').pop()
+    if (!sourceBasename) {
+      return NextResponse.json(
+        { success: false, error: 'Could not determine source file name' },
+        { status: 400 },
+      )
+    }
     const targetFile = targetPath ? `${safeTargetDir}/${sourceBasename}` : sourceBasename
 
     if (operation === 'copy') {
