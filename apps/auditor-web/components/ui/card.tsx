@@ -4,12 +4,4 @@
 // perceptible spacing nuance, not a structural change. Everything else
 // was pure formatting (multi-line JSX, className order), verified
 // directly before treating this as safe.
-export {
-  Card,
-  CardHeader,
-  CardFooter,
-  CardTitle,
-  CardAction,
-  CardDescription,
-  CardContent,
-} from "@ares/ui"
+export { Card, CardHeader, CardFooter, CardTitle, CardAction, CardDescription, CardContent } from '@ares/ui'

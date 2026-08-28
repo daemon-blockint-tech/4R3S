@@ -27,4 +27,4 @@ export {
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,
-} from "@ares/ui"
+} from '@ares/ui'

@@ -7,4 +7,4 @@
 // only on default behavior — the shared version's genuinely newer
 // features (orientation, variant) don't change anything for this
 // existing usage, they're just additionally available now.
-export { Tabs, TabsList, TabsTrigger, TabsContent } from "@ares/ui"
+export { Tabs, TabsList, TabsTrigger, TabsContent } from '@ares/ui'

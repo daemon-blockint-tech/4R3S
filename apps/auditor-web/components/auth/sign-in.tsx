@@ -7,11 +7,7 @@ import { GitHubIcon } from '@/components/icons/github-icon'
 import { useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { getEnabledAuthProviders } from '@/lib/auth/providers'
-import {
-  getGitHubOAuthAction,
-  getGitHubOAuthButtonLabel,
-  startGitHubOAuth,
-} from '@/lib/auth/start-github-oauth'
+import { getGitHubOAuthAction, getGitHubOAuthButtonLabel, startGitHubOAuth } from '@/lib/auth/start-github-oauth'
 import { sessionAtom, sessionInitializedAtom } from '@/lib/atoms/session'
 import { githubConnectionAtom, githubConnectionInitializedAtom } from '@/lib/atoms/github-connection'
 import { toast } from 'sonner'

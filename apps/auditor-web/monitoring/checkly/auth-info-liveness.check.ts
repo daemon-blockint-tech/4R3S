@@ -24,9 +24,7 @@ new ApiCheck('auth-info-liveness', {
       AssertionBuilder.status().lessThan(500),
       AssertionBuilder.status().in([200, 401]),
       AssertionBuilder.headers('Content-Type').contains('application/json'),
-      ...(assertCorrelation
-        ? [AssertionBuilder.headers('x-correlation-id').isNotEmpty()]
-        : []),
+      ...(assertCorrelation ? [AssertionBuilder.headers('x-correlation-id').isNotEmpty()] : []),
     ],
   },
   tags: ['auth', 'liveness', 'A-001'],

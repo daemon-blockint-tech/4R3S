@@ -21,8 +21,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'ARES Auditor',
-  description:
-    'Dashboard for autonomous Solana program security audits — findings, reports, and multi-agent analysis.',
+  description: 'Dashboard for autonomous Solana program security audits — findings, reports, and multi-agent analysis.',
   icons: {
     icon: [
       { url: '/favicon.png', type: 'image/png' },
@@ -41,10 +40,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-        suppressHydrationWarning
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`} suppressHydrationWarning>
         <JotaiProvider>
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
             <SessionProvider />

@@ -14,12 +14,7 @@ interface SharedHeaderProps {
   hideStars?: boolean
 }
 
-export function SharedHeader({
-  leftActions,
-  extraActions,
-  initialStars = 1200,
-  hideStars = false,
-}: SharedHeaderProps) {
+export function SharedHeader({ leftActions, extraActions, initialStars = 1200, hideStars = false }: SharedHeaderProps) {
   const { toggleSidebar } = useTasks()
 
   return (
@@ -27,7 +22,13 @@ export function SharedHeader({
       <div className="flex items-center justify-between gap-2 h-8 min-w-0">
         {/* Left side - Menu Button and Left Actions */}
         <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1">
-          <Button onClick={toggleSidebar} variant="ghost" size="sm" className="h-8 w-8 p-0 flex-shrink-0" aria-label="Toggle sidebar">
+          <Button
+            onClick={toggleSidebar}
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0 flex-shrink-0"
+            aria-label="Toggle sidebar"
+          >
             <Menu className="h-4 w-4" />
           </Button>
           <AresBrand height={26} className="hidden sm:block" />

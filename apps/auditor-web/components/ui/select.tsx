@@ -12,13 +12,10 @@
 // this app specifically, without touching the shared package's own
 // default or affecting War Room at all — an explicit position prop
 // still overrides this if ever needed.
-import type { ComponentProps } from "react"
-import { SelectContent as SharedSelectContent } from "@ares/ui"
+import type { ComponentProps } from 'react'
+import { SelectContent as SharedSelectContent } from '@ares/ui'
 
-function SelectContent({
-  position = "popper",
-  ...props
-}: ComponentProps<typeof SharedSelectContent>) {
+function SelectContent({ position = 'popper', ...props }: ComponentProps<typeof SharedSelectContent>) {
   return <SharedSelectContent position={position} {...props} />
 }
 
@@ -32,5 +29,5 @@ export {
   SelectSeparator,
   SelectTrigger,
   SelectValue,
-} from "@ares/ui"
+} from '@ares/ui'
 export { SelectContent }

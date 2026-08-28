@@ -4,9 +4,7 @@ import { CORRELATION_ID_HEADER, REQUEST_ID_HEADER } from '@/lib/observability/co
 
 export function middleware(request: NextRequest) {
   const correlationId =
-    request.headers.get(CORRELATION_ID_HEADER) ??
-    request.headers.get(REQUEST_ID_HEADER) ??
-    crypto.randomUUID()
+    request.headers.get(CORRELATION_ID_HEADER) ?? request.headers.get(REQUEST_ID_HEADER) ?? crypto.randomUUID()
 
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set(CORRELATION_ID_HEADER, correlationId)

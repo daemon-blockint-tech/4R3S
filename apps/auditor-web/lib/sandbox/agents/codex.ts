@@ -5,20 +5,13 @@ import { AgentExecutionResult } from '../types'
 import { redactSensitiveInfo } from '@/lib/utils/logging'
 import { TaskLogger } from '@/lib/utils/task-logger'
 import { connectors } from '@/lib/db/schema'
-import {
-  getLmStudioApiKey,
-  getLmStudioBaseUrl,
-  getLmStudioModel,
-  isLmStudioConfigured,
-} from '@/lib/llm/lmstudio'
+import { getLmStudioApiKey, getLmStudioBaseUrl, getLmStudioModel, isLmStudioConfigured } from '@/lib/llm/lmstudio'
 
 type Connector = typeof connectors.$inferSelect
 
 type CodexBackend = 'lmstudio' | 'vercel' | 'openai'
 
-function resolveCodexBackend():
-  | { ok: true; backend: CodexBackend; apiKey: string }
-  | { ok: false; error: string } {
+function resolveCodexBackend(): { ok: true; backend: CodexBackend; apiKey: string } | { ok: false; error: string } {
   if (isLmStudioConfigured()) {
     return { ok: true, backend: 'lmstudio', apiKey: getLmStudioApiKey() }
   }
