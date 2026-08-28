@@ -48,6 +48,15 @@ updates:
       ares-sec-npm:
         patterns:
           - "*"
+    ignore:
+      # Same hold as the root ecosystem: typescript-eslint 8.x peer-caps
+      # TypeScript at <6.1.0 and hard-throws on TS 7, so a major/minor TypeScript
+      # bump breaks `npm ci` (ERESOLVE) here too — it did in #172, #195, and #199.
+      # Patch updates stay allowed. Remove once typescript-eslint supports TS 7.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
 
   - package-ecosystem: npm
     directory: "/apps/ares-sec/webui"
