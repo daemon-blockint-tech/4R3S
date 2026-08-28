@@ -42,7 +42,7 @@ httpx2==2.12.0
 # path (mcp.server.fastmcp.FastMCP) to mcp.server.mcpserver.MCPServer --
 # confirm the import path if this pin is ever bumped, don't assume it's
 # unchanged across a major version.
-mcp==2.0.0
+mcp==2.1.0
 
 # Tests
 pytest==9.1.1
