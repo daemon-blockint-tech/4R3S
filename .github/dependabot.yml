@@ -24,6 +24,20 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      # apps/auditor-web's task/sandbox routes target the @vercel/sandbox 0.x API
+      # (Sandbox.get({ sandboxId }), sandbox.sandboxId). The 0.x -> 2.x major
+      # (bundled in the 23-update group #26) rewrote that API to name-based
+      # identity and broke ~30 call sites (`next build` typecheck). Hold the
+      # major until the routes are migrated to the 2.x API.
+      - dependency-name: "@vercel/sandbox"
+        update-types:
+          - "version-update:semver-major"
+      # streamdown 1.x -> 2.x (same 23-update group) changed the react-markdown
+      # `Components` shape and broke components/task-chat.tsx's custom renderers.
+      # Hold the major until task-chat is migrated to streamdown 2.x.
+      - dependency-name: "streamdown"
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: npm
     directory: "/apps/ares-sec"
