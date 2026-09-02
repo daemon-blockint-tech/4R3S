@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@langchain/core": "^1.2.9",
-    "@langchain/langgraph": "^1.4.12",
+    "@langchain/langgraph": "^1.4.13",
     "@langchain/langgraph-checkpoint": "^1.0.0",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
     "@langchain/langgraph-cua": "^1.0.2",
@@ -41,16 +41,16 @@
     "neo4j-driver": "^6.2.0",
     "pg": "^8.23.0",
     "uuid": "^14.0.2",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.3.0",
+    "@types/node": "^26.4.0",
     "@types/pg": "^8.23.1",
     "@types/uuid": "^11.0.0",
     "eslint": "^10.9.1",
     "license-checker-rseidelsohn": "^5.0.1",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.68.0",
     "vitest": "^4.1.11"
