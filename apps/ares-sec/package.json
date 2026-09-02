@@ -106,7 +106,7 @@
   },
   "dependencies": {
     "@langchain/core": "^1.2.9",
-    "@langchain/langgraph": "^1.4.12",
+    "@langchain/langgraph": "^1.4.13",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "boxen": "^8.0.1",
     "chalk": "^6.0.0",
@@ -119,10 +119,10 @@
     "express": "^5.2.1",
     "figlet": "^1.11.4",
     "gradient-string": "^3.0.0",
-    "inquirer": "^14.1.0",
+    "inquirer": "^14.2.0",
     "langsmith": "^0.9.0",
     "ora": "^9.4.1",
-    "tsx": "^4.23.11"
+    "tsx": "^4.23.13"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -132,7 +132,7 @@
     "@types/figlet": "^1.5.8",
     "@types/gradient-string": "^1.1.5",
     "@types/inquirer": "^9.0.10",
-    "@types/node": "^26.3.0",
+    "@types/node": "^26.4.0",
     "eslint": "^10.9.1",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.68.0",
