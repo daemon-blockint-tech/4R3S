@@ -20,7 +20,7 @@ arq==0.28.0
 # itself moves; dependabot.yml withholds major bumps here for that reason.
 # Updates inside 5.x are fine and still flow.
 redis==5.3.1
-pydantic==2.13.4
+pydantic==2.13.5
 
 # Server. Not pinned to a verified version: uvicorn is the dev entrypoint
 # (`uvicorn main:app`) and is not imported by any tested code path, so no
