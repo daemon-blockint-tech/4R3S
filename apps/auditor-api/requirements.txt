@@ -11,7 +11,7 @@
 # Versions below are the ones the test suite was actually executed against, not
 # chosen from a changelog. If a pin is bumped, re-run the suite rather than
 # assuming compatibility.
-fastapi==0.141.1
+fastapi==0.142.2
 arq==0.28.0
 # Ceiling is arq's, not ours: arq 0.28.0 — the latest release — declares
 # `redis[hiredis]>=4.2.0,<6`. #120 bumped this to 8.1.0 and pip could not
