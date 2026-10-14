@@ -107,7 +107,7 @@
   "dependencies": {
     "@langchain/core": "^1.2.9",
     "@langchain/langgraph": "^1.4.12",
-    "@modelcontextprotocol/sdk": "^1.25.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "boxen": "^8.0.1",
     "chalk": "^6.0.0",
     "cli-table3": "^0.6.3",
